@@ -102,7 +102,7 @@ volumes are local, and `mise run reset` removes them.
 
 ## Progress
 
-slices 4/5 committed · standards — · spec — · editor —
+slices 5/5 committed · standards — · spec — · editor —
 
 ## Decisions
 
