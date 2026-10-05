@@ -6,10 +6,11 @@ import (
 	"strings"
 )
 
-// bindRootFlags shares every flag defined on root's flag set into the flag
-// set of each command below it, so a root flag is accepted at any depth and
-// sets the one value the root defined. Only the root's flags are shared: a
-// flag defined on a nested parent stays local to that level.
+// prepareTree readies the tree rooted at root for dispatch. It shares every
+// flag defined on root's flag set into the flag set of each command below
+// it, so a root flag is accepted at any depth and sets the one value the
+// root defined. Only the root's flags are shared: a flag defined on a
+// nested parent stays local to that level.
 //
 // It runs at the start of every dispatch, over the whole tree, so a wiring
 // mistake panics on the first run whatever path the user takes: a command
@@ -17,7 +18,7 @@ import (
 // validator it would never call, a PreRun below the root, or a flag
 // requirement or group the command cannot honour. Sharing is idempotent,
 // so a tree can be dispatched more than once.
-func bindRootFlags(root *Command) {
+func prepareTree(root *Command) {
 	var walk func(c *Command)
 	walk = func(c *Command) {
 		if c.Args != nil && c.isParent() {

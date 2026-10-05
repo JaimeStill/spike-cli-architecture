@@ -25,7 +25,7 @@ func help(cmd *Command) string {
 	own := flagsOf(cmd, func(name string) bool { return !cmd.inherited[name] })
 	own = append(own, row{"--help", "Show help for " + cmd.path()})
 	writeSection(&b, "Flags", own)
-	writeSection(&b, "Global flags", inheritedFlags(cmd))
+	writeSection(&b, "Global flags", flagsOf(cmd, func(name string) bool { return cmd.inherited[name] }))
 
 	if len(cmd.children) > 0 {
 		fmt.Fprintf(&b, "\nRun '%s <command> --help' for help on a command.\n", cmd.path())
@@ -46,12 +46,6 @@ func usageLine(cmd *Command) string {
 		parts = append(parts, cmd.Synopsis)
 	}
 	return strings.Join(parts, " ")
-}
-
-// inheritedFlags returns the root flags shared into cmd, listed under their
-// own heading in its help. The root's own help lists them as its Flags.
-func inheritedFlags(cmd *Command) []row {
-	return flagsOf(cmd, func(name string) bool { return cmd.inherited[name] })
 }
 
 // row is one line of a help section: a command or flag name, and the text

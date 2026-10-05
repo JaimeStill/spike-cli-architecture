@@ -134,16 +134,15 @@ func TestPreRun_SkippedWhenTheDispatchEndsEarly(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
-		code int
 	}{
-		{"root help", []string{"--help"}, process.ExitUsage},
-		{"leaf help", []string{"cmd", "-h"}, process.ExitUsage},
-		{"root with no subcommand", nil, process.ExitUsage},
-		{"nested parent with no subcommand", []string{"group"}, process.ExitUsage},
-		{"unknown subcommand", []string{"bogus"}, process.ExitUsage},
-		{"unknown flag", []string{"cmd", "a", "--bogus"}, process.ExitUsage},
-		{"malformed root flag", []string{"--dsn"}, process.ExitUsage},
-		{"wrong argument count", []string{"cmd"}, process.ExitUsage},
+		{"root help", []string{"--help"}},
+		{"leaf help", []string{"cmd", "-h"}},
+		{"root with no subcommand", nil},
+		{"nested parent with no subcommand", []string{"group"}},
+		{"unknown subcommand", []string{"bogus"}},
+		{"unknown flag", []string{"cmd", "a", "--bogus"}},
+		{"malformed root flag", []string{"--dsn"}},
+		{"wrong argument count", []string{"cmd"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -151,8 +150,8 @@ func TestPreRun_SkippedWhenTheDispatchEndsEarly(t *testing.T) {
 
 			r := dispatch(t, h.root, tt.args...)
 
-			if r.code != tt.code {
-				t.Errorf("code = %d, want %d", r.code, tt.code)
+			if r.code != process.ExitUsage {
+				t.Errorf("code = %d, want %d", r.code, process.ExitUsage)
 			}
 			if len(h.calls) != 0 {
 				t.Errorf("calls = %q, want none", h.calls)
