@@ -51,7 +51,7 @@ Door          two-way (nothing published or tagged; the spike is archived after 
 
 ## Progress
 
-slices 1/3 committed · standards — · spec — · editor —
+slices 2/3 committed · standards — · spec — · editor —
 
 ## Decisions
 
