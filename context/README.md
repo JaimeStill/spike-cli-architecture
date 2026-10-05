@@ -44,7 +44,7 @@ Postgres?
 
 ## Capabilities
 
-- **Dispatcher**: flag parsing, the command tree, help, and usage exits.
+- **Dispatcher** (package `cli`): flag parsing, the command tree, help, and usage exits.
 - **Composition root**: New/Run, Config, per-command dependency declaration, and the central
   initializer.
 - **Infrastructure**: Postgres via sqlate, the object store via go-storage/azureblob, and the

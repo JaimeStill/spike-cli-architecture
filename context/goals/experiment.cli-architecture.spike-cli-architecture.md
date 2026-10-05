@@ -51,7 +51,7 @@ Door          two-way (nothing published or tagged; the spike is archived after 
 
 ## Progress
 
-slices 3/3 committed · standards ✓ · spec ✓ · editor —
+slices 3/3 committed · standards ✓ · spec ✓ · editor ✓
 
 ## Decisions
 
@@ -88,6 +88,35 @@ slices 3/3 committed · standards ✓ · spec ✓ · editor —
   any other error to 1, reported once; pre-run hook root only; help to stdout, usage errors to
   stderr; wiring mistakes panic at build time.
 
+- dispatcher: help prints the summary, Usage, Commands, Flags, and Global flags. An unknown
+  subcommand prints the parent's full help to stderr. A flag or argument usage error prints the
+  message, the usage line, and a `--help` pointer; flag error text keeps the standard library's
+  single-dash wording.
+- dispatcher: a command's error is reported as `process.Fail(stderr, "<command path>", err)`; a
+  PreRun error is reported against the leaf.
+- dispatcher: Run shares the root's flags into every descendant at its start, not in Add, so
+  definition order doesn't matter; a nested parent's flags stay local. Wiring panics (a root flag
+  redefined; Args, Require, or Exclusive on a parent; PreRun below the root; an undefined name in
+  a group; a group of fewer than two) fire at the start of dispatch over the whole tree, not in
+  Add. Add's own checks (subcommand names, duplicates, reparenting) still panic in Add.
+- dispatcher: a custom Args validator's error is always a usage error (exit 2).
+- dispatcher: Changed covers the leaf's flags and root flags set at any level, not a nested
+  parent's local flags.
+- dispatcher: a StringsVar flag's first command-line use replaces its default; values are not
+  split on commas.
+- dispatcher: a leaf dispatches in the order Args, required flags, exclusive groups, PreRun, Run.
+  Missing required flags are reported together in declaration order; only the first broken
+  exclusive group is reported.
+- dispatcher: Require and Exclusive are leaf-only, with no persistent-required equivalent; a flag
+  every leaf needs is required on each leaf.
+- dispatcher: the depguard allow entries are anchored (`go-core$`, `go-core/`, `.../cli$`)
+  because depguard matches by prefix; the rule covers cli's tests too.
+- dispatcher: spike-blobfs's `rm -r` is a shorthand flag, which this dispatcher doesn't support,
+  so the files task uses `--recursive`.
+
 ## Pending edits
 
-(none)
+- architecture · reconcile `standards/go-elemental/principles/topology-and-naming.md` ("cmd/*
+  imports only internal/*") with `principles/composition-root.md` (the entrypoint traps
+  signals, which cmd/blobfs does with go-core's `process.SignalContext`): state whether the
+  topology rule covers only the module's own packages.
