@@ -25,10 +25,11 @@ type Stack struct {
 	phases [][]Step
 }
 
-// Start runs one phase: steps concurrently (a single step runs alone), each
-// under a child of ctx that the phase's first failure cancels. It pushes the
-// steps whose Start succeeded as a new phase for [Stack.Unwind], and returns
-// their failures joined, each labelled "name: err". An error wrapping
+// Start runs one phase: steps concurrently (a single step runs on the
+// caller's goroutine), each under a child of ctx that the phase's first
+// failure cancels. It pushes the steps whose Start succeeded as a new phase
+// for [Stack.Unwind], pushing nothing when none did, and returns the
+// failures joined, each labelled "name: err". An error wrapping
 // context.Canceled that arrives once a failure is on record is dropped: it
 // is that failure's consequence. Start may be called any number of times.
 func (s *Stack) Start(ctx context.Context, steps ...Step) error {
@@ -91,10 +92,11 @@ func (s *Stack) Start(ctx context.Context, steps ...Step) error {
 // concurrently, under one context derived from context.Background and
 // bounded by timeout, so cleanup has its whole budget whatever became of the
 // contexts Start ran under. Stop errors are labelled "name: err" and joined.
-// A phase that outlives the deadline adds one error wrapping
+// The first phase that outlives the deadline adds one error wrapping
 // context.DeadlineExceeded; its unfinished Stops continue on the expired
-// context, their late errors are dropped, and the remaining phases are still
-// attempted. Unwind leaves the stack empty, so a second call returns nil.
+// context and their late errors are dropped. Each remaining phase still
+// starts its Stops on the expired context, and Unwind does not wait for
+// them. Unwind leaves the stack empty, so a second call returns nil.
 func (s *Stack) Unwind(timeout time.Duration) error {
 	s.mu.Lock()
 	phases := s.phases

@@ -102,7 +102,7 @@ volumes are local, and `mise run reset` removes them.
 
 ## Progress
 
-slices 5/5 committed · standards ✓ · spec ✓ · editor —
+slices 5/5 committed · standards ✓ · spec ✓ · editor ✓
 
 ## Decisions
 
@@ -190,6 +190,25 @@ slices 5/5 committed · standards ✓ · spec ✓ · editor —
 - composition: defaults: Unwind runs with a 10s timeout; one dependency per Start call;
   a signal-cancelled run exits 1; compose uses postgres:18.6-alpine on 5436 and azurite:3.37.0
   on 10010, both overridable.
+- composition: a leaf's cli Run closes its dependencies through `deps.Run(body)`, since `cli` has
+  no post-run hook; a request outside `deps.Run` panics, so nothing opens without being closed.
+  A post-run hook is a go-cli-sdk candidate (for the validate task's evidence-6 record).
+- composition: a request for an undeclared dependency panics as a wiring mistake.
+- composition: a dependency constructed but failing Start is shut down at once on a detached,
+  bounded context; its Start error is the one report.
+- composition: an unreachable-Postgres error is one report spanning several lines (pgx's
+  per-attempt continuation lines), passed through unflattened.
+- composition: behavior 4's "succeed" is read under the dispatcher decision (requested help
+  exits 2, nothing opens); behavior 8's "the body doesn't run" is read under lazy open (the body
+  stops at its first request).
+- composition: Stack: a single step runs on the caller's goroutine; a phase with nothing started
+  is not pushed; after a deadline overrun Unwind starts the remaining phases without waiting, as
+  go-core's drain does.
+- composition: schema: the app's set is named `app` (spike-blobfs: `consumer`); `--yes=false` is
+  refused too, since cli's Require counts an explicit false as set; down reverts each set with
+  `Layer.Down(len)`, which keeps the history tables.
+- composition: the store uses container `cliarch`; Store.Start creates it; the mise env carries
+  Azurite's published development key.
 
 ## Pending edits
 

@@ -4,6 +4,6 @@
 // [Table] writes rows as aligned columns under a header. Failures are not
 // rendered here: a command returns its error and package cli reports it.
 //
-// The package imports only the standard library. The file commands extend
-// it with the listings they share.
+// The package imports only the standard library. The planned file commands
+// will extend it with the listings they share.
 package output

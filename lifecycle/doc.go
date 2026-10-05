@@ -43,9 +43,8 @@
 //     registration panics stay in the Coordinator
 //
 // The one point needing care: Start cancels only its own child context, so
-// the Coordinator must still cancel the run context before it drains, the
-// fix go-core v0.5.0 made for a drain that ran with the run context still
-// live. Only go-core's black-box lifecycle tests can prove the rebuild keeps
+// the Coordinator must still cancel the run context before it drains, as
+// go-core's Coordinator does, so no drain runs with the run context live. Only go-core's black-box lifecycle tests can prove the rebuild keeps
 // it.
 //
 // # Promotion

@@ -1,8 +1,7 @@
-// Package schema is the schema administration layer: the schema command
-// group, which reports, applies, reverts, and resets the two migration sets
-// blobfs's database holds. It is a sibling of internal/app, which mounts it,
-// and of the domain the file commands add, and it imports no domain
-// package.
+// Package schema builds the schema command group, which reports, applies,
+// reverts, and resets the two migration sets blobfs's database holds. It is
+// a sibling of internal/app, which mounts it, and of the domain packages the
+// planned file commands will add, and it imports no domain package.
 //
 // The package has one file per role. database.go builds the [Client] over
 // sqlate's multi-set migrator: blobfs's set first, under its own history

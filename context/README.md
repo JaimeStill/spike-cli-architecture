@@ -45,20 +45,26 @@ Postgres?
 ## Capabilities
 
 - **Dispatcher** (package `cli`): flag parsing, the command tree, help, and usage exits.
-- **Composition root**: New/Run, Config, per-command dependency declaration, and the central
-  initializer.
-- **Infrastructure**: Postgres via sqlate, the object store via go-storage/azureblob, and the
-  compose stack of Postgres and Azurite.
-- **Domain and admin commands**: files, bookmarks, and schema.
-- **Output and scenarios**.
+- **Lifecycle** (package `lifecycle`): the reverse-order Stack, which starts dependencies in
+  phases and unwinds them last first; it imports only the standard library and is a go-core
+  promotion candidate.
+- **Composition root** (package `internal/app`): New/Run, per-command-group dependency
+  declaration, and the initializer, which opens a declared dependency on the first request and
+  closes it when the command returns.
+- **Infrastructure**: Postgres through go-database with sqlate migrations, the object store
+  through go-storage/azureblob, and the compose stack of Postgres on 5436 and Azurite on 10010.
+- **Domain and admin commands**: schema (package `admin/schema`, with status, up, down, and
+  reset); files and bookmarks are planned.
+- **Output and scenarios**: package `output` renders a command's result as a line or a table;
+  scenarios are planned.
 - **Tests**: buffer-driven app tests, fakes, and black-box integration over the built binary.
 
 ## References
 
 The spike reads these repositories and never writes to them. Each is a key in the coordinator's
 `references.toml`, with its local checkout in `references.local.toml`: `org`, `architecture`,
-`go-core`, `sqlate`, `go-storage`, `blobfs`, `go-web-service` (slab, the layout's other example),
-and `spike-blobfs` (the CLI being rebuilt).
+`go-core`, `go-database`, `sqlate`, `go-storage`, `blobfs`, `go-web-service` (slab, the layout's
+other example), and `spike-blobfs` (the CLI being rebuilt).
 
 ## The answer
 
