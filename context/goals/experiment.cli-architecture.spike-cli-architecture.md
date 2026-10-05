@@ -1,57 +1,15 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** brief ready
-- **Task:** dispatcher
-- **Branch:** dispatcher
+- **State:** idle
+- **Task:** none
+- **Branch:** none
 
 ## Tasks
 
-1. [ ] dispatcher
+1. [x] dispatcher
 2. [ ] composition
 3. [ ] files
 4. [ ] validate
-
-## Task brief · dispatcher
-
-Problem       Cobra goes. A dispatcher on the standard library's `flag` must cover go-cli-sdk's
-              planned feature set, import only the standard library and go-core, and carry the
-              spike's entrypoint and composition root with one dependency-free command.
-              Evidence 1.
-Behaviors     1. `blobfs version` prints the module version to stdout and exits 0.
-              2. A parent run with no subcommand prints its generated help (usage line,
-                 subcommands with summaries, own and inherited flags) to stdout and exits 2.
-              3. `--help`/`-h` on any command prints that command's help to stdout, exit 2.
-              4. An unknown subcommand writes "unknown command" and the parent's usage to
-                 stderr and exits 2.
-              5. Flags after positionals parse as flags before them; after `--`, everything is
-                 positional.
-              6. A root flag is accepted at any depth and binds the same value.
-              7. The root pre-run hook runs once, after parsing and before the leaf; its error
-                 stops the run.
-              8. NoArgs and ExactArgs(n) reject a wrong count with a usage error (exit 2).
-              9. A missing required flag, or two flags of one mutually exclusive group, is a
-                 usage error naming the flags (exit 2).
-              10. A command can ask whether a flag was set explicitly rather than defaulted.
-              11. A repeatable string flag collects every occurrence, in order.
-              12. An unknown flag or malformed value is a usage error (exit 2); a command's own
-                  error is reported once on stderr (exit 1).
-              13. The check fails when the dispatcher imports anything outside the standard
-                  library and go-core.
-Test seams    The composition root's New/Run over buffers with explicit args; the feature-set
-              tests mount test-only commands on the dispatcher's exported API.
-Slices        1. Walking skeleton (behaviors 1-4, 12, 13): tree, dispatch, help, exit mapping,
-                 entrypoint, New/Run with `version`, the depguard rule.
-              2. Flag semantics (5, 6, 8, 10, 11): interleaved parse, inherited root flags,
-                 NoArgs/ExactArgs, set-flag query, repeatable flag.
-              3. Flag groups and the pre-run hook (7, 9).
-Out of scope  Shorthand flags, completion, Config, per-command dependencies and the
-              initializer, schema/files commands, scenarios, the evidence-6 record, env
-              fallbacks.
-Door          two-way (nothing published or tagged; the spike is archived after intake)
-
-## Progress
-
-slices 3/3 committed · standards ✓ · spec ✓ · editor ✓
 
 ## Decisions
 
