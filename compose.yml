@@ -1,0 +1,8 @@
+# The local stack the integration tier runs against: `mise run up`, then `mise run integration`.
+# The project, container, and volume names, and the host ports, keep it apart from spike-blobfs's
+# blobfs-* stack, so both can run at once.
+name: spike-cli-architecture
+
+include:
+  - compose/postgres.yml
+  - compose/azurite.yml

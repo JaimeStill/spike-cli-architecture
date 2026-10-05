@@ -7,9 +7,17 @@ import (
 	"sync"
 	"time"
 
+	godatabase "github.com/standards-lab/go-database"
+	"github.com/standards-lab/go-database/postgres"
+
 	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/lifecycle"
 )
+
+// envPrefix is the prefix of every environment variable blobfs reads its
+// dependency configuration from: the libraries compose the rest, such as
+// BLOBFS_DATABASE_HOST.
+const envPrefix = "BLOBFS"
 
 // unwindTimeout bounds the closing of a run's dependencies. It runs under a
 // context detached from the signal context, so a cancelled run still gets
@@ -35,8 +43,8 @@ type service interface {
 	Shutdown(ctx context.Context) error
 }
 
-// database is the Postgres dependency as command bodies see it. A later
-// slice holds go-database's *DB behind it.
+// database is the Postgres dependency as command bodies see it: go-database's
+// *DB behind it.
 type database interface {
 	service
 }
@@ -57,16 +65,32 @@ type openers struct {
 }
 
 // errNoOpener is what a dependency without an opener yet fails to come up
-// with. No mounted command declares one until a later slice adds the real
-// openers.
+// with: the object store, until a later slice adds its real opener.
 var errNoOpener = errors.New("no opener in this build")
 
 // defaultOpeners returns the production openers.
 func defaultOpeners() openers {
 	return openers{
-		postgres: func() (database, error) { return nil, errNoOpener },
+		postgres: openPostgres,
 		store:    func() (objectStore, error) { return nil, errNoOpener },
 	}
+}
+
+// openPostgres reads the database configuration from the environment alone,
+// BLOBFS_DATABASE_HOST, _PORT, _NAME, _USER, _PASSWORD, and the pool and
+// timeout settings go-database names, and constructs the pool. It does no
+// I/O: the pool first connects in Start, the ping bounded by the
+// configuration's conn_timeout.
+func openPostgres() (database, error) {
+	var cfg godatabase.Config
+	if err := cfg.Finalize(envPrefix); err != nil {
+		return nil, err
+	}
+	db, err := postgres.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return db, nil
 }
 
 // initializer brings up the dependencies a run's command declared, on its
@@ -108,6 +132,13 @@ func (in *initializer) bringUp(ctx context.Context, need *[numDependencies]bool)
 // step returns the Stack step for one dependency: its Start calls open,
 // which reads the configuration and constructs the dependency, then starts
 // it and records it in *dst; its Stop shuts it down.
+//
+// A dependency that is constructed but fails to start is shut down within
+// Start itself, since the Stack keeps only the steps that started and would
+// never stop it: a failed ping must not leak the pool New built. That
+// shutdown runs under its own unwindTimeout budget, detached from ctx's
+// cancellation, and its error is dropped, so the Start failure stays the
+// one error the run reports.
 func step[T service](name string, open func() (T, error), dst *T) lifecycle.Step {
 	var svc T
 	return lifecycle.Step{
@@ -118,6 +149,9 @@ func step[T service](name string, open func() (T, error), dst *T) lifecycle.Step
 				return err
 			}
 			if err := s.Start(ctx); err != nil {
+				stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unwindTimeout)
+				defer cancel()
+				_ = s.Shutdown(stopCtx)
 				return err
 			}
 			svc, *dst = s, s

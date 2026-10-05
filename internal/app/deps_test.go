@@ -269,17 +269,35 @@ func TestRun_FailedBringUp(t *testing.T) {
 			wantStderr: "blobfs probe run: object store: boom\n",
 		},
 		{
+			// The store was constructed, so it is shut down though it never
+			// started, and before the Postgres it came up after.
 			name: "store start",
 			fail: func(r *recorder) { r.startErr["store"] = boom },
 			wantEvents: []string{
-				"open postgres", "start postgres", "open store", "start store", "shutdown postgres",
+				"open postgres", "start postgres", "open store", "start store",
+				"shutdown store", "shutdown postgres",
 			},
 			wantStderr: "blobfs probe run: object store: boom\n",
 		},
 		{
-			name:       "postgres start",
-			fail:       func(r *recorder) { r.startErr["postgres"] = boom },
-			wantEvents: []string{"open postgres", "start postgres"},
+			name: "postgres start",
+			fail: func(r *recorder) { r.startErr["postgres"] = boom },
+			wantEvents: []string{
+				"open postgres", "start postgres", "shutdown postgres",
+			},
+			wantStderr: "blobfs probe run: postgres: boom\n",
+		},
+		{
+			// The failed start's shutdown error is dropped: the start
+			// failure is the one error reported.
+			name: "postgres start and its shutdown",
+			fail: func(r *recorder) {
+				r.startErr["postgres"] = boom
+				r.closeErr["postgres"] = errors.New("close boom")
+			},
+			wantEvents: []string{
+				"open postgres", "start postgres", "shutdown postgres",
+			},
 			wantStderr: "blobfs probe run: postgres: boom\n",
 		},
 	}
@@ -308,7 +326,38 @@ func TestRun_FailedBringUp(t *testing.T) {
 			if got := r.log(); !slices.Equal(got, tt.wantEvents) {
 				t.Errorf("events = %q, want %q", got, tt.wantEvents)
 			}
+			if slices.Contains(r.stopCtxOK, false) {
+				t.Errorf("a Shutdown ran on a done context: %v", r.stopCtxOK)
+			}
 		})
+	}
+}
+
+func TestRun_FailedStartShutsDownOnACancelledRun(t *testing.T) {
+	r := newRecorder()
+	r.startErr["postgres"] = context.Canceled
+	var out, errOut bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	// The run is cancelled before bring-up, as by a signal: the constructed
+	// Postgres's shutdown still gets a live context.
+	body := func(ctx context.Context, d *app.Deps) error {
+		cancel()
+		_, err := d.Postgres(ctx)
+		return err
+	}
+	a := probeApp(r, &out, &errOut, body, app.DepPostgres)
+
+	code := a.Run(ctx, []string{"probe", "run"})
+
+	if code != process.ExitFailure {
+		t.Errorf("code = %d, want %d", code, process.ExitFailure)
+	}
+	want := []string{"open postgres", "start postgres", "shutdown postgres"}
+	if got := r.log(); !slices.Equal(got, want) {
+		t.Errorf("events = %q, want %q", got, want)
+	}
+	if !slices.Equal(r.stopCtxOK, []bool{true}) {
+		t.Errorf("shutdown contexts live = %v, want [true]", r.stopCtxOK)
 	}
 }
 

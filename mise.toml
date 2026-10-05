@@ -6,6 +6,13 @@ jq = "1.8.2"
 [env]
 # The repository's Go modules, as directories; tasks run in each one.
 GO_MODULES = "."
+# The compose stack's Postgres, under blobfs's environment prefix, for `mise run integration`.
+# The hermetic check reads none of these: its tests clear them where an empty environment matters.
+BLOBFS_DATABASE_HOST = "127.0.0.1"
+BLOBFS_DATABASE_PORT = "5436"
+BLOBFS_DATABASE_NAME = "app"
+BLOBFS_DATABASE_USER = "app"
+BLOBFS_DATABASE_PASSWORD = "app"
 
 [tasks.check]
 description = "Build, vet, format, fix, tidy, test, and lint every module; writes nothing"
@@ -28,7 +35,27 @@ done
 
 [tasks.integration]
 description = "Run the integration tests against the compose Postgres and Azurite stack"
-run = "echo 'integration: no tests yet; the composition task adds the stack'"
+run = '''
+set -eu
+export GOWORK=off
+for mod in $GO_MODULES; do
+  echo "integration: $mod"
+  cd "$MISE_PROJECT_ROOT/$mod"
+  go test -race -tags integration -count=1 ./...
+done
+'''
+
+[tasks.up]
+description = "Start the local Postgres and Azurite and wait for them to be healthy"
+run = "docker compose up -d --wait"
+
+[tasks.down]
+description = "Stop the local services (keep their data)"
+run = "docker compose down"
+
+[tasks.reset]
+description = "Stop the local services and drop their data"
+run = "docker compose down -v"
 
 [tasks.currency]
 description = "Report every requirement, Go version, tool, and action pin behind its latest; writes nothing"
