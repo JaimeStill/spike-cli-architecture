@@ -3,6 +3,7 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/standards-lab/go-core/process"
@@ -101,6 +102,9 @@ func TestPostgres_ConfigurationReadOnlyOnRequest(t *testing.T) {
 
 		if code != process.ExitFailure {
 			t.Errorf("code = %d, want %d: the request should read the bad port", code, process.ExitFailure)
+		}
+		if want := godatabase.NewEnv("BLOBFS").Port; !strings.Contains(errOut.String(), want) {
+			t.Errorf("stderr = %q, want it to name %s", errOut.String(), want)
 		}
 	})
 }

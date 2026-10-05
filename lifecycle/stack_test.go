@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -483,7 +484,7 @@ func TestStackConcurrentUse(t *testing.T) {
 	}
 	stops := 0
 	for _, e := range r.list() {
-		if len(e) > 5 && e[:5] == "stop " {
+		if strings.HasPrefix(e, "stop ") {
 			stops++
 		}
 	}
