@@ -113,10 +113,12 @@ slices 3/3 committed · standards ✓ · spec ✓ · editor ✓
   because depguard matches by prefix; the rule covers cli's tests too.
 - dispatcher: spike-blobfs's `rm -r` is a shorthand flag, which this dispatcher doesn't support,
   so the files task uses `--recursive`.
+- dispatcher: `cmd/*` may import go-core for process setup (signal context, exit codes); within
+  the module it imports only `internal/*` (architect, at the session brief).
 
 ## Pending edits
 
-- architecture · reconcile `standards/go-elemental/principles/topology-and-naming.md` ("cmd/*
-  imports only internal/*") with `principles/composition-root.md` (the entrypoint traps
-  signals, which cmd/blobfs does with go-core's `process.SignalContext`): state whether the
-  topology rule covers only the module's own packages.
+- architecture · `standards/go-elemental/principles/topology-and-naming.md`: state that the
+  rule "cmd/* imports only internal/*" covers the module's own packages. `cmd/*` may import
+  go-core for process setup (as `principles/composition-root.md` has the entrypoint trap
+  signals), but no package of its own module outside `internal/`.
