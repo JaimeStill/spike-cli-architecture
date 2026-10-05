@@ -40,6 +40,7 @@ func New(stdout, stderr io.Writer) *App {
 	}
 	// version declares no dependencies.
 	a.mount(func(*deps) *cli.Command { return versionCommand() })
+	a.mount(schemaGroup, depPostgres)
 	return a
 }
 

@@ -3,6 +3,8 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"slices"
 	"strings"
@@ -49,6 +51,31 @@ func (r *recorder) log() []string {
 type fakeService struct {
 	r    *recorder
 	name string
+	pool *sql.DB // the pool Conn returns, made on first use
+}
+
+// errNoConnection is what every connection the fake database's pool dials
+// fails with.
+var errNoConnection = errors.New("fake database: no connection")
+
+// failingConnector is a database/sql connector whose every dial fails, so a
+// body handed the fake database's pool gets as far as its first query.
+type failingConnector struct{}
+
+func (failingConnector) Connect(context.Context) (driver.Conn, error) { return nil, errNoConnection }
+func (failingConnector) Driver() driver.Driver                        { return failingDriver{} }
+
+type failingDriver struct{}
+
+func (failingDriver) Open(string) (driver.Conn, error) { return nil, errNoConnection }
+
+// Conn returns a pool whose every query fails with errNoConnection. Shutdown
+// closes it.
+func (f *fakeService) Conn() *sql.DB {
+	if f.pool == nil {
+		f.pool = sql.OpenDB(failingConnector{})
+	}
+	return f.pool
 }
 
 func (f *fakeService) Start(context.Context) error {
@@ -58,6 +85,9 @@ func (f *fakeService) Start(context.Context) error {
 
 func (f *fakeService) Shutdown(ctx context.Context) error {
 	f.r.record("shutdown " + f.name)
+	if f.pool != nil {
+		_ = f.pool.Close()
+	}
 	f.r.mu.Lock()
 	f.r.stopCtxOK = append(f.r.stopCtxOK, ctx.Err() == nil)
 	f.r.mu.Unlock()

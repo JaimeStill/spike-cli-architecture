@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -44,9 +45,10 @@ type service interface {
 }
 
 // database is the Postgres dependency as command bodies see it: go-database's
-// *DB behind it.
+// *DB behind it, whose Conn is the pool a body wraps in sqlate's dialect.
 type database interface {
 	service
+	Conn() *sql.DB
 }
 
 // objectStore is the object store dependency as command bodies see it. A

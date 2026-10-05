@@ -3,8 +3,8 @@ package app
 import "github.com/JaimeStill/spike-cli-architecture/cli"
 
 // The opener hook: tests swap the real openers for recording fakes, and
-// mount a probe command group declaring dependencies, since no production
-// group declares any yet.
+// mount a probe command group declaring any set of dependencies, which the
+// production groups do not cover alone.
 
 type (
 	Database   = database
