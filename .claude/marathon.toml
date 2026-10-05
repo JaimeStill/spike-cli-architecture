@@ -1,0 +1,13 @@
+# Project kind: this spike holds Go source, checked by `mise run check`. Its goals live in the
+# coordinator's roadmap (standards-lab/context/roadmap.toml).
+[project]
+kind = "code"
+check = "mise run check"
+currency = "mise run currency"
+
+# Remote platform and the commands that publish and merge a finished branch. The spike has no
+# CI, so the merge doesn't wait on pull-request checks.
+[remote]
+platform = "github"
+publish = "gh pr create"
+merge = "gh pr merge --merge --delete-branch"

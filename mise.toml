@@ -1,0 +1,35 @@
+[tools]
+go = "1.27.1"
+golangci-lint = "2.14.0"
+jq = "1.8.2"
+
+[env]
+# The repository's Go modules, as directories; tasks run in each one.
+GO_MODULES = "."
+
+[tasks.check]
+description = "Build, vet, format, fix, tidy, test, and lint every module; writes nothing"
+run = '''
+set -eu
+export GOWORK=off
+for mod in $GO_MODULES; do
+  echo "check: $mod"
+  cd "$MISE_PROJECT_ROOT/$mod"
+  go build ./...
+  go vet ./...
+  unformatted=$(gofmt -l .)
+  if [ -n "$unformatted" ]; then echo "gofmt: unformatted files:"; echo "$unformatted"; exit 1; fi
+  go fix -diff ./...
+  go mod tidy -diff
+  go test -race ./...
+  golangci-lint run ./...
+done
+'''
+
+[tasks.integration]
+description = "Run the integration tests against the compose Postgres and Azurite stack"
+run = "echo 'integration: no tests yet; the composition task adds the stack'"
+
+[tasks.currency]
+description = "Report every requirement, Go version, tool, and action pin behind its latest; writes nothing"
+run = "scripts/currency.sh"
