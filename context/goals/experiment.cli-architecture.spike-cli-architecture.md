@@ -1,8 +1,8 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** idle
-- **Task:** none
-- **Branch:** none
+- **State:** handoff
+- **Task:** dispatcher
+- **Branch:** dispatcher
 
 ## Tasks
 
@@ -10,6 +10,12 @@
 2. [ ] composition
 3. [ ] files
 4. [ ] validate
+
+## Handoff
+
+merge: PR #1 (`dispatcher`) is published and accepted; merge it with
+`gh pr merge --merge --delete-branch`, then switch to main, pull, delete the local branch,
+and return this record to idle with Task and Branch none.
 
 ## Decisions
 
