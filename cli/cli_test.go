@@ -29,12 +29,18 @@ func dispatch(t *testing.T, root *cli.Command, args ...string) result {
 }
 
 // fixture is a test tree: prog { echo, fail, misuse, group { leaf } }.
-// echo records what it was run with.
+// prog defines the root flag --dsn and group the local flag --deep. echo
+// and leaf record what they were run with.
 type fixture struct {
 	root  *cli.Command
 	args  []string
+	inv   *cli.Invocation
+	dsn   *string
+	deep  *bool
 	name  *string
 	count *int
+	upper *bool
+	tags  []string
 	ran   bool
 }
 
@@ -47,12 +53,19 @@ func newFixture(runErr error) *fixture {
 		Run: func(_ context.Context, inv *cli.Invocation) error {
 			f.ran = true
 			f.args = inv.Args
-			_, err := fmt.Fprintln(inv.Stdout, strings.Join(inv.Args, " "))
+			f.inv = inv
+			line := strings.Join(inv.Args, " ")
+			if *f.upper {
+				line = strings.ToUpper(line)
+			}
+			_, err := fmt.Fprintln(inv.Stdout, line)
 			return err
 		},
 	}
 	f.name = echo.Flags().String("name", "world", "name to greet")
 	f.count = echo.Flags().Int("count", 0, "times to echo")
+	f.upper = echo.Flags().Bool("upper", false, "echo in upper case")
+	cli.StringsVar(echo.Flags(), &f.tags, "tag", nil, "tag to attach")
 
 	fail := &cli.Command{
 		Name:    "fail",
@@ -70,11 +83,18 @@ func newFixture(runErr error) *fixture {
 		&cli.Command{
 			Name:    "leaf",
 			Summary: "A nested leaf",
-			Run:     func(context.Context, *cli.Invocation) error { f.ran = true; return nil },
+			Run: func(_ context.Context, inv *cli.Invocation) error {
+				f.ran = true
+				f.args = inv.Args
+				f.inv = inv
+				return nil
+			},
 		},
 	)
+	f.deep = group.Flags().Bool("deep", false, "a flag local to group")
 	f.root = (&cli.Command{Name: "prog", Summary: "prog is a test program."}).
 		Add(echo, fail, misuse, group)
+	f.dsn = f.root.Flags().String("dsn", "", "database to connect to")
 	return f
 }
 
@@ -127,7 +147,8 @@ Commands:
   group    A nested parent
 
 Flags:
-  --help   Show help for prog
+  --dsn string   database to connect to
+  --help         Show help for prog
 
 Run 'prog <command> --help' for help on a command.
 `
@@ -163,7 +184,12 @@ Usage:
 Flags:
   --count int     times to echo
   --name string   name to greet (default "world")
+  --tag string    tag to attach (repeatable)
+  --upper         echo in upper case
   --help          Show help for prog echo
+
+Global flags:
+  --dsn string   database to connect to
 `
 	tests := []struct {
 		name string

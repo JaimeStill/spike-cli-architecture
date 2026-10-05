@@ -29,14 +29,21 @@ type Command struct {
 	// as "<container> <path>". It is empty for a command that takes none.
 	Synopsis string
 
+	// Args validates a leaf's positional arguments before Run is called,
+	// such as [NoArgs] or [ExactArgs]. An error it returns is reported as a
+	// usage error, with ExitUsage, and Run is not called. A nil Args accepts
+	// any count. Setting Args on a parent panics when the tree is dispatched.
+	Args func(args []string) error
+
 	// Run runs a leaf command. An error it returns is reported on stderr:
 	// a [UsageError] with the command's usage and ExitUsage, any other
 	// error once with ExitFailure. A nil Run makes the command a parent.
 	Run func(ctx context.Context, inv *Invocation) error
 
-	flags    *flag.FlagSet
-	parent   *Command
-	children []*Command
+	flags     *flag.FlagSet
+	inherited map[string]bool // names of the root flags shared into flags
+	parent    *Command
+	children  []*Command
 }
 
 // Invocation is what a running command receives: its positional arguments
@@ -48,6 +55,16 @@ type Invocation struct {
 	// Stdout and Stderr are the writers passed to [Run].
 	Stdout io.Writer
 	Stderr io.Writer
+
+	changed map[string]bool
+}
+
+// Changed reports whether the flag called name was set on the command
+// line, even to its default value, rather than left at its default. It
+// covers the command's own flags and the root flags, wherever in the
+// command line a root flag was given; it is false for any other name.
+func (inv *Invocation) Changed(name string) bool {
+	return inv.changed[name]
 }
 
 // Flags returns the command's flag set, creating it on first use. The set
@@ -55,7 +72,12 @@ type Invocation struct {
 // does all the printing. Defining a flag twice panics, as flag.FlagSet does.
 //
 // Define flags by their long name only; the dispatcher has no shorthand
-// flags, and accepts -h beside --help as the one exception.
+// flags, and accepts -h beside --help as the one exception. A leaf accepts
+// its flags before, between, and after its positional arguments; a parent's
+// flags precede its subcommand. Flags defined on the root are root flags:
+// every command below it accepts them too, at any depth, and they set the
+// same value. A command below the root that defines a flag with a root
+// flag's name panics when the tree is dispatched.
 func (c *Command) Flags() *flag.FlagSet {
 	if c.flags == nil {
 		c.flags = flag.NewFlagSet(c.Name, flag.ContinueOnError)

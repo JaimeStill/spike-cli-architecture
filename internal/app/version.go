@@ -14,6 +14,7 @@ func versionCommand() *cli.Command {
 	return &cli.Command{
 		Name:    "version",
 		Summary: "Print the blobfs version",
+		Args:    cli.NoArgs,
 		Run: func(_ context.Context, inv *cli.Invocation) error {
 			_, err := fmt.Fprintln(inv.Stdout, moduleVersion())
 			return err

@@ -4,6 +4,14 @@
 // to the selected command, parses its flags, runs it, and returns the exit
 // code the program passes to os.Exit.
 //
+// A leaf parses its flags wherever they fall among its positional
+// arguments, up to a "--" after which every argument is positional; a
+// parent's flags precede its subcommand. Flags defined on the root are root
+// flags, accepted by every command at any depth; flags defined on a nested
+// parent stay local to it. A leaf can validate its positional count with
+// [Command.Args], ask whether a flag was given with [Invocation.Changed], and
+// take a repeatable flag with [StringsVar].
+//
 // Run owns every line the dispatcher prints, and the exit codes follow
 // go-core's process convention:
 //
@@ -15,8 +23,9 @@
 //   - any other error a command returns is reported once on stderr and
 //     returns ExitFailure
 //
-// Wiring mistakes, such as two subcommands with one name or a flag defined
-// twice, panic while the tree is built, so they surface the first time the
+// Wiring mistakes, such as two subcommands with one name, a flag defined
+// twice, or a command redefining a root flag, panic while the tree is built
+// or at the start of its first dispatch, so they surface the first time the
 // program starts rather than on the path a user happens to take.
 //
 // The package imports only the standard library and go-core.

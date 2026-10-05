@@ -124,3 +124,20 @@ func TestRun_UnknownFlag(t *testing.T) {
 		t.Errorf("stdout = %q, want empty", stdout)
 	}
 }
+
+func TestRun_VersionRejectsArguments(t *testing.T) {
+	code, stdout, stderr := run(t, "version", "extra")
+
+	if code != process.ExitUsage {
+		t.Errorf("code = %d, want %d", code, process.ExitUsage)
+	}
+	want := "blobfs version: accepts no arguments, got 1\n" +
+		"Usage: blobfs version [flags]\n" +
+		"Run 'blobfs version --help' for details.\n"
+	if stderr != want {
+		t.Errorf("stderr =\n%s\nwant\n%s", stderr, want)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want empty", stdout)
+	}
+}
