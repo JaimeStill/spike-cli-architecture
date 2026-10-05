@@ -13,4 +13,16 @@
 // result through package output. The composition root opens the database
 // and constructs the Client; this package never reads configuration or
 // names a driver.
+//
+// The package exports:
+//
+//   - [Commands], which builds the schema command and its subcommands
+//   - [Deps], what the group needs from the composition root
+//   - [Body], a leaf command's body, as [Deps.Run] wraps it
+//   - [Client], which runs the schema operations over the migrator
+//   - [NewClient], which builds the Client over a database
+//   - [Client.Up], [Client.Down], [Client.Reset], and [Client.Status], the
+//     operations the subcommands run
+//   - [Sets], the two migration sets, bottom first
+//   - [AppSet], the name of the app's set
 package schema
