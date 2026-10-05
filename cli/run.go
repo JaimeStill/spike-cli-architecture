@@ -12,12 +12,26 @@ import (
 )
 
 // Run dispatches args, the program arguments without the program name, over
-// the tree rooted at root, and returns the process exit code: ExitOK when
-// the selected command succeeds, ExitUsage for help and usage errors, and
-// ExitFailure for any other error the command returns. Help goes to stdout;
-// every error goes to stderr, reported exactly once.
+// the tree rooted at root, and returns the process exit code. A dispatch to
+// a leaf goes in this order, stopping at the first failure: parse each
+// level's flags, select the leaf, validate its arguments with
+// [Command.Args], check its required flags and then its exclusive groups,
+// run the root's [Command.PreRun], run the leaf.
+//
+// Run owns every line the dispatcher prints, and returns go-core's process
+// exit codes:
+//
+//   - a parent command run with no subcommand, or any command given -h or
+//     --help, prints its generated help to stdout and returns ExitUsage
+//   - an unknown subcommand, an unknown flag, a malformed flag value, a
+//     rejected argument count, a missing required flag, a broken exclusive
+//     group, or a [UsageError] that PreRun or the command returns is
+//     reported on stderr with the command's usage and returns ExitUsage
+//   - any other error PreRun or the command returns is reported once on
+//     stderr and returns ExitFailure
+//   - a command that succeeds returns ExitOK
 func Run(ctx context.Context, root *Command, args []string, stdout, stderr io.Writer) int {
-	bindRootFlags(root)
+	prepareTree(root)
 	cmd := root
 	var path []*Command
 	for {

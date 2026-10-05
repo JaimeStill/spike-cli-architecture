@@ -85,8 +85,9 @@ func (inv *Invocation) Changed(name string) bool {
 //
 // Define flags by their long name only; the dispatcher has no shorthand
 // flags, and accepts -h beside --help as the one exception. A leaf accepts
-// its flags before, between, and after its positional arguments; a parent's
-// flags precede its subcommand. Flags defined on the root are root flags:
+// its flags before, between, and after its positional arguments, up to a
+// "--" after which every argument is positional; a parent's flags precede
+// its subcommand. Flags defined on the root are root flags:
 // every command below it accepts them too, at any depth, and they set the
 // same value. A command below the root that defines a flag with a root
 // flag's name panics when the tree is dispatched.
