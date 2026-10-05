@@ -1,6 +1,6 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** building
+- **State:** brief ready
 - **Task:** dispatcher
 - **Branch:** dispatcher
 
