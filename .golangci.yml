@@ -20,12 +20,16 @@ linters:
         # Package cli is shaped to become go-cli-sdk's package, so it
         # depends on nothing but the standard library and go-core. The rule
         # covers its tests too: they drive the API with the same imports
-        # plus cli itself.
+        # plus cli itself. Allow entries match by prefix unless they end
+        # in `$`, so each is anchored: go-core as the exact module path or
+        # a path under it (not a sibling like go-core-extra), and cli as
+        # itself (not a sibling like clix).
         cli:
           list-mode: strict
           files:
             - "**/cli/*.go"
           allow:
             - $gostd
-            - github.com/standards-lab/go-core
-            - github.com/JaimeStill/spike-cli-architecture/cli
+            - github.com/standards-lab/go-core$
+            - github.com/standards-lab/go-core/
+            - github.com/JaimeStill/spike-cli-architecture/cli$
