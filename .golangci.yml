@@ -3,13 +3,29 @@ version: "2"
 
 linters:
   # The standard set (errcheck, govet, ineffassign, staticcheck, unused),
-  # plus testpackage, which keeps tests black-box. Its skip regexp is
+  # plus depguard, which holds package cli to its allowed imports, and
+  # testpackage, which keeps tests black-box. Its skip regexp is
   # narrowed to export_test.go: tests live in <pkg>_test and drive the
   # exported API, and the one white-box file allowed is export_test.go,
   # which only exports a clock or probe hook the API cannot reach.
   default: standard
   enable:
+    - depguard
     - testpackage
   settings:
     testpackage:
       skip-regexp: export_test\.go
+    depguard:
+      rules:
+        # Package cli is shaped to become go-cli-sdk's package, so it
+        # depends on nothing but the standard library and go-core. The rule
+        # covers its tests too: they drive the API with the same imports
+        # plus cli itself.
+        cli:
+          list-mode: strict
+          files:
+            - "**/cli/*.go"
+          allow:
+            - $gostd
+            - github.com/standards-lab/go-core
+            - github.com/JaimeStill/spike-cli-architecture/cli
