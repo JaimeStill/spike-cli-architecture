@@ -40,10 +40,22 @@ type Command struct {
 	// error once with ExitFailure. A nil Run makes the command a parent.
 	Run func(ctx context.Context, inv *Invocation) error
 
+	// PreRun is a hook on the root that runs once per dispatch to a leaf,
+	// after its flags parse and pass their checks and before its Run, with
+	// the Invocation Run will receive. It suits work every command shares,
+	// such as validating root flags. An error it returns is reported as
+	// Run's would be, and Run is not called. It does not run when the
+	// dispatch ends earlier: on help, an unknown subcommand, or a usage
+	// error. Setting PreRun below the root panics when the tree is
+	// dispatched.
+	PreRun func(ctx context.Context, inv *Invocation) error
+
 	flags     *flag.FlagSet
 	inherited map[string]bool // names of the root flags shared into flags
 	parent    *Command
 	children  []*Command
+	required  []string   // flag names from Require, in order
+	exclusive [][]string // flag groups from Exclusive, in order
 }
 
 // Invocation is what a running command receives: its positional arguments

@@ -67,17 +67,27 @@ func parse(cmd *Command, args []string, stdout, stderr io.Writer) (rest []string
 	return positional, process.ExitOK, true
 }
 
-// execute validates the leaf's positional arguments, runs it, and maps its
-// error to an exit code. path holds the commands from the root to the leaf.
+// execute validates the leaf's positional arguments and flag groups, runs
+// the root's PreRun and then the leaf, and maps the first error to an exit
+// code. path holds the commands from the root to the leaf.
 func execute(ctx context.Context, path []*Command, args []string, stdout, stderr io.Writer) int {
-	cmd := path[len(path)-1]
+	root, cmd := path[0], path[len(path)-1]
 	if cmd.Args != nil {
 		if err := cmd.Args(args); err != nil {
 			return usageError(cmd, stderr, err)
 		}
 	}
 	inv := &Invocation{Args: args, Stdout: stdout, Stderr: stderr, changed: changed(path)}
-	err := cmd.Run(ctx, inv)
+	if err := cmd.checkFlags(inv.changed); err != nil {
+		return usageError(cmd, stderr, err)
+	}
+	var err error
+	if root.PreRun != nil {
+		err = root.PreRun(ctx, inv)
+	}
+	if err == nil {
+		err = cmd.Run(ctx, inv)
+	}
 	if err == nil {
 		return process.ExitOK
 	}

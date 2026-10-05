@@ -13,15 +13,20 @@ import (
 //
 // It runs at the start of every dispatch, over the whole tree, so a wiring
 // mistake panics on the first run whatever path the user takes: a command
-// that defines a flag with a root flag's name, or a parent with an Args
-// validator it would never call. Sharing is idempotent, so a tree can be
-// dispatched more than once.
+// that defines a flag with a root flag's name, a parent with an Args
+// validator it would never call, a PreRun below the root, or a flag
+// requirement or group the command cannot honour. Sharing is idempotent,
+// so a tree can be dispatched more than once.
 func bindRootFlags(root *Command) {
 	var walk func(c *Command)
 	walk = func(c *Command) {
 		if c.Args != nil && c.isParent() {
 			panic(fmt.Sprintf("cli: %s: Args set on a parent command", c.path()))
 		}
+		if c.PreRun != nil && c != root {
+			panic(fmt.Sprintf("cli: %s: PreRun set below the root", c.path()))
+		}
+		c.checkWiring()
 		for _, sub := range c.children {
 			sub.inherit(root.Flags())
 			walk(sub)

@@ -22,7 +22,7 @@ func help(cmd *Command) string {
 	}
 	writeSection(&b, "Commands", commands)
 
-	own := flagsOf(cmd.Flags(), func(name string) bool { return !cmd.inherited[name] })
+	own := flagsOf(cmd, func(name string) bool { return !cmd.inherited[name] })
 	own = append(own, row{"--help", "Show help for " + cmd.path()})
 	writeSection(&b, "Flags", own)
 	writeSection(&b, "Global flags", inheritedFlags(cmd))
@@ -51,7 +51,7 @@ func usageLine(cmd *Command) string {
 // inheritedFlags returns the root flags shared into cmd, listed under their
 // own heading in its help. The root's own help lists them as its Flags.
 func inheritedFlags(cmd *Command) []row {
-	return flagsOf(cmd.Flags(), func(name string) bool { return cmd.inherited[name] })
+	return flagsOf(cmd, func(name string) bool { return cmd.inherited[name] })
 }
 
 // row is one line of a help section: a command or flag name, and the text
@@ -61,13 +61,13 @@ type row struct {
 	text string // "Print the version", or "bucket to read (default \"logs\")"
 }
 
-// flagsOf returns a row for each flag defined on fs whose name keep
+// flagsOf returns a row for each flag on cmd's flag set whose name keep
 // accepts, in lexical order.
-func flagsOf(fs *flag.FlagSet, keep func(name string) bool) []row {
+func flagsOf(cmd *Command, keep func(name string) bool) []row {
 	var lines []row
-	fs.VisitAll(func(f *flag.Flag) {
+	cmd.Flags().VisitAll(func(f *flag.Flag) {
 		if keep(f.Name) {
-			lines = append(lines, describe(f))
+			lines = append(lines, describe(f, cmd.isRequired(f.Name)))
 		}
 	})
 	return lines
@@ -76,8 +76,9 @@ func flagsOf(fs *flag.FlagSet, keep func(name string) bool) []row {
 // describe renders f as a flags-section row: its long name, the value
 // placeholder flag.UnquoteUsage derives, and the default when it is not
 // the zero value. A repeatable flag from [StringsVar] takes "string" as its
-// placeholder, since each occurrence takes one, and says it repeats.
-func describe(f *flag.Flag) row {
+// placeholder, since each occurrence takes one, and says it repeats; a flag
+// the command requires says so.
+func describe(f *flag.Flag, required bool) row {
 	kind, usage := flag.UnquoteUsage(f)
 	_, repeatable := f.Value.(*stringsValue)
 	if repeatable {
@@ -85,6 +86,9 @@ func describe(f *flag.Flag) row {
 			kind = "string"
 		}
 		usage += " (repeatable)"
+	}
+	if required {
+		usage += " (required)"
 	}
 	name := "--" + f.Name
 	if kind != "" {

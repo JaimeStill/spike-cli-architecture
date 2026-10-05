@@ -12,21 +12,33 @@
 // [Command.Args], ask whether a flag was given with [Invocation.Changed], and
 // take a repeatable flag with [StringsVar].
 //
+// A leaf can require flags with [Command.Require] and declare mutually
+// exclusive groups with [Command.Exclusive], over its own flags and the root
+// flags; a flag counts as given when Changed reports it. The root's
+// [Command.PreRun] hook runs once per dispatch, before the leaf's Run, for
+// work every command shares, such as checking the root flags. A dispatch to
+// a leaf goes in this order, stopping at the first failure: parse each
+// level's flags, select the leaf, validate its arguments, check its
+// required flags and then its exclusive groups, run PreRun, run the leaf.
+//
 // Run owns every line the dispatcher prints, and the exit codes follow
 // go-core's process convention:
 //
 //   - a parent command run with no subcommand, or any command given -h or
 //     --help, prints its generated help to stdout and returns ExitUsage
-//   - an unknown subcommand, an unknown flag, a malformed flag value, or a
-//     [UsageError] a command returns is reported on stderr with the command's
-//     usage and returns ExitUsage
-//   - any other error a command returns is reported once on stderr and
-//     returns ExitFailure
+//   - an unknown subcommand, an unknown flag, a malformed flag value, a
+//     rejected argument count, a missing required flag, a broken exclusive
+//     group, or a [UsageError] that PreRun or the command returns is
+//     reported on stderr with the command's usage and returns ExitUsage
+//   - any other error PreRun or the command returns is reported once on
+//     stderr and returns ExitFailure
 //
 // Wiring mistakes, such as two subcommands with one name, a flag defined
-// twice, or a command redefining a root flag, panic while the tree is built
-// or at the start of its first dispatch, so they surface the first time the
-// program starts rather than on the path a user happens to take.
+// twice, a command redefining a root flag, a PreRun below the root, or a
+// requirement or group naming a flag the command lacks, panic while the
+// tree is built or at the start of its first dispatch, so they surface the
+// first time the program starts rather than on the path a user happens to
+// take.
 //
 // The package imports only the standard library and go-core.
 package cli
