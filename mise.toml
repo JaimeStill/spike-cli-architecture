@@ -13,6 +13,12 @@ BLOBFS_DATABASE_PORT = "5436"
 BLOBFS_DATABASE_NAME = "app"
 BLOBFS_DATABASE_USER = "app"
 BLOBFS_DATABASE_PASSWORD = "app"
+# The compose stack's Azurite, path-style, with the emulator's published development account and
+# key. The store's Start creates the container when it is missing, so `mise run up` needs no setup.
+BLOBFS_STORAGE_ENDPOINT = "http://127.0.0.1:10010/devstoreaccount1"
+BLOBFS_STORAGE_ACCOUNT = "devstoreaccount1"
+BLOBFS_STORAGE_KEY = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+BLOBFS_STORAGE_CONTAINER = "cliarch"
 
 [tasks.check]
 description = "Build, vet, format, fix, tidy, test, and lint every module; writes nothing"

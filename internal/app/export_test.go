@@ -28,3 +28,9 @@ func SetOpeners(a *App, postgres func() (Database, error), store func() (Store, 
 func Mount(a *App, build func(*Deps) *cli.Command, need ...Dependency) {
 	a.mount(build, need...)
 }
+
+// The production openers, for tests that wrap the real dependencies.
+var (
+	OpenPostgres = openPostgres
+	OpenStore    = openStore
+)

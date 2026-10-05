@@ -10,6 +10,8 @@ import (
 
 	godatabase "github.com/standards-lab/go-database"
 	"github.com/standards-lab/go-database/postgres"
+	"github.com/standards-lab/go-storage"
+	"github.com/standards-lab/go-storage/azureblob"
 
 	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/lifecycle"
@@ -17,7 +19,7 @@ import (
 
 // envPrefix is the prefix of every environment variable blobfs reads its
 // dependency configuration from: the libraries compose the rest, such as
-// BLOBFS_DATABASE_HOST.
+// BLOBFS_DATABASE_HOST or BLOBFS_STORAGE_ENDPOINT.
 const envPrefix = "BLOBFS"
 
 // unwindTimeout bounds the closing of a run's dependencies. It runs under a
@@ -51,8 +53,8 @@ type database interface {
 	Conn() *sql.DB
 }
 
-// objectStore is the object store dependency as command bodies see it. A
-// later slice holds go-storage's *Store behind it.
+// objectStore is the object store dependency as command bodies see it:
+// go-storage's *Store behind it, over the Azure Blob provider.
 type objectStore interface {
 	service
 }
@@ -66,15 +68,11 @@ type openers struct {
 	store    func() (objectStore, error)
 }
 
-// errNoOpener is what a dependency without an opener yet fails to come up
-// with: the object store, until a later slice adds its real opener.
-var errNoOpener = errors.New("no opener in this build")
-
 // defaultOpeners returns the production openers.
 func defaultOpeners() openers {
 	return openers{
 		postgres: openPostgres,
-		store:    func() (objectStore, error) { return nil, errNoOpener },
+		store:    openStore,
 	}
 }
 
@@ -93,6 +91,25 @@ func openPostgres() (database, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// openStore reads the object store configuration from the environment
+// alone, BLOBFS_STORAGE_ENDPOINT, _CONTAINER, _ACCOUNT, _KEY, the limits and
+// timeouts go-storage names, and the azureblob options under
+// BLOBFS_STORAGE_OPTIONS_, and constructs the store over the Azure Blob
+// provider. It does no I/O: Start creates the container when it is missing
+// and probes the service, both bounded by the configuration's
+// request_timeout.
+func openStore() (objectStore, error) {
+	var cfg storage.Config
+	if err := cfg.Finalize(envPrefix); err != nil {
+		return nil, err
+	}
+	client, err := azureblob.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return storage.New(client, cfg), nil
 }
 
 // initializer brings up the dependencies a run's command declared, on its
