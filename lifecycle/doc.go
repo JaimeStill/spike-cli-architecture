@@ -16,9 +16,6 @@
 //     shuts down: the one-shot form a CLI command uses
 //   - [Coordinator.Run], which starts the System, serves until its context
 //     ends, and shuts down: the long-running form a service uses
-//   - [Step] and [Stack], the phase-by-phase engine internal/app still uses;
-//     they are not part of the proposed API and go once it moves onto the
-//     Coordinator
 //
 // # Participation
 //
@@ -86,8 +83,8 @@
 //
 // The package is promoted to go-core when:
 //
-//   - its API, Step and Stack aside, stays unchanged through the spike's
-//     files and validate tasks
+//   - its API stays unchanged through the spike's files and validate
+//     tasks
 //   - the spike's CLI and a graph shaped like go-web-service's both run on
 //     it
 //   - go-core's Coordinator, rebuilt on it, passes its black-box tests,

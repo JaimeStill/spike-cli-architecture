@@ -7,8 +7,8 @@ linters:
   # allowed imports, and testpackage, which keeps tests black-box. Its
   # skip regexp is narrowed to export_test.go: tests live in <pkg>_test
   # and drive the exported API, and the one white-box file allowed is
-  # export_test.go, which only exports a clock, probe, or opener hook the
-  # API cannot reach.
+  # export_test.go, which only exports a clock or probe hook the API
+  # cannot reach.
   default: standard
   enable:
     - depguard

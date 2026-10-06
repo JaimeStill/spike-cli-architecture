@@ -18,7 +18,7 @@ type step struct {
 }
 
 // engine records the phases that started, in order, and unwinds them in
-// reverse. It is the executor under [Coordinator] and the exported [Stack].
+// reverse. It is the executor under [Coordinator].
 // The zero value is ready to use, and an engine is safe for concurrent use.
 type engine struct {
 	// unwindFailed pushes a failing phase's every step, not only those

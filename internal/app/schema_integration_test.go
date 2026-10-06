@@ -16,7 +16,7 @@ import (
 )
 
 // The schema group against the compose stack's Postgres, through App.Run
-// with the production openers: `mise run up`, then `mise run integration`.
+// with the production graph: `mise run up`, then `mise run integration`.
 // The test resets the schema when it starts and when it ends, so it runs
 // the same against a fresh stack and a reused one.
 

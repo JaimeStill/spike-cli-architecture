@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,63 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/lifecycle"
 	"github.com/standards-lab/go-core/config"
 )
+
+// patience bounds every wait a test makes on another goroutine, so a broken
+// lifecycle fails the test instead of hanging it.
+const patience = 5 * time.Second
+
+// recorder collects events, in the order they happen.
+type recorder struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (r *recorder) record(event string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, event)
+}
+
+func (r *recorder) list() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.events)
+}
+
+// await fails the test unless ch closes within patience.
+func await(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(patience):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// rendezvous returns two functions, each of which marks its side begun and
+// waits for the other's, failing with an error when the other never begins:
+// the pair completes only when both run at once.
+func rendezvous() (a, b func() error) {
+	aBegun, bBegun := make(chan struct{}), make(chan struct{})
+	meet := func(mine chan struct{}, theirs <-chan struct{}) func() error {
+		return func() error {
+			close(mine)
+			select {
+			case <-theirs:
+				return nil
+			case <-time.After(patience):
+				return errors.New("sibling never began")
+			}
+		}
+	}
+	return meet(aBegun, bBegun), meet(bBegun, aBegun)
+}
+
+// sameSet reports whether got holds exactly want, in any order.
+func sameSet(got []string, want ...string) bool {
+	return len(got) == len(want) &&
+		slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want)))
+}
 
 // fake is a Subsystem that records "start name" and "stop name" on r, then
 // runs its optional start and stop behaviour; nil behaviour succeeds.

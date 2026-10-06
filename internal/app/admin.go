@@ -1,27 +1,33 @@
 package app
 
 import (
-	"context"
-
 	"github.com/standards-lab/sqlate"
 	sqlatepostgres "github.com/standards-lab/sqlate/postgres"
 
 	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
-	"github.com/JaimeStill/spike-cli-architecture/cli"
+	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
-// schemaGroup builds the schema command group over d, a handle declaring
-// Postgres alone: each leaf's body runs in d.Run, and the client it asks
-// for wraps the pool d.Postgres brings up in sqlate's Postgres dialect.
-func schemaGroup(d *deps) *cli.Command {
-	return schema.Commands(schema.Deps{
-		Run: d.Run,
-		Client: func(ctx context.Context) (*schema.Client, error) {
-			db, err := d.Postgres(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return schema.NewClient(sqlate.Wrap(db.Conn(), sqlatepostgres.Dialect{}), nil)
-		},
-	})
+// admin is the graph's administration nodes: the migrator the schema group
+// uses, over the infrastructure's database.
+type admin struct {
+	in       *infrastructure
+	migrator *graph.Node[*schema.Client]
+}
+
+// defineAdmin defines the administration nodes on g over in. It constructs
+// nothing.
+func defineAdmin(g *graph.Graph, in *infrastructure) *admin {
+	a := &admin{in: in}
+	a.migrator = g.Define("migrator", a.newMigrator)
+	return a
+}
+
+// newMigrator constructs the schema client over the database's pool,
+// wrapped in sqlate's Postgres dialect. It does no I/O: the pool first
+// connects when the lifecycle starts the database, after the Build, and the
+// client itself opens nothing.
+func (a *admin) newMigrator(s *graph.Scope) (*schema.Client, error) {
+	db := s.Use(a.in.database)
+	return schema.NewClient(sqlate.Wrap(db.Conn(), sqlatepostgres.Dialect{}), nil)
 }

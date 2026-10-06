@@ -8,54 +8,97 @@ import (
 	"testing"
 
 	"github.com/standards-lab/go-core/process"
+	godatabase "github.com/standards-lab/go-database"
+	"github.com/standards-lab/go-storage"
 
-	"github.com/JaimeStill/spike-cli-architecture/internal/app"
+	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
+	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
-// The schema group's dependency declaration, driven through App.Run over
-// the recording fakes. The fake database's pool fails every query, so a
-// verb that reaches its body brings up the group's declared set and then
-// fails at its first statement: the events show what it opened. The
-// stack-backed tests are in schema_integration_test.go.
+// The schema group's Uses, driven through App.Run. The stack-backed tests
+// are in schema_integration_test.go.
 
-// schemaApp returns blobfs with r's openers and its production groups.
-func schemaApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
-	a := app.New(stdout, stderr)
-	app.SetOpeners(a,
-		func() (app.Database, error) { return r.open("postgres") },
-		func() (app.Store, error) { return r.open("store") },
-	)
-	return a
+// schemaVerbs are the schema group's verbs, each as a run that reaches its
+// body.
+var schemaVerbs = [][]string{
+	{"schema", "status"},
+	{"schema", "up"},
+	{"schema", "down"},
+	{"schema", "reset", "--yes"},
 }
 
-func TestSchema_VerbsOpenPostgresOnly(t *testing.T) {
-	for _, args := range [][]string{
-		{"schema", "status"},
-		{"schema", "up"},
-		{"schema", "down"},
-		{"schema", "reset", "--yes"},
-	} {
+func TestSchema_VerbsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
+	for _, args := range schemaVerbs {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			r := newRecorder()
+			clearEnv(t)
+			r := &recorder{}
 			var out, errOut bytes.Buffer
+			a := recordingApp(r, &out, &errOut)
+			// The real migrator and database constructors run, each recorded,
+			// and the database configuration's recorder stops the Build: the
+			// events show every node the verb reaches.
+			a.Graph().Replace(a.Nodes().Migrator, func(s *graph.Scope) (*schema.Client, error) {
+				r.record("migrator")
+				return a.NewMigrator(s)
+			})
+			a.Graph().Replace(a.Nodes().Database, func(s *graph.Scope) (*godatabase.DB, error) {
+				r.record("database")
+				return a.NewDatabase(s)
+			})
 
-			code := schemaApp(r, &out, &errOut).Run(context.Background(), args)
+			code := a.Run(context.Background(), args)
 
 			if code != process.ExitFailure {
-				t.Errorf("code = %d, want %d; stderr = %q", code, process.ExitFailure, errOut.String())
+				t.Errorf("code = %d, want %d", code, process.ExitFailure)
 			}
-			if !strings.Contains(errOut.String(), errNoConnection.Error()) {
-				t.Errorf("stderr = %q, want the body to reach the database", errOut.String())
+			want := "blobfs " + strings.Join(args[:2], " ") + ": database config: recorded\n"
+			if errOut.String() != want {
+				t.Errorf("stderr = %q, want %q", errOut.String(), want)
 			}
-			want := []string{"open postgres", "start postgres", "shutdown postgres"}
-			if got := r.log(); !slices.Equal(got, want) {
-				t.Errorf("events = %q, want %q", got, want)
+			if got, want := r.log(), []string{"migrator", "database", "database config"}; !slices.Equal(got, want) {
+				t.Errorf("constructors run = %q, want %q", got, want)
 			}
 		})
 	}
 }
 
-func TestSchema_ResetWithoutYesOpensNothing(t *testing.T) {
+func TestSchema_FailsOnlyOnTheDatabaseConfig(t *testing.T) {
+	// An empty environment leaves the database name unset. A storage value
+	// its Finalize rejects changes nothing: no schema verb reads it.
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{"empty environment", nil},
+		{"invalid storage value", map[string]string{storage.NewEnv("BLOBFS").MaxObjectSize: "not-a-size"}},
+	}
+	for _, tt := range tests {
+		for _, args := range schemaVerbs {
+			t.Run(tt.name+"/"+strings.Join(args, " "), func(t *testing.T) {
+				clearEnv(t)
+				for k, v := range tt.env {
+					t.Setenv(k, v)
+				}
+
+				code, stdout, stderr := run(t, args...)
+
+				if code != process.ExitFailure {
+					t.Errorf("code = %d, want %d", code, process.ExitFailure)
+				}
+				// One report, under the verb's path.
+				want := "blobfs " + strings.Join(args[:2], " ") + ": database config: database name required\n"
+				if stderr != want {
+					t.Errorf("stderr = %q, want %q", stderr, want)
+				}
+				if stdout != "" {
+					t.Errorf("stdout = %q, want empty", stdout)
+				}
+			})
+		}
+	}
+}
+
+func TestSchema_ResetWithoutYesBuildsNothing(t *testing.T) {
 	tests := []struct {
 		name       string
 		args       []string
@@ -74,10 +117,11 @@ func TestSchema_ResetWithoutYesOpensNothing(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := newRecorder()
+			clearEnv(t)
+			r := &recorder{}
 			var out, errOut bytes.Buffer
 
-			code := schemaApp(r, &out, &errOut).Run(context.Background(), tt.args)
+			code := recordingApp(r, &out, &errOut).Run(context.Background(), tt.args)
 
 			if code != process.ExitUsage {
 				t.Errorf("code = %d, want %d", code, process.ExitUsage)
@@ -86,41 +130,7 @@ func TestSchema_ResetWithoutYesOpensNothing(t *testing.T) {
 				t.Errorf("stderr = %q, want it to start with %q", errOut.String(), tt.wantStderr)
 			}
 			if got := r.log(); len(got) != 0 {
-				t.Errorf("events = %q, want no opener called", got)
-			}
-		})
-	}
-}
-
-func TestSchema_HelpAndUsageErrorsOpenNothing(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-	}{
-		{"group alone", []string{"schema"}},
-		{"group --help", []string{"schema", "--help"}},
-		{"status --help", []string{"schema", "status", "--help"}},
-		{"up --help", []string{"schema", "up", "--help"}},
-		{"down --help", []string{"schema", "down", "--help"}},
-		{"reset --help", []string{"schema", "reset", "--help"}},
-		{"unknown verb", []string{"schema", "bogus"}},
-		{"status with an argument", []string{"schema", "status", "extra"}},
-		{"up with an argument", []string{"schema", "up", "extra"}},
-		{"down with an argument", []string{"schema", "down", "extra"}},
-		{"reset with an argument", []string{"schema", "reset", "--yes", "extra"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := newRecorder()
-			var out, errOut bytes.Buffer
-
-			code := schemaApp(r, &out, &errOut).Run(context.Background(), tt.args)
-
-			if code != process.ExitUsage {
-				t.Errorf("code = %d, want %d", code, process.ExitUsage)
-			}
-			if got := r.log(); len(got) != 0 {
-				t.Errorf("events = %q, want no opener called", got)
+				t.Errorf("constructors run = %q, want none", got)
 			}
 		})
 	}

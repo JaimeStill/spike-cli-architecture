@@ -1,36 +1,50 @@
 package app
 
-import "github.com/JaimeStill/spike-cli-architecture/cli"
+import (
+	godatabase "github.com/standards-lab/go-database"
+	"github.com/standards-lab/go-storage"
 
-// The opener hook: tests swap the real openers for recording fakes, and
-// mount a probe command group declaring any set of dependencies, which the
-// production groups do not cover alone.
-
-type (
-	Database   = database
-	Store      = objectStore
-	Deps       = deps
-	Dependency = dependency
+	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
+	"github.com/JaimeStill/spike-cli-architecture/cli"
+	"github.com/JaimeStill/spike-cli-architecture/graph"
+	"github.com/JaimeStill/spike-cli-architecture/lifecycle"
 )
 
-const (
-	DepPostgres = depPostgres
-	DepStore    = depStore
-)
+// The probe hook: tests reach an App's graph and its nodes, to Replace a
+// node's constructor with a recorder before the App runs, and its root, to
+// add a test-only command that Uses nodes no production command combines.
 
-// SetOpeners replaces a's openers.
-func SetOpeners(a *App, postgres func() (Database, error), store func() (Store, error)) {
-	a.init.openers = openers{postgres: postgres, store: store}
+// Nodes is an App's graph nodes.
+type Nodes struct {
+	DatabaseConfig  *graph.Node[godatabase.Config]
+	StorageConfig   *graph.Node[storage.Config]
+	LifecycleConfig *graph.Node[lifecycle.Config]
+	Database        *graph.Node[*godatabase.DB]
+	Store           *graph.Node[*storage.Store]
+	Migrator        *graph.Node[*schema.Client]
 }
 
-// Mount mounts a command group on a, declaring need, as the composition
-// root does.
-func Mount(a *App, build func(*Deps) *cli.Command, need ...Dependency) {
-	a.mount(build, need...)
+// Graph returns the graph a's commands are built from.
+func (a *App) Graph() *graph.Graph { return a.graph }
+
+// Root returns a's root command.
+func (a *App) Root() *cli.Command { return a.root }
+
+// Nodes returns a's graph nodes.
+func (a *App) Nodes() Nodes {
+	return Nodes{
+		DatabaseConfig:  a.infra.databaseConfig,
+		StorageConfig:   a.infra.storageConfig,
+		LifecycleConfig: a.infra.lifecycleConfig,
+		Database:        a.infra.database,
+		Store:           a.infra.store,
+		Migrator:        a.admin.migrator,
+	}
 }
 
-// The production openers, for tests that wrap the real dependencies.
-var (
-	OpenPostgres = openPostgres
-	OpenStore    = openStore
-)
+// NewDatabase, NewStore, and NewMigrator are a's production constructors
+// for the database, store, and migrator nodes, for a Replace-d constructor
+// that records or wraps the real one.
+func (a *App) NewDatabase(s *graph.Scope) (*godatabase.DB, error) { return a.infra.newDatabase(s) }
+func (a *App) NewStore(s *graph.Scope) (*storage.Store, error)    { return a.infra.newStore(s) }
+func (a *App) NewMigrator(s *graph.Scope) (*schema.Client, error) { return a.admin.newMigrator(s) }
