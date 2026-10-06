@@ -52,3 +52,16 @@ func TestTable_NoRowsWritesTheHeader(t *testing.T) {
 		t.Errorf("output = %q, want %q", b.String(), want)
 	}
 }
+
+func TestRecord_AlignsLabels(t *testing.T) {
+	var b bytes.Buffer
+
+	err := output.Record(&b, []output.Field{{Name: "id", Value: "1"}, {Name: "version", Value: "2"}})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "id:      1\nversion: 2\n"; b.String() != want {
+		t.Errorf("output =\n%s\nwant\n%s", b.String(), want)
+	}
+}

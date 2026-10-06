@@ -16,6 +16,7 @@ import (
 	"github.com/standards-lab/go-storage"
 
 	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
+	"github.com/JaimeStill/spike-cli-architecture/domain/files"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 	"github.com/JaimeStill/spike-cli-architecture/internal/app"
 	"github.com/JaimeStill/spike-cli-architecture/lifecycle"
@@ -101,6 +102,7 @@ func recordingApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
 	g.Replace(n.Database, recording[*godatabase.DB](r, "database"))
 	g.Replace(n.Store, recording[*storage.Store](r, "store"))
 	g.Replace(n.Migrator, recording[*schema.Client](r, "migrator"))
+	g.Replace(n.Files, recording[*files.Store](r, "files"))
 	return a
 }
 

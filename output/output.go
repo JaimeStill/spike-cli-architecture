@@ -28,3 +28,22 @@ func Table(w io.Writer, header []string, rows [][]string) error {
 	}
 	return tw.Flush()
 }
+
+// Field is one line of a record: a label and its value.
+type Field struct {
+	Name  string
+	Value string
+}
+
+// Record writes one record to w as aligned label and value lines, one per
+// field in the order given, each label followed by a colon. It is how a
+// command shows one row, where a listing shows many.
+func Record(w io.Writer, fields []Field) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 1, ' ', 0)
+	for _, f := range fields {
+		if _, err := fmt.Fprintf(tw, "%s:\t%s\n", f.Name, f.Value); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}

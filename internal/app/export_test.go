@@ -6,6 +6,7 @@ import (
 
 	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
 	"github.com/JaimeStill/spike-cli-architecture/cli"
+	"github.com/JaimeStill/spike-cli-architecture/domain/files"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 	"github.com/JaimeStill/spike-cli-architecture/lifecycle"
 )
@@ -23,6 +24,7 @@ type Nodes struct {
 	Database        *graph.Node[*godatabase.DB]
 	Store           *graph.Node[*storage.Store]
 	Migrator        *graph.Node[*schema.Client]
+	Files           *graph.Node[*files.Store]
 }
 
 // Graph returns the graph a's commands are built from.
@@ -40,12 +42,14 @@ func (a *App) Nodes() Nodes {
 		Database:        a.infra.database,
 		Store:           a.infra.store,
 		Migrator:        a.admin.migrator,
+		Files:           a.domain.files,
 	}
 }
 
-// NewDatabase, NewStore, and NewMigrator are a's production constructors
-// for the database, store, and migrator nodes, for a Replace-d constructor
-// that records or wraps the real one.
+// NewDatabase, NewStore, NewMigrator, and NewFiles are a's production
+// constructors for the database, store, migrator, and files nodes, for a
+// Replace-d constructor that records or wraps the real one.
 func (a *App) NewDatabase(s *graph.Scope) (*godatabase.DB, error) { return a.infra.newDatabase(s) }
 func (a *App) NewStore(s *graph.Scope) (*storage.Store, error)    { return a.infra.newStore(s) }
 func (a *App) NewMigrator(s *graph.Scope) (*schema.Client, error) { return a.admin.newMigrator(s) }
+func (a *App) NewFiles(s *graph.Scope) (*files.Store, error)      { return a.domain.newFiles(s) }

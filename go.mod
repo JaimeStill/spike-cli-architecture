@@ -3,6 +3,7 @@ module github.com/JaimeStill/spike-cli-architecture
 go 1.27
 
 require (
+	github.com/standards-lab/blobfs v0.5.0
 	github.com/standards-lab/blobfs/postgres v0.3.0
 	github.com/standards-lab/go-core v0.5.0
 	github.com/standards-lab/go-database v0.7.0
@@ -27,7 +28,6 @@ require (
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.28 // indirect
-	github.com/standards-lab/blobfs v0.3.0 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	golang.org/x/exp v0.0.0-20260813180055-c1d0aacb2297 // indirect
 	golang.org/x/net v0.58.0 // indirect

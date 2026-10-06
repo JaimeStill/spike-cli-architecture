@@ -6,6 +6,7 @@ import (
 
 	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
 	"github.com/JaimeStill/spike-cli-architecture/cli"
+	"github.com/JaimeStill/spike-cli-architecture/domain/files"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
@@ -15,6 +16,7 @@ type App struct {
 	graph  *graph.Graph
 	infra  *infrastructure
 	admin  *admin
+	domain *domain
 	root   *cli.Command
 	stdout io.Writer
 	stderr io.Writer
@@ -27,9 +29,10 @@ func New(stdout, stderr io.Writer) *App {
 	g := graph.New()
 	infra := defineInfrastructure(g)
 	a := &App{
-		graph: g,
-		infra: infra,
-		admin: defineAdmin(g, infra),
+		graph:  g,
+		infra:  infra,
+		admin:  defineAdmin(g, infra),
+		domain: defineDomain(g, infra),
 		root: &cli.Command{
 			Name:    "blobfs",
 			Summary: "blobfs manages files in a blob store.",
@@ -41,6 +44,7 @@ func New(stdout, stderr io.Writer) *App {
 		versionCommand(),
 		schema.Commands(a.admin.migrator),
 	)
+	a.root.Add(files.Commands(a.domain.files)...)
 	return a
 }
 
