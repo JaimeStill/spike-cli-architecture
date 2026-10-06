@@ -287,6 +287,9 @@ redirected at the session brief; slices 0/4 of the new brief · standards — ·
   go-core's started-only Shutdown contract. Readiness, OnReady, and Monitor stay mapped in the
   documentation, not built.
 
+- composition: a built node is a graph.Dependency (name, value, OnStart/OnShutdown hooks), returned
+  by System.Layers() [][]Dependency; rejected Member (too generic), Instance, Built (architect).
+
 ## Pending edits
 
 - architecture · `standards/go-elemental/principles/topology-and-naming.md`: state that the
