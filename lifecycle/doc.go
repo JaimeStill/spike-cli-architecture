@@ -36,8 +36,8 @@
 // "database: <err>".
 //
 // A context that ends before or during startup stops it: no further layer
-// starts. Run treats that as the clean stop it treats the context's end
-// after startup as. Exec returns the cancellation, since its function never
+// starts. Run treats that as a clean stop, as it does the context's end
+// after startup. Exec returns the cancellation, since its function never
 // ran.
 //
 // # Shutdown
@@ -49,14 +49,15 @@
 // participant whose Start failed, so a dependency constructed but not
 // started leaks nothing; the start error stays the error reported.
 //
-// Shutdown runs under one context derived from context.Background, so it
-// keeps its budget whatever became of the caller's, bounded by
-// [Config].ShutdownTimeout. A layer that outlives the deadline adds one
-// error wrapping context.DeadlineExceeded; its unfinished shutdowns continue
-// on the expired context and their late errors are dropped, and the
-// remaining layers are still attempted. Shutdown errors are labelled with the
-// name, joined, prefixed "shutdown: ", and joined with Exec's or Run's
-// result, so a failed shutdown fails an otherwise clean run.
+// Shutdown runs under one context derived from context.Background and
+// bounded by [Config].ShutdownTimeout, so it keeps its whole budget even
+// when the caller's context has ended. The first layer that outlives the
+// deadline adds one error wrapping context.DeadlineExceeded. Its unfinished
+// shutdowns continue on the expired context, and their late errors are
+// dropped. Each remaining layer still starts its shutdowns on the expired
+// context, and shutdown does not wait for them. Shutdown errors are labelled
+// with the name, joined, prefixed "shutdown: ", and joined with Exec's or
+// Run's result, so a failed shutdown fails an otherwise clean run.
 //
 // # Mapping go-core's Coordinator
 //

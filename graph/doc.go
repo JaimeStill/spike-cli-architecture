@@ -32,9 +32,10 @@
 // are discovered as the constructors run, depth-first from the roots, and
 // can depend on what the constructors see. Each node is built at most once
 // per Build, so a node shared by several dependents is constructed once and
-// they all receive its value; a node no Use reaches is never constructed,
-// so a Build of a subset of the roots brings up only that subset's
-// dependencies. Each Build is independent and constructs fresh values.
+// they all receive its value. A node that is neither a root nor reached by
+// a Use is never constructed, so a Build of a subset of the roots brings up
+// only that subset's dependencies. Each Build is independent and constructs
+// fresh values.
 //
 // [Scope.After] adds an order-only edge: it passes no value and builds
 // nothing, and holds only when its target is in the System by some other
@@ -54,8 +55,9 @@
 // Use reached it, and Build reports the dependency's error. Wiring mistakes
 // panic with a "graph: " message, as each symbol's documentation states: a
 // dependency cycle, a node used on a Graph it was not defined on, a Scope
-// used after its constructor returned, a Replace after Build, a Get of a
-// node not in the System, and an empty or duplicate name.
+// used after its constructor returned, a hook recorded twice, a Replace
+// after Build, a Get of a node not in the System, a nil constructor, and an
+// empty or duplicate name.
 //
 // # Promotion
 //

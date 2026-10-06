@@ -3,9 +3,10 @@
 spike-cli-architecture tests whether a command-line application in the Elemental layout can drop
 cobra for a small dispatcher on the standard library's `flag` and bring up only the dependencies
 each command declares, by rebuilding spike-blobfs's CLI on published blobfs, go-storage and
-Postgres. Its answer is evidence for standards-lab's experiment.cli-architecture intake, which
-decides go-cli-sdk's API and go-cli-sdk-template's composition root; the spike decides nothing
-itself.
+Postgres. It also builds the composition primitive those dependencies come from: a typed
+dependency graph and a Coordinator that runs any subset built from it, both go-core candidates.
+Its answer is evidence for standards-lab's experiment.cli-architecture intake, which decides
+go-cli-sdk's API and go-cli-sdk-template's composition root; the spike decides nothing itself.
 
 The spike is the sub-goal `experiment.cli-architecture.spike-cli-architecture` in the
 coordinator's roadmap, `standards-lab/context/roadmap.toml`, where its tasks live. Its answer
@@ -13,9 +14,10 @@ lands in `standards-lab/context/cli-applications.md`.
 
 ## The question
 
-Can a dispatcher on the standard library's `flag`, with the planned go-cli-sdk feature set and a
-per-command dependency initializer, hold up in a real CLI over `blobfs`, go-storage, and
-Postgres?
+Can a dispatcher on the standard library's `flag`, with the planned go-cli-sdk feature set and
+commands that declare the dependencies they use, hold up in a real CLI over `blobfs`,
+go-storage, and Postgres? Can the dependency graph behind it also express go-web-service's
+staged composition?
 
 ## The evidence
 
@@ -24,7 +26,7 @@ Postgres?
    required and mutually exclusive flag groups, a set-flag query, a repeatable string flag,
    generated help (a parent run alone prints it; an unknown subcommand is a usage error), and a
    Run that exits with go-core's ExitUsage (2) on a usage error. It imports only the standard
-   library and go-core.
+   library, go-core, and the spike's `graph` and `lifecycle` packages.
 2. A CLI with no cobra in its module graph reproduces spike-blobfs's whole command surface over
    published blobfs, go-storage/azureblob, and Postgres.
 3. Each command opens only the dependencies it declares: help, usage errors, and
@@ -44,20 +46,29 @@ Postgres?
 
 ## Capabilities
 
-- **Dispatcher** (package `cli`): flag parsing, the command tree, help, and usage exits.
-- **Lifecycle** (package `lifecycle`): the reverse-order Stack, which starts dependencies in
-  phases and unwinds them last first; it imports only the standard library and is a go-core
-  promotion candidate.
-- **Composition root** (package `internal/app`): New/Run, per-command-group dependency
-  declaration, and the initializer, which opens a declared dependency on the first request and
-  closes it when the command returns.
+- **Dispatcher** (package `cli`): flag parsing, the command tree, help, and usage exits. A
+  command's `Uses` names the graph nodes it needs, inherited along its path; `cli.WithGraph`
+  gives `cli.Run` the graph to build them from, and the body reads each value through
+  `Invocation.System`.
+- **Dependency graph** (package `graph`): a typed graph whose nodes are defined inertly and
+  whose Build constructs only what its roots reach through `Use`, into a System of computed
+  layers. It imports only the standard library and is a go-core promotion candidate.
+- **Lifecycle** (package `lifecycle`): a Coordinator over a built System. `Exec` starts the
+  System's subsystems layer by layer, runs a function, and shuts them down in reverse; `Run`
+  serves until its context ends instead. A value takes part by implementing `Subsystem`, and
+  `Config` carries the shutdown timeout. It imports the standard library, go-core, and `graph`,
+  and is a go-core promotion candidate.
+- **Composition root** (package `internal/app`): New/Run and the graph nodes for configuration,
+  the database, the object store, and the schema migrator. It has no initializer: each command
+  names its nodes in `Uses`, and the dispatcher builds and runs them.
 - **Infrastructure**: Postgres through go-database with sqlate migrations, the object store
   through go-storage/azureblob, and the compose stack of Postgres on 5436 and Azurite on 10010.
 - **Domain and admin commands**: schema (package `admin/schema`, with status, up, down, and
   reset); files and bookmarks are planned.
 - **Output and scenarios**: package `output` renders a command's result as a line or a table;
   scenarios are planned.
-- **Tests**: buffer-driven app tests, fakes, and black-box integration over the built binary.
+- **Tests**: buffer-driven app tests, fakes, and integration tests over the compose stack;
+  black-box tests over the built binary are planned.
 
 ## References
 

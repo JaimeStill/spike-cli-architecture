@@ -147,7 +147,7 @@ Two-way. The spike publishes nothing and writes only its own repository.
 
 ## Progress
 
-redirected at the session brief; slices 4/4 of the new brief · standards ✓ · spec ✓ · editor —
+redirected at the session brief; slices 4/4 of the new brief · standards ✓ · spec ✓ · editor ✓
 
 ## Decisions
 
@@ -213,42 +213,48 @@ redirected at the session brief; slices 4/4 of the new brief · standards ✓ ·
   the module it imports only `internal/*` (architect, at the session brief).
 
 - composition: dependencies are declared per command group in the composition root; `cli`
-  is unchanged.
+  is unchanged. *Superseded: dependencies are part of the command.*
 - composition: bring-up and teardown run on a small reverse-order Stack, not go-core's
   lifecycle.Coordinator, whose Run blocks until a signal, starts a stage's services
-  concurrently, and wraps errors "startup:".
+  concurrently, and wraps errors "startup:". *Superseded: a Coordinator over a System; the
+  Stack is its internal engine.*
 - composition: the Stack lives in a root-level `lifecycle` package, stdlib only, shaped as the
   go-core candidate; rejected the usual `sdk` package for this case (architect). Its package
   documentation records the Coordinator-on-Stack mapping and the promotion criteria; no
-  test-only Coordinator is built.
+  test-only Coordinator is built. *Superseded in part: the `lifecycle` package stands and imports
+  go-core and graph too; it builds the Coordinator, and its documentation maps go-core's.*
 - composition: every library promotion the experiment identifies runs once the experiment
   completes and before `cli` builds, so affected infrastructure adapts first (architect).
 - composition: Postgres opens through go-database/postgres, whose Start pings; go-database
   joins the spike's reading list.
 - composition: configuration comes from the environment only (`BLOBFS_DATABASE_*`,
   `BLOBFS_STORAGE_*`), read at first open; `--dsn` is dropped, a deliberate difference from
-  spike-blobfs.
+  spike-blobfs. *Superseded in part: configuration nodes read it when a Build reaches them.*
 - composition: the schema surface carries blobfs's migration set and the app's own set now,
   over sqlate's migrate.Migrator in place of spike-blobfs's lib/migrator.
 - composition: the hermetic proof swaps the real openers through a test-only hook in
-  internal/app.
+  internal/app. *Superseded: tests swap nodes with Graph.Replace.*
 - composition: defaults: Unwind runs with a 10s timeout; one dependency per Start call;
   a signal-cancelled run exits 1; compose uses postgres:18.6-alpine on 5436 and azurite:3.37.0
-  on 10010, both overridable.
+  on 10010, both overridable. *Superseded in part: the timeout is lifecycle.Config's, and a Start
+  call takes a whole layer.*
 - composition: a leaf's cli Run closes its dependencies through `deps.Run(body)`, since `cli` has
   no post-run hook; a request outside `deps.Run` panics, so nothing opens without being closed.
   A post-run hook is a go-cli-sdk candidate (for the validate task's evidence-6 record).
+  *Superseded: the dispatcher runs the leaf under Exec.*
 - composition: a request for an undeclared dependency panics as a wiring mistake.
+  *Superseded: System.Get of a node not in the System panics.*
 - composition: a dependency constructed but failing Start is shut down at once on a detached,
-  bounded context; its Start error is the one report.
+  bounded context; its Start error is the one report. *Superseded: shut down with its layer,
+  in reverse.*
 - composition: an unreachable-Postgres error is one report spanning several lines (pgx's
   per-attempt continuation lines), passed through unflattened.
 - composition: behavior 4's "succeed" is read under the dispatcher decision (requested help
   exits 2, nothing opens); behavior 8's "the body doesn't run" is read under lazy open (the body
-  stops at its first request).
+  stops at its first request). *Superseded: the brief was renumbered and the lazy open is gone.*
 - composition: Stack: a single step runs on the caller's goroutine; a phase with nothing started
   is not pushed; after a deadline overrun Unwind starts the remaining phases without waiting, as
-  go-core's drain does.
+  go-core's drain does. *Superseded in part: the engine pushes every layer that began to start.*
 - composition: schema: the app's set is named `app` (spike-blobfs: `consumer`); `--yes=false` is
   refused too, since cli's Require counts an explicit false as set; down reverts each set with
   `Layer.Down(len)`, which keeps the history tables.
@@ -293,6 +299,29 @@ redirected at the session brief; slices 4/4 of the new brief · standards ✓ ·
 - composition: a long-running node that nothing Uses (go-web-service's reactors) is its own
   Build root, and the runtime root orders after it with After; layers for the stage table come
   out config → database, store → domain, schema, storage → reactors → server.
+
+- composition: cli's Option is `func(*options)`; WithGraph panics on a nil graph or node; cli
+  leaves the lifecycle Config to its node's constructor to finalize.
+- composition: Invocation.System is nil while PreRun runs, since PreRun precedes the Build.
+- composition: a body's usage error stays a usage error (exit 2) when joined with a shutdown
+  error.
+- composition: a failing start layer shuts down every participant whose Start was called.
+- composition: start errors carry the node's name and no "startup:" prefix.
+- composition: Run treats any end of ctx, before, during, or after startup, as a clean stop.
+- composition: shutdown's context derives from context.Background.
+- composition: graph: a hook recorded twice panics; Define after Build is allowed; Replace is
+  locked after the first Build; nodes within a layer keep definition order.
+- composition: schema takes the migrator node itself, `schema.Commands(client)`, so one value
+  drives both Uses and Get.
+- composition: `reset --yes=false` is refused in Args, since the System starts before the body
+  runs.
+- composition: node names are "database config", "storage config", "lifecycle config",
+  "database", "store", and "migrator"; they label errors.
+- composition: the integration test orders the store `After` the database to assert reverse
+  shutdown; in production the two are independent and share a layer.
+- composition: a value constructed by a Build that then fails is not shut down: nothing started,
+  and the process exits.
+- composition: internal/app's non-test code went from 379 lines to 229.
 
 ## Pending edits
 

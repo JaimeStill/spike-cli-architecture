@@ -26,8 +26,8 @@ type engine struct {
 
 // start runs one phase: steps concurrently (a single step runs on the
 // caller's goroutine), each under a child of ctx that the phase's first
-// failure cancels. It pushes every step as a new phase for unwind, whether
-// its start succeeded or not, so a step whose start failed is still stopped,
+// failure cancels. It pushes the steps as one new phase for unwind, whether
+// their starts succeed or not, so a step whose start failed is still stopped,
 // and returns the failures, each labelled "name: err". An error wrapping
 // context.Canceled that arrives once a failure is on record is dropped: it is
 // that failure's consequence.
