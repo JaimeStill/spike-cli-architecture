@@ -32,8 +32,8 @@
 // the [graph.Node] values it needs, inherited along the command path, and
 // [Run] builds the union a leaf's path declares from the [WithGraph] graph
 // and runs the leaf under a [lifecycle.Coordinator] only once the dispatch
-// reaches it, so help, a usage error, or a PreRun error builds nothing. A leaf whose path
-// declares no nodes runs with no Build and no lifecycle.
+// reaches it, so help, a usage error, or a PreRun error builds nothing. A
+// leaf whose path declares no nodes runs with no Build and no lifecycle.
 //
 // The package imports the standard library, go-core, and the spike's graph
 // and lifecycle packages.

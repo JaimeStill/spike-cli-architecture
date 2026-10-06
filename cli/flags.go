@@ -17,8 +17,8 @@ import (
 // that defines a flag with a root flag's name, a parent with an Args
 // validator it would never call, a PreRun below the root, a flag
 // requirement or group the command cannot honour, or a [Command.Use] on any
-// command when Run has no graph, which hasGraph reports. Sharing is idempotent,
-// so a tree can be dispatched more than once.
+// command when Run has no graph, which hasGraph reports. Sharing is
+// idempotent, so a tree can be dispatched more than once.
 func prepareTree(root *Command, hasGraph bool) {
 	var walk func(c *Command)
 	walk = func(c *Command) {

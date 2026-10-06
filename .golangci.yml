@@ -21,8 +21,9 @@ linters:
         # Package cli is shaped to become go-cli-sdk's package, so it
         # depends on nothing but the standard library, go-core, and the
         # graph and lifecycle packages that build and run the nodes a
-        # command declares with Use, both candidates for go-core. The rule covers its tests too: they
-        # drive the API with the same imports plus cli itself. Allow entries match by prefix unless they end
+        # command declares with Use, both candidates for go-core. The rule
+        # covers its tests too: they drive the API with the same imports
+        # plus cli itself. Allow entries match by prefix unless they end
         # in `$`, so each is anchored: go-core as the exact module path or
         # a path under it (not a sibling like go-core-extra), and cli as
         # itself (not a sibling like clix).
