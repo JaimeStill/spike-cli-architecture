@@ -1,8 +1,8 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** idle
-- **Task:** none
-- **Branch:** none
+- **State:** handoff
+- **Task:** composition
+- **Branch:** composition
 
 ## Tasks
 
@@ -10,6 +10,14 @@
 2. [x] composition
 3. [ ] files
 4. [ ] validate
+
+## Handoff
+
+merge: pull request #2 (https://github.com/JaimeStill/spike-cli-architecture/pull/2) is
+published with the accepted session brief as its body. The session's merge was denied by the
+permission classifier. Next move: merge #2 (`gh pr merge 2 --merge --delete-branch`), switch to
+`main`, pull, delete the local `composition` branch and `.claude/briefs/`'s brief, then set
+State to `idle`, Task and Branch to none, and drop this section as bookkeeping on `main`.
 
 ## Decisions
 
