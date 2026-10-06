@@ -1,153 +1,15 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** brief ready
-- **Task:** composition
-- **Branch:** composition
+- **State:** idle
+- **Task:** none
+- **Branch:** none
 
 ## Tasks
 
 1. [x] dispatcher
-2. [ ] composition
+2. [x] composition
 3. [ ] files
 4. [ ] validate
-
-## Task brief · composition
-
-**Problem.** Our infrastructure assumes every application describes, constructs, and starts all
-its dependencies once, in one place. A CLI needs a different subset per command, and fighting
-that assumption produced brittle code. The spike must show three things:
-- a typed dependency graph that describes any dependency inertly, with no reflection;
-- that building any subset of it gives a System that one Coordinator runs layer by layer;
-- that a dispatcher whose commands declare what they use brings up only that, transparently to
-  the command body.
-
-The same primitive must also express go-web-service's staged composition. This covers evidence
-3, 4, and 5, and it is the candidate for go-core.
-
-### Behaviors
-
-The graph:
-
-1. Defining a node constructs and starts nothing. `Define` returns a typed `Node[T]`. A node can
-   be any value, with or without a lifecycle.
-2. `Build(roots...)` constructs only what the roots reach through `Use`, cold. A node reached by
-   several dependents is constructed once and shared.
-3. Layers are computed from the discovered dependencies by longest-path layering, so a node sits
-   one layer above its deepest dependency.
-   - `After(n)` orders a node after `n` without passing a value.
-   - `After` pulls nothing into the System on its own: it orders only nodes that `Use` brought
-     in.
-4. Wiring mistakes panic, and a constructor error fails `Build` with the node's name, after
-   which nothing in that Build starts. The wiring mistakes are:
-   - a dependency cycle;
-   - `Use` of a node from another graph;
-   - `Use` outside a running constructor;
-   - `Replace` after the graph has built.
-5. `Replace(n, ctor)` swaps a node's constructor before `Build`, and the substitute goes through
-   the same build and lifecycle as the original.
-6. A black-box test expresses go-web-service's stage table:
-   - the infrastructure nodes;
-   - the schema stage, which uses the database;
-   - the reactors, which run `After` the schema;
-   - the server at the root.
-
-   The computed layers reproduce the table's order.
-
-The lifecycle:
-
-7. `New(sys, cfg)` with `Exec(ctx, fn)` does three things:
-   - starts the System's subsystems layer by layer, lowest first, concurrently within a layer;
-   - runs `fn`;
-   - shuts the subsystems down in reverse.
-
-   `Run(ctx)` does the same, but serves until `ctx` ends.
-8. A value is a subsystem when it implements `Start` and `Shutdown`. `OnStart` and `OnShutdown`
-   hooks override that. Values without either take no part in the lifecycle.
-9. On the first start failure, the rest of that layer is cancelled, and no higher layer starts.
-   Every subsystem that started is shut down. So is the one whose Start failed, so it leaks
-   nothing. The start error is reported once.
-10. Shutdown runs every started subsystem, last layer first. It uses a context detached from
-    cancellation and bounded by `ShutdownTimeout`, so it also runs on success, on error, and on
-    signal cancellation. A shutdown error is joined with the run's result and fails it.
-11. The package documentation:
-    - maps go-core's Coordinator onto the new shape (`Add` and stages give way to a System; `Run`
-      and the readiness parts stay);
-    - names the break at promotion;
-    - states the promotion criteria.
-
-The dispatcher:
-
-12. `Uses` on a command, inherited as the union along its path, names the nodes it needs. The
-    dispatcher's order is Args, required flags, exclusive groups, PreRun, then Build of the
-    path's `Uses` plus the lifecycle config node, then `Exec` around Run.
-13. Help, `--help`, a parent run alone, an unknown command, usage errors, and `version`:
-    - build nothing and read no configuration;
-    - succeed under the dispatcher's exit conventions with the stack down and the environment
-      empty.
-14. Command bodies read typed values through `inv.System.Get(node)`. A Build, start, or shutdown
-    failure is reported once under the command's path and exits 1. A `Uses` without
-    `cli.WithGraph` panics at the start of dispatch. A CLI with no `Uses` calls `cli.Run` as
-    before.
-
-The blobfs composition:
-
-15. The composition root defines these nodes, and has no dependency enum, opener struct, or
-    per-dependency accessor:
-    - configuration: database, storage, and lifecycle;
-    - the database;
-    - the object store;
-    - the schema migrator.
-16. The schema group `Uses` the migrator only, so its verbs open Postgres and never the object
-    store. This is proven hermetically: with an invalid storage configuration, schema still
-    fails only on Postgres.
-17. The schema verbs, configuration, and compose stack behave as the first build proved:
-    - status, up, down, and `reset --yes`, with `reset` refused before anything is built;
-    - configuration from `BLOBFS_DATABASE_*` and `BLOBFS_STORAGE_*` only, with no `--dsn`;
-    - Postgres on 5436 and Azurite on 10010.
-18. Against the real stack, a command using Postgres and the store starts both and shuts them
-    down in reverse. With either one unreachable, it reports once, exits 1, and closes whatever
-    had started.
-
-### Test seams
-
-- `graph` and `lifecycle` exported APIs, black-box, with fake values.
-- `cli.Run` over buffers, with a test graph.
-- `App.Run(ctx, args)` over buffers. Its graph is reached through an export_test probe for
-  `Replace`, and the testpackage comment returns to "clock or probe hook".
-- Integration over the compose stack, with it up and with it down.
-
-### Slices
-
-Nothing trails, so there is no upgrade slice.
-
-1. **graph.** The package, on the standard library only and held there by depguard. Black-box
-   tests cover behaviors 1–6, including the go-web-service layering test.
-2. **lifecycle.** `Subsystem`, `Config`, and `Coordinator`, with `New`, `Exec`, and `Run`, over a
-   `graph.System`. The Stack's engine becomes internal. The documentation carries the go-core
-   mapping and the promotion criteria. Behaviors 7–11.
-3. **cli.** `Uses`, `Invocation.System`, `WithGraph`, and the extended dispatch. The cli depguard
-   rule admits `graph` and `lifecycle`. Behaviors 12–14.
-4. **Composition root on the graph.** It replaces `deps.go`, the opener hook, and the probe
-   groups, and rewires schema, the hermetic tests, and the integration tests. Behaviors 15–18.
-
-### Out of scope
-
-- Any change to go-core, go-web-service, or the other references. Promotion follows the
-  experiment.
-- Readiness, `OnReady`, and `Monitor` on the spike's Coordinator. They are mapped in its
-  documentation, not built.
-- Per-node start scheduling. The layer barrier stands.
-- The files and bookmark commands, scenarios, and black-box tests over the built binary. These
-  belong to the files task.
-- The evidence-6 record and the written answer. These belong to the validate task.
-
-### Door
-
-Two-way. The spike publishes nothing and writes only its own repository.
-
-## Progress
-
-redirected at the session brief; slices 4/4 of the new brief · standards ✓ · spec ✓ · editor ✓
 
 ## Decisions
 
