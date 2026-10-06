@@ -1,6 +1,8 @@
 package files
 
 import (
+	"io"
+
 	"github.com/standards-lab/blobfs"
 )
 
@@ -131,4 +133,35 @@ type MoveResult struct {
 	ID   string
 	From string
 	To   string
+}
+
+// Content is what a put writes: the body, its length in bytes when known
+// (0 when it is not, as for standard input, so the store takes the body
+// to its end), and the content type the file declares.
+type Content struct {
+	Body        io.Reader
+	Size        int64
+	ContentType string
+}
+
+// PutResult is what put returns: the row, available, and whether the put
+// resumed a pending row an earlier put left rather than write a new one.
+type PutResult struct {
+	File    blobfs.File
+	Resumed bool
+}
+
+// CopyResult is what cp returns: the source's path, the copy's path, and
+// the copy's row, available.
+type CopyResult struct {
+	From string
+	To   string
+	File blobfs.File
+}
+
+// TreeRemoval is what rm --recursive returns: how many files and
+// directories its sweep removed, summed over its passes.
+type TreeRemoval struct {
+	Files       int
+	Directories int
 }

@@ -34,7 +34,7 @@ import (
 // and the store is ordered after the database, so the two, one layer in
 // production, start and shut down in an order the test can assert.
 func probeApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
-	a := app.New(stdout, stderr)
+	a := app.New(strings.NewReader(""), stdout, stderr)
 	g, n := a.Graph(), a.Nodes()
 	g.Replace(n.Database, func(s *graph.Scope) (*godatabase.DB, error) {
 		db, err := a.NewDatabase(s)

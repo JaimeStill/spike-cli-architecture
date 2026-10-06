@@ -40,7 +40,11 @@ func WithGraph(g *graph.Graph, lifecycleConfig *graph.Node[lifecycle.Config]) Op
 }
 
 // Run dispatches args, the program arguments without the program name, over
-// the tree rooted at root, and returns the process exit code. A dispatch to
+// the tree rooted at root, and returns the process exit code. stdin, stdout,
+// and stderr are the process's streams, or a test's buffers: a running
+// command reads stdin and writes stdout and stderr through its
+// [Invocation], and the dispatcher prints to stdout and stderr itself but
+// never reads stdin. A dispatch to
 // a leaf goes in this order, stopping at the first failure: parse each
 // level's flags, select the leaf, validate its arguments with
 // [Command.Args], check its required flags and then its exclusive groups,
@@ -67,7 +71,7 @@ func WithGraph(g *graph.Graph, lifecycleConfig *graph.Node[lifecycle.Config]) Op
 // Run panics at the start of the dispatch when any command in the tree has
 // declared [Command.Use] and no [WithGraph] option was given, whichever
 // command is selected.
-func Run(ctx context.Context, root *Command, args []string, stdout, stderr io.Writer, opts ...Option) int {
+func Run(ctx context.Context, root *Command, args []string, stdin io.Reader, stdout, stderr io.Writer, opts ...Option) int {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
@@ -82,7 +86,7 @@ func Run(ctx context.Context, root *Command, args []string, stdout, stderr io.Wr
 			return code
 		}
 		if !cmd.isParent() {
-			return execute(ctx, &o, path, rest, stdout, stderr)
+			return execute(ctx, &o, path, rest, stdin, stdout, stderr)
 		}
 		if len(rest) == 0 {
 			return process.Usage(stdout, help(cmd))
@@ -126,14 +130,14 @@ func parse(cmd *Command, args []string, stdout, stderr io.Writer) (rest []string
 // the root's PreRun and then the leaf, under a lifecycle when the path
 // declares nodes with Use, and maps the first error to an exit code. path
 // holds the commands from the root to the leaf.
-func execute(ctx context.Context, o *options, path []*Command, args []string, stdout, stderr io.Writer) int {
+func execute(ctx context.Context, o *options, path []*Command, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	root, cmd := path[0], path[len(path)-1]
 	if cmd.Args != nil {
 		if err := cmd.Args(args); err != nil {
 			return usageError(cmd, stderr, err)
 		}
 	}
-	inv := &Invocation{Args: args, Stdout: stdout, Stderr: stderr, changed: changed(path)}
+	inv := &Invocation{Args: args, Stdin: stdin, Stdout: stdout, Stderr: stderr, changed: changed(path)}
 	if err := cmd.checkFlags(inv.changed); err != nil {
 		return usageError(cmd, stderr, err)
 	}

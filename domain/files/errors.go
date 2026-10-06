@@ -20,4 +20,11 @@ var (
 	// another depth. A rename of a top-level directory stays at the top
 	// level and is allowed.
 	ErrMoveAcrossScopes = errors.New("files: a move stays under one top-level directory")
+
+	// ErrNotAvailable reports a cat or a cp of a file that has no content
+	// to read: a pending file, whose object is not written yet, or a
+	// deleting one, whose object is being removed. The message names the
+	// status. It carries no "files:" prefix because the operation that
+	// refuses it names itself so.
+	ErrNotAvailable = errors.New("the file is not available")
 )

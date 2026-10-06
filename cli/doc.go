@@ -1,9 +1,9 @@
 // Package cli is a command dispatcher on the standard library's flag package.
 // A program builds a tree of [Command] values, each owning a *flag.FlagSet,
-// and hands the root to [Run] with the process arguments; Run walks the tree
-// to the selected command, parses its flags, runs it, and returns the exit
-// code the program passes to os.Exit, following go-core's process
-// convention. Wiring mistakes in the tree panic when it is built or when it
+// and hands the root to [Run] with the process arguments and its standard
+// input, output, and error streams; Run walks the tree to the selected
+// command, parses its flags, runs it, and returns the exit code the program
+// passes to os.Exit, following go-core's process convention. Wiring mistakes in the tree panic when it is built or when it
 // is dispatched, as each symbol's documentation states.
 //
 // The package exports:
@@ -15,8 +15,9 @@
 //   - [Command.Require], which marks a leaf's flags as required
 //   - [Command.Exclusive], which declares a mutually exclusive flag group
 //   - [Command.Use], which declares the graph nodes a command needs
-//   - [Invocation], what a running command receives, and
-//     [Invocation].System, the System built for the nodes its path declares
+//   - [Invocation], what a running command receives: its arguments, the
+//     streams Run was given, Stdin among them, and [Invocation].System,
+//     the System built for the nodes its path declares
 //   - [Invocation.Changed], which reports whether a flag was given
 //   - [Run], which dispatches the arguments and returns the exit code
 //   - [Option], which configures one Run, and [WithGraph], the Option that

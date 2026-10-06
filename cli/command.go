@@ -64,10 +64,15 @@ type Command struct {
 }
 
 // Invocation is what a running command receives: its positional arguments
-// and the writers the dispatcher was given.
+// and the streams the dispatcher was given.
 type Invocation struct {
 	// Args holds the positional arguments left after flag parsing.
 	Args []string
+
+	// Stdin is the reader passed to [Run], such as the content of a
+	// command that reads "-" as standard input. The dispatcher never reads
+	// it, so a command that does not read it leaves it unconsumed.
+	Stdin io.Reader
 
 	// Stdout and Stderr are the writers passed to [Run].
 	Stdout io.Writer

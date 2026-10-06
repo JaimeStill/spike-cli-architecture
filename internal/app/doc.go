@@ -7,13 +7,19 @@
 // them. admin.go defines the migrator node, built on the database.
 // domain.go defines the files node, the files domain's Store built on the
 // database with blobfs's Postgres engine, which the root fixes there, and
-// whose start is the Store's statement check. Defining them constructs
-// nothing. A command declares the nodes it needs with Use: the schema
+// whose start is the Store's statement check; and the objects node, the
+// files domain's Objects built on the files node and the object store.
+// Defining them constructs nothing. A command declares the nodes it needs with Use: the schema
 // group declares the migrator, and its verbs inherit it, so a schema verb
 // builds the migrator, the database, and their configuration, and never the
 // object store; each directory command, mkdir, ls, stat, mv, and rmdir,
-// declares the files node, and likewise never builds the object store.
-// version declares none. The dispatcher builds the nodes the leaf's path
+// declares the files node, and likewise never builds the object store;
+// each object command, put, cat, cp, and rm, declares the objects node, so
+// it builds the database and the object store, and a store that cannot be
+// reached fails it at start, naming the store's node, with the database
+// shut down. version declares none. [New] takes the process's standard
+// input beside its output and error streams, and a command reads it
+// through its Invocation, as put - does. The dispatcher builds the nodes the leaf's path
 // declares only when the leaf runs, starts what was built layer by layer,
 // and shuts it down in reverse when the leaf returns; a run that builds
 // nothing, such as help, a usage error, or version, reads no

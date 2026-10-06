@@ -19,5 +19,5 @@ func main() {
 func run() int {
 	ctx, stop := process.SignalContext()
 	defer stop()
-	return app.New(os.Stdout, os.Stderr).Run(ctx, os.Args[1:])
+	return app.New(os.Stdin, os.Stdout, os.Stderr).Run(ctx, os.Args[1:])
 }

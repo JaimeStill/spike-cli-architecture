@@ -44,31 +44,44 @@ func TestMain(m *testing.M) {
 }
 
 // target is what one test's runs of the binary point at: its throwaway
-// database, through BLOBFS_DATABASE_NAME, and any further environment the
-// test sets. Everything else comes from the process's environment, which
-// `mise run integration` points at its isolated compose project.
+// database, through BLOBFS_DATABASE_NAME, its own container, through
+// BLOBFS_STORAGE_CONTAINER, which the store's start creates on the first
+// run that builds the store, and any further environment the test sets.
+// Everything else comes from the process's environment, which `mise run
+// integration` points at its isolated compose project, whose volumes are
+// dropped with the containers in it.
 type target struct {
-	database string
-	env      []string
-	db       *sql.DB
+	database  string
+	container string
+	env       []string
+	db        *sql.DB
 }
 
-// open creates the test's database and returns the target over it, with
-// the test's own pool on the database for reads and writes the binary
-// does not make.
+// open creates the test's database and returns the target over it and a
+// container named after it, with the test's own pool on the database for
+// reads and writes the binary does not make.
 func open(t *testing.T, env ...string) target {
 	t.Helper()
 	name, db := livetest.Database(t)
-	t.Logf("database %s", name)
-	return target{database: name, env: env, db: db}
+	container := strings.ReplaceAll(name, "_", "-")
+	t.Logf("database %s, container %s", name, container)
+	return target{database: name, container: container, env: env, db: db}
 }
 
 // run executes the binary with args against tg, logs the run as a shell
-// line with its output, and returns its stdout, stderr, and exit code.
+// line with its output, and returns its stdout, stderr, and exit code. Its
+// stdin is empty.
 func run(t *testing.T, tg target, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
+	return runIn(t, tg, "", args...)
+}
+
+// runIn is run with stdin piped to the binary's standard input.
+func runIn(t *testing.T, tg target, stdin string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
 	cmd := exec.Command(binary, args...)
-	cmd.Env = append(append(os.Environ(), "BLOBFS_DATABASE_NAME="+tg.database), tg.env...)
+	cmd.Env = append(append(os.Environ(), "BLOBFS_DATABASE_NAME="+tg.database, "BLOBFS_STORAGE_CONTAINER="+tg.container), tg.env...)
+	cmd.Stdin = strings.NewReader(stdin)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	err := cmd.Run()
@@ -81,7 +94,11 @@ func run(t *testing.T, tg target, args ...string) (stdout, stderr string, code i
 		t.Fatalf("run %v: %v", args, err)
 	}
 	var b strings.Builder
-	b.WriteString("$ blobfs " + strings.Join(args, " "))
+	if stdin != "" {
+		fmt.Fprintf(&b, "$ printf %q | blobfs %s", stdin, strings.Join(args, " "))
+	} else {
+		b.WriteString("$ blobfs " + strings.Join(args, " "))
+	}
 	if out.Len() > 0 {
 		b.WriteString("\n" + strings.TrimRight(out.String(), "\n"))
 	}
@@ -96,7 +113,13 @@ func run(t *testing.T, tg target, args ...string) (stdout, stderr string, code i
 // on stderr, returning its stdout.
 func ok(t *testing.T, tg target, args ...string) string {
 	t.Helper()
-	out, errOut, code := run(t, tg, args...)
+	return okIn(t, tg, "", args...)
+}
+
+// okIn is ok with stdin piped to the binary's standard input.
+func okIn(t *testing.T, tg target, stdin string, args ...string) string {
+	t.Helper()
+	out, errOut, code := runIn(t, tg, stdin, args...)
 	if code != 0 || errOut != "" {
 		t.Fatalf("%v exited %d: %s", args, code, errOut)
 	}
@@ -171,22 +194,61 @@ func field(out, label string) string {
 	return ""
 }
 
-// seedFile inserts an available file of size bytes named name into the
-// directory with id directoryID, as a completed write leaves it at version
-// 2, and returns its id. The put that writes files through the binary
-// needs the object store, so the directory script seeds the rows the
-// listings and moves act on directly.
-func seedFile(t *testing.T, tg target, directoryID, name string, size int64) string {
+// put writes content as the file at path through the binary's put -, with
+// any further arguments, and returns the file's id from its result line.
+func put(t *testing.T, tg target, path, content string, args ...string) string {
+	t.Helper()
+	out := okIn(t, tg, content, append([]string{"put", "-", path}, args...)...)
+	if !strings.HasPrefix(out, "put: "+path+" (id ") {
+		t.Fatalf("put %s stdout = %q", path, out)
+	}
+	return idOf(t, out)
+}
+
+// idOf returns the id a result line reports as "(id <uuid>".
+func idOf(t *testing.T, out string) string {
+	t.Helper()
+	_, rest, found := strings.Cut(out, "(id ")
+	if !found || len(rest) < 36 {
+		t.Fatalf("no id in %q", out)
+	}
+	id, err := blobfs.ParseID(rest[:36])
+	if err != nil {
+		t.Fatalf("the id in %q: %v", out, err)
+	}
+	return id
+}
+
+// seedPending inserts a pending file named name into the directory with id
+// directoryID, as a put that stopped after its first step leaves it, and
+// returns its id.
+func seedPending(t *testing.T, tg target, directoryID, name string) string {
 	t.Helper()
 	id := blobfs.NewID()
 	_, err := tg.db.ExecContext(context.Background(),
-		"INSERT INTO blobfs_file (id, directory_id, name, status, key, size, content_type, etag, version) "+
-			"VALUES ($1, $2, $3, 'available', $4, $5, 'text/plain', '\"seeded\"', 2)",
-		id, directoryID, name, id+"/"+name, size)
+		"INSERT INTO blobfs_file (id, directory_id, name, status, key, content_type) VALUES ($1, $2, $3, 'pending', $4, 'text/plain')",
+		id, directoryID, name, id+"/"+name)
 	if err != nil {
 		t.Fatalf("seed %s: %v", name, err)
 	}
 	return id
+}
+
+// markDeleting marks the directories with ids, and every file in them,
+// deleting, as blobfs's branch mark leaves a branch whose rm --recursive
+// was interrupted before its sweep finished. ids lists the branch's root
+// and every directory beneath it.
+func markDeleting(t *testing.T, tg target, ids ...string) {
+	t.Helper()
+	ctx := context.Background()
+	for _, id := range ids {
+		if _, err := tg.db.ExecContext(ctx, "UPDATE blobfs_directory SET status = 'deleting', version = version + 1 WHERE id = $1", id); err != nil {
+			t.Fatalf("mark directory %s: %v", id, err)
+		}
+		if _, err := tg.db.ExecContext(ctx, "UPDATE blobfs_file SET status = 'deleting', version = version + 1 WHERE directory_id = $1", id); err != nil {
+			t.Fatalf("mark the files of %s: %v", id, err)
+		}
+	}
 }
 
 // script is one ordered run of the binary over one database, and what its
@@ -195,8 +257,8 @@ type script struct {
 	tg target
 }
 
-// TestScript is the scripted run of the directory commands through the
-// built binary, in its own database: the steps below in order, each a
+// TestScript is the scripted run of the directory and object commands
+// through the built binary, in its own database and container: the steps below in order, each a
 // subtest, and the script stops at the first step that fails. The
 // transcript under -v is the record of what the binary does.
 func TestScript(t *testing.T) {
@@ -212,6 +274,11 @@ func TestScript(t *testing.T) {
 		{"mv", s.move},
 		{"ids", s.ids},
 		{"rmdir", s.removeDirectory},
+		{"put", s.put},
+		{"cat", s.cat},
+		{"cp", s.copy},
+		{"rm", s.remove},
+		{"rm-recursive", s.removeTree},
 	} {
 		if !t.Run(step.name, step.fn) {
 			t.Logf("the script stops at step %s", step.name)
@@ -251,13 +318,15 @@ func (s *script) mkdir(t *testing.T) {
 }
 
 // list is ls with its id column, paging, sorting, filtering, --total none,
-// the empty pages, and the cursor under --cursors, over three files seeded
+// the empty pages, and the cursor under --cursors, over three files put
 // into /reports with sizes the size sort and the size filter show.
 func (s *script) list(t *testing.T) {
-	reports := ids(ok(t, s.tg, "ls", "/"))["reports"]
-	seedFile(t, s.tg, reports, "c.txt", 30)
-	seedFile(t, s.tg, reports, "a.txt", 20)
-	seedFile(t, s.tg, reports, "b.txt", 10)
+	for _, f := range []struct {
+		name string
+		size int
+	}{{"c.txt", 30}, {"a.txt", 20}, {"b.txt", 10}} {
+		put(t, s.tg, "/reports/"+f.name, strings.Repeat("x", f.size), "--content-type", "text/plain")
+	}
 
 	// Directories then files, one page each, with the totals.
 	out := ok(t, s.tg, "ls", "/reports")
@@ -386,7 +455,7 @@ func (s *script) stat(t *testing.T) {
 		t.Errorf("stat /:\n%s", out)
 	}
 	out = ok(t, s.tg, "stat", "/reports/a.txt")
-	if field(out, "path") != "/reports/a.txt" || field(out, "status") != "available" || field(out, "size") != "20" || field(out, "content-type") != "text/plain" || field(out, "etag") != `"seeded"` {
+	if field(out, "path") != "/reports/a.txt" || field(out, "status") != "available" || field(out, "size") != "20" || field(out, "content-type") != "text/plain" || !strings.HasPrefix(field(out, "etag"), `"`) || field(out, "version") != "2" {
 		t.Errorf("stat of a file:\n%s", out)
 	}
 	refused(t, s.tg, "not found", "stat", "/reports/missing")
@@ -400,7 +469,7 @@ func (s *script) move(t *testing.T) {
 	for _, p := range []string{"/a", "/a/x", "/a/y", "/b"} {
 		ok(t, s.tg, "mkdir", p)
 	}
-	seedFile(t, s.tg, ids(ok(t, s.tg, "ls", "/a"))["x"], "f.txt", 6)
+	put(t, s.tg, "/a/x/f.txt", "f.txt\n")
 
 	// A file into a directory, then renamed.
 	if out := ok(t, s.tg, "mv", "/a/x/f.txt", "/a/y"); !strings.HasPrefix(out, "mv: /a/x/f.txt -> /a/y/f.txt (id ") {
@@ -453,7 +522,7 @@ func (s *script) ids(t *testing.T) {
 	}
 	under := ids(ok(t, s.tg, "ls", "/ids"))
 	idsDir, srcDir, dstDir, subDir := ids(ok(t, s.tg, "ls", "/"))["ids"], under["src"], under["dst"], under["sub"]
-	file := seedFile(t, s.tg, srcDir, "f.txt", 6)
+	file := put(t, s.tg, "/ids/src/f.txt", "f.txt\n")
 
 	out := ok(t, s.tg, "stat", "/ids")
 	if byID := ok(t, s.tg, "stat", "id:"+idsDir); strings.TrimRight(byID, "\n") != strings.Join(lines(out)[1:], "\n") {
@@ -461,7 +530,7 @@ func (s *script) ids(t *testing.T) {
 	}
 	out = ok(t, s.tg, "stat", "/ids/src/f.txt")
 	if field(out, "id") != file {
-		t.Errorf("stat of the seeded file:\n%s", out)
+		t.Errorf("stat of the put file:\n%s", out)
 	}
 	if byID := ok(t, s.tg, "stat", "id:"+file); strings.TrimRight(byID, "\n") != strings.Join(lines(out)[1:], "\n") {
 		t.Errorf("stat of a file by id:\n%s\nwant the record by path without its path line:\n%s", byID, out)
@@ -514,10 +583,199 @@ func (s *script) removeDirectory(t *testing.T) {
 	}
 }
 
-// TestDirectoryCommandsWithTheStoreUnreachable runs every directory
-// command with the object store's endpoint on a port nothing listens on:
-// the commands declare the database alone, so none reaches the store.
-func TestDirectoryCommandsWithTheStoreUnreachable(t *testing.T) {
+// put writes files from stdin and from local files, to paths and into a
+// directory by id, with the content type from the flag, the extension, or
+// the default, resumes a pending row, and refuses a name a file holds.
+func (s *script) put(t *testing.T) {
+	ok(t, s.tg, "mkdir", "/objects")
+	objects := ids(ok(t, s.tg, "ls", "/"))["objects"]
+
+	// put - reads the binary's stdin, and cat round-trips the bytes.
+	out := okIn(t, s.tg, "hello, blobfs\n", "put", "-", "/objects/hello.txt")
+	if !strings.HasPrefix(out, "put: /objects/hello.txt (id ") || !strings.Contains(out, ", 14 bytes, etag \"") {
+		t.Errorf("put - stdout = %q", out)
+	}
+	if got := ok(t, s.tg, "cat", "/objects/hello.txt"); got != "hello, blobfs\n" {
+		t.Errorf("cat after put - = %q", got)
+	}
+	out = ok(t, s.tg, "stat", "/objects/hello.txt")
+	if field(out, "status") != "available" || field(out, "size") != "14" || field(out, "content-type") != "application/octet-stream" {
+		t.Errorf("stat after put -:\n%s", out)
+	}
+
+	// A local file: the content type from its extension, by path and into
+	// the directory by id under the file's base name.
+	dir := t.TempDir()
+	report := filepath.Join(dir, "report.json")
+	notes := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(report, []byte(`{"ok":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(notes, []byte("notes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out := ok(t, s.tg, "put", report, "/objects/report.json"); !strings.Contains(out, ", 11 bytes, ") {
+		t.Errorf("put of a local file stdout = %q", out)
+	}
+	if out := ok(t, s.tg, "stat", "/objects/report.json"); field(out, "content-type") != "application/json" {
+		t.Errorf("stat of a .json put:\n%s\nwant the type from the extension", out)
+	}
+	if out := ok(t, s.tg, "put", notes, "id:"+objects); !strings.HasPrefix(out, "put: notes.txt in id:"+objects+" (id ") {
+		t.Errorf("put into a directory by id stdout = %q", out)
+	}
+	if out := ok(t, s.tg, "stat", "/objects/notes.txt"); !strings.HasPrefix(field(out, "content-type"), "text/plain") {
+		t.Errorf("stat of a .txt put:\n%s", out)
+	}
+	if got := ok(t, s.tg, "cat", "/objects/notes.txt"); got != "notes\n" {
+		t.Errorf("cat of the file put by id = %q", got)
+	}
+	put(t, s.tg, "/objects/image.bin", "\x89PNG", "--content-type", "image/png")
+	if out := ok(t, s.tg, "stat", "/objects/image.bin"); field(out, "content-type") != "image/png" {
+		t.Errorf("stat after --content-type:\n%s", out)
+	}
+
+	// A pending row a stopped put left is resumed under its own key.
+	pending := seedPending(t, s.tg, objects, "pending.txt")
+	if out := okIn(t, s.tg, "resumed\n", "put", "-", "/objects/pending.txt"); out != "put: /objects/pending.txt (id "+pending+", 8 bytes, etag "+field(ok(t, s.tg, "stat", "/objects/pending.txt"), "etag")+", resumed the pending row)\n" {
+		t.Errorf("put onto a pending row stdout = %q", out)
+	}
+	if got := ok(t, s.tg, "cat", "id:"+pending); got != "resumed\n" {
+		t.Errorf("cat of the resumed file = %q", got)
+	}
+
+	// A name an available file holds is refused, and the file is intact.
+	if _, errOut, code := runIn(t, s.tg, "other", "put", "-", "/objects/hello.txt"); code != 1 || !strings.Contains(errOut, "name taken") {
+		t.Errorf("put over an available file exited %d: %s", code, errOut)
+	}
+	if got := ok(t, s.tg, "cat", "/objects/hello.txt"); got != "hello, blobfs\n" {
+		t.Errorf("cat after the refused put = %q", got)
+	}
+	refused(t, s.tg, "not found", "put", report, "/missing/report.json")
+	refused(t, s.tg, "no such file or directory", "put", filepath.Join(dir, "missing.txt"), "/objects/missing.txt")
+	refused(t, s.tg, "the root directory", "put", "-", "/")
+	misused(t, s.tg, "stdin has no name to store under", "put", "-", "id:"+objects)
+}
+
+// cat streams files by path and by id, and refuses a pending file, a
+// directory, and a missing one.
+func (s *script) cat(t *testing.T) {
+	hello := ids(ok(t, s.tg, "ls", "/objects"))["hello.txt"]
+	if got := ok(t, s.tg, "cat", "id:"+hello); got != "hello, blobfs\n" {
+		t.Errorf("cat by id = %q", got)
+	}
+	seedPending(t, s.tg, ids(ok(t, s.tg, "ls", "/"))["objects"], "stuck.txt")
+	refused(t, s.tg, "the file is not available: it is pending", "cat", "/objects/stuck.txt")
+	refused(t, s.tg, "not found", "cat", "/objects/missing.txt")
+	refused(t, s.tg, "not found", "cat", "/objects")
+	refused(t, s.tg, "not found", "cat", "id:"+blobfs.NewID())
+}
+
+// copy copies a file to a new path, into a directory, and by ids, and
+// refuses a name already taken and a source with no content.
+func (s *script) copy(t *testing.T) {
+	ok(t, s.tg, "mkdir", "/objects/sub")
+	ok(t, s.tg, "mkdir", "/objects/sub2")
+	out := ok(t, s.tg, "cp", "/objects/hello.txt", "/objects/copy.txt")
+	if !strings.HasPrefix(out, "cp: /objects/hello.txt -> /objects/copy.txt (id ") || !strings.Contains(out, ", 14 bytes, etag ") {
+		t.Errorf("cp stdout = %q", out)
+	}
+	if got := ok(t, s.tg, "cat", "/objects/copy.txt"); got != "hello, blobfs\n" {
+		t.Errorf("cat of the copy = %q", got)
+	}
+	if out := ok(t, s.tg, "stat", "/objects/copy.txt"); field(out, "content-type") != "application/octet-stream" || field(out, "id") == ids(ok(t, s.tg, "ls", "/objects"))["hello.txt"] {
+		t.Errorf("stat of the copy:\n%s\nwant the source's type under its own id", out)
+	}
+	if out := ok(t, s.tg, "cp", "/objects/hello.txt", "/objects/sub"); !strings.HasPrefix(out, "cp: /objects/hello.txt -> /objects/sub/hello.txt (id ") {
+		t.Errorf("cp into a directory stdout = %q", out)
+	}
+	under := ids(ok(t, s.tg, "ls", "/objects"))
+	if out := ok(t, s.tg, "cp", "id:"+under["report.json"], "id:"+under["sub2"]); !strings.HasPrefix(out, "cp: /objects/report.json -> /objects/sub2/report.json (id ") {
+		t.Errorf("cp by ids stdout = %q", out)
+	}
+	if out := ok(t, s.tg, "stat", "/objects/sub2/report.json"); field(out, "content-type") != "application/json" {
+		t.Errorf("stat of the copy by ids:\n%s", out)
+	}
+	refused(t, s.tg, "name taken", "cp", "/objects/hello.txt", "/objects/sub")
+	refused(t, s.tg, "name taken", "cp", "/objects/hello.txt", "/objects/copy.txt")
+	refused(t, s.tg, "name taken", "cp", "/objects/hello.txt", "/objects")
+	refused(t, s.tg, "the file is not available: it is pending", "cp", "/objects/stuck.txt", "/objects/sub")
+	refused(t, s.tg, "not found", "cp", "/objects/missing.txt", "/objects/sub")
+	refused(t, s.tg, "not found", "cp", "/objects/hello.txt", "/objects/nope/hello.txt")
+	misused(t, s.tg, "two paths, or two ids", "cp", "/objects/hello.txt", "id:"+under["sub"])
+}
+
+// remove deletes single files by path and by id, a pending file among
+// them, and refuses a missing one.
+func (s *script) remove(t *testing.T) {
+	copyID := ids(ok(t, s.tg, "ls", "/objects"))["copy.txt"]
+	if out := ok(t, s.tg, "rm", "/objects/copy.txt"); out != "rm: /objects/copy.txt (id "+copyID+")\n" {
+		t.Errorf("rm stdout = %q", out)
+	}
+	refused(t, s.tg, "not found", "stat", "/objects/copy.txt")
+	refused(t, s.tg, "not found", "rm", "/objects/copy.txt")
+	sub := ids(ok(t, s.tg, "ls", "/objects/sub"))["hello.txt"]
+	if out := ok(t, s.tg, "rm", "id:"+sub); out != "rm: id:"+sub+" (id "+sub+")\n" {
+		t.Errorf("rm by id stdout = %q", out)
+	}
+	ok(t, s.tg, "rm", "/objects/stuck.txt")
+	if got := names(ok(t, s.tg, "ls", "/objects")); got != "sub sub2 hello.txt image.bin notes.txt pending.txt report.json" {
+		t.Errorf("ls /objects after the removals = %s", got)
+	}
+	refused(t, s.tg, "not found", "rm", "id:"+blobfs.NewID())
+	refused(t, s.tg, "the root directory", "rm", "/")
+}
+
+// removeTree deletes a branch and prints its totals, finishes a branch
+// whose earlier run was interrupted, and, through its sweep, a branch
+// another run marked; the root and an id are refused.
+func (s *script) removeTree(t *testing.T) {
+	for _, p := range []string{"/tree", "/tree/a", "/tree/a/b"} {
+		ok(t, s.tg, "mkdir", p)
+	}
+	put(t, s.tg, "/tree/x.txt", "x")
+	put(t, s.tg, "/tree/a/y.txt", "y")
+	put(t, s.tg, "/tree/a/b/z.txt", "z")
+	if out := ok(t, s.tg, "rm", "--recursive", "/tree"); out != "rm --recursive: /tree (3 files, 3 directories)\n" {
+		t.Errorf("rm --recursive stdout = %q", out)
+	}
+	refused(t, s.tg, "not found", "ls", "/tree")
+
+	// An interrupted run: the branch is marked and its sweep never ran. A
+	// rerun finds the deleting directory at its path and finishes it.
+	ok(t, s.tg, "mkdir", "/half")
+	ok(t, s.tg, "mkdir", "/half/sub")
+	put(t, s.tg, "/half/sub/h.txt", "h")
+	half := ids(ok(t, s.tg, "ls", "/"))["half"]
+	markDeleting(t, s.tg, half, ids(ok(t, s.tg, "ls", "/half"))["sub"])
+	refused(t, s.tg, "deleting", "ls", "/half")
+	if out := ok(t, s.tg, "rm", "--recursive", "/half"); out != "rm --recursive: /half (1 files, 2 directories)\n" {
+		t.Errorf("rm --recursive of an interrupted branch stdout = %q", out)
+	}
+
+	// The sweep finishes every marked branch: /orphan, which another run
+	// marked, goes with /other, and the totals count both.
+	ok(t, s.tg, "mkdir", "/orphan")
+	ok(t, s.tg, "mkdir", "/other")
+	put(t, s.tg, "/orphan/o.txt", "o")
+	markDeleting(t, s.tg, ids(ok(t, s.tg, "ls", "/"))["orphan"])
+	if out := ok(t, s.tg, "rm", "--recursive", "/other"); out != "rm --recursive: /other (1 files, 2 directories)\n" {
+		t.Errorf("rm --recursive with another marked branch stdout = %q", out)
+	}
+	if got := names(ok(t, s.tg, "ls", "/")); got != "a c ids objects reports" {
+		t.Errorf("ls / after the branch deletes = %s", got)
+	}
+
+	refused(t, s.tg, "the root directory", "rm", "--recursive", "/")
+	refused(t, s.tg, "not found", "rm", "--recursive", "/missing")
+	misused(t, s.tg, "a branch is removed by path, not by id", "rm", "--recursive", "id:"+ids(ok(t, s.tg, "ls", "/"))["objects"])
+	misused(t, s.tg, "flag provided but not defined: -r", "rm", "-r", "/objects")
+}
+
+// TestTheStoreUnreachable runs the commands with the object store's
+// endpoint on a port nothing listens on: every directory command declares
+// the database alone, so none reaches the store and each succeeds, while
+// an object command fails at start, once, naming the store's node.
+func TestTheStoreUnreachable(t *testing.T) {
 	tg := open(t, fmt.Sprintf("BLOBFS_STORAGE_ENDPOINT=http://127.0.0.1:%d/devstoreaccount1", closedPort(t)))
 	ok(t, tg, "schema", "up")
 
@@ -532,6 +790,23 @@ func TestDirectoryCommandsWithTheStoreUnreachable(t *testing.T) {
 	ok(t, tg, "stat", "id:"+id)
 	ok(t, tg, "mv", "/reports/2026", "/reports/2027")
 	ok(t, tg, "rmdir", "/reports/2027")
+
+	// Each refusal waits out the provider's retries, so two of the object
+	// commands stand for the rest, which the hermetic tier runs over a
+	// store that is down.
+	for _, args := range [][]string{
+		{"put", "-", "/reports/a.txt"},
+		{"rm", "--recursive", "/reports"},
+	} {
+		_, errOut, code := runIn(t, tg, "never stored", args...)
+		if prefix := "blobfs " + args[0] + ": store: "; code != 1 || !strings.HasPrefix(errOut, prefix) || strings.Count(errOut, "\n") != 1 {
+			t.Errorf("%v exited %d: %q, want one line starting %q", args, code, errOut, prefix)
+		}
+	}
+	// Nothing ran: the directory is as it was, and still listed.
+	if got := names(ok(t, tg, "ls", "/reports")); got != "" {
+		t.Errorf("ls /reports after the refused object commands = %s", got)
+	}
 }
 
 // closedPort returns a loopback port nothing listens on: one the kernel

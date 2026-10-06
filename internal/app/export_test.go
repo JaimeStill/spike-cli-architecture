@@ -25,6 +25,7 @@ type Nodes struct {
 	Store           *graph.Node[*storage.Store]
 	Migrator        *graph.Node[*schema.Client]
 	Files           *graph.Node[*files.Store]
+	Objects         *graph.Node[*files.Objects]
 }
 
 // Graph returns the graph a's commands are built from.
@@ -43,13 +44,16 @@ func (a *App) Nodes() Nodes {
 		Store:           a.infra.store,
 		Migrator:        a.admin.migrator,
 		Files:           a.domain.files,
+		Objects:         a.domain.objects,
 	}
 }
 
-// NewDatabase, NewStore, NewMigrator, and NewFiles are a's production
-// constructors for the database, store, migrator, and files nodes, for a
-// Replace-d constructor that records or wraps the real one.
+// NewDatabase, NewStore, NewMigrator, NewFiles, and NewObjects are a's
+// production constructors for the database, store, migrator, files, and
+// objects nodes, for a Replace-d constructor that records or wraps the
+// real one.
 func (a *App) NewDatabase(s *graph.Scope) (*godatabase.DB, error) { return a.infra.newDatabase(s) }
 func (a *App) NewStore(s *graph.Scope) (*storage.Store, error)    { return a.infra.newStore(s) }
 func (a *App) NewMigrator(s *graph.Scope) (*schema.Client, error) { return a.admin.newMigrator(s) }
 func (a *App) NewFiles(s *graph.Scope) (*files.Store, error)      { return a.domain.newFiles(s) }
+func (a *App) NewObjects(s *graph.Scope) (*files.Objects, error)  { return a.domain.newObjects(s) }

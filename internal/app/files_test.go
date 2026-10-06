@@ -3,8 +3,10 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -97,9 +99,17 @@ func TestFiles_CommandsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
 // its production constructor, statement check included.
 func scriptedApp(t *testing.T, r *recorder, stdout, stderr *bytes.Buffer, responses ...sqltest.Response) (*app.App, *sqltest.Recorder) {
 	t.Helper()
+	a, rec, _ := scriptedAppIn(t, r, strings.NewReader(""), stdout, stderr, responses...)
+	return a, rec
+}
+
+// scriptedAppIn is scriptedApp reading stdin, and it returns the scripted
+// pool too, so a test can see whether the database was shut down.
+func scriptedAppIn(t *testing.T, r *recorder, stdin io.Reader, stdout, stderr *bytes.Buffer, responses ...sqltest.Response) (*app.App, *sqltest.Recorder, *sql.DB) {
+	t.Helper()
 	clearEnv(t)
 	pool, rec := sqltest.Open(t, responses...)
-	a := app.New(stdout, stderr)
+	a := app.New(stdin, stdout, stderr)
 	g, n := a.Graph(), a.Nodes()
 	g.Replace(n.Database, func(*graph.Scope) (*godatabase.DB, error) {
 		cfg := godatabase.Config{Name: "app"}
@@ -110,7 +120,7 @@ func scriptedApp(t *testing.T, r *recorder, stdout, stderr *bytes.Buffer, respon
 	})
 	g.Replace(n.Store, recording[*storage.Store](r, "store"))
 	g.Replace(n.StorageConfig, recording[storage.Config](r, "storage config"))
-	return a, rec
+	return a, rec, pool
 }
 
 func TestFiles_AnUnappliedSchemaFailsAtStartNamingTheFilesNode(t *testing.T) {

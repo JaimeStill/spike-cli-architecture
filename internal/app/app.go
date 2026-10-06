@@ -11,21 +11,24 @@ import (
 )
 
 // App is the blobfs program: its dependency graph, its command tree, and
-// the writers it reports to.
+// the streams it reads from and reports to.
 type App struct {
 	graph  *graph.Graph
 	infra  *infrastructure
 	admin  *admin
 	domain *domain
 	root   *cli.Command
+	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
 }
 
 // New describes the graph, builds the command tree, and returns the App. It
 // is cold: it constructs nothing, reads no configuration, and writes
-// nothing until [App.Run].
-func New(stdout, stderr io.Writer) *App {
+// nothing until [App.Run]. stdin is what a command reads as standard
+// input, such as put's content from -; nothing reads it but such a
+// command.
+func New(stdin io.Reader, stdout, stderr io.Writer) *App {
 	g := graph.New()
 	infra := defineInfrastructure(g)
 	a := &App{
@@ -37,6 +40,7 @@ func New(stdout, stderr io.Writer) *App {
 			Name:    "blobfs",
 			Summary: "blobfs manages files in a blob store.",
 		},
+		stdin:  stdin,
 		stdout: stdout,
 		stderr: stderr,
 	}
@@ -45,6 +49,7 @@ func New(stdout, stderr io.Writer) *App {
 		schema.Commands(a.admin.migrator),
 	)
 	a.root.Add(files.Commands(a.domain.files)...)
+	a.root.Add(files.ObjectCommands(a.domain.objects)...)
 	return a
 }
 
@@ -56,5 +61,5 @@ func New(stdout, stderr io.Writer) *App {
 // command's result. An App runs one command at a time, since a graph.Graph
 // is not safe for concurrent use.
 func (a *App) Run(ctx context.Context, args []string) int {
-	return cli.Run(ctx, a.root, args, a.stdout, a.stderr, cli.WithGraph(a.graph, a.infra.lifecycleConfig))
+	return cli.Run(ctx, a.root, args, a.stdin, a.stdout, a.stderr, cli.WithGraph(a.graph, a.infra.lifecycleConfig))
 }

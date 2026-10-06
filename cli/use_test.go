@@ -156,7 +156,7 @@ func newUseTree() *useTree {
 // run dispatches args over the tree with its graph, under ctx.
 func (u *useTree) run(ctx context.Context, args ...string) result {
 	var stdout, stderr bytes.Buffer
-	code := cli.Run(ctx, u.root, args, &stdout, &stderr, cli.WithGraph(u.g, u.cfg))
+	code := cli.Run(ctx, u.root, args, strings.NewReader(""), &stdout, &stderr, cli.WithGraph(u.g, u.cfg))
 	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
 }
 

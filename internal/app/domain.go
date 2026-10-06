@@ -12,10 +12,12 @@ import (
 
 // domain is the graph's domain nodes: the files Store the directory
 // commands use, over the infrastructure's database and never its object
-// store.
+// store, and the files domain's Objects the object commands use, over the
+// Store and the object store.
 type domain struct {
-	in    *infrastructure
-	files *graph.Node[*files.Store]
+	in      *infrastructure
+	files   *graph.Node[*files.Store]
+	objects *graph.Node[*files.Objects]
 }
 
 // defineDomain defines the domain nodes on g over in. It constructs
@@ -23,6 +25,7 @@ type domain struct {
 func defineDomain(g *graph.Graph, in *infrastructure) *domain {
 	d := &domain{in: in}
 	d.files = g.Define("files", d.newFiles)
+	d.objects = g.Define("objects", d.newObjects)
 	return d
 }
 
@@ -41,4 +44,14 @@ func (d *domain) newFiles(s *graph.Scope) (*files.Store, error) {
 	}
 	s.OnStart(store.Verify)
 	return store, nil
+}
+
+// newObjects constructs the object operations over the files Store and the
+// object store. It does no I/O and records no start of its own: the
+// store's start creates its container and probes it, and the Store's
+// start checks the statements, so by the time the command's body runs
+// both are known to work, and a store that cannot be reached fails the
+// command at start, labelled with the store's node name.
+func (d *domain) newObjects(s *graph.Scope) (*files.Objects, error) {
+	return files.NewObjects(s.Use(d.files), s.Use(d.in.store)), nil
 }

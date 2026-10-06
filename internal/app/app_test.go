@@ -31,7 +31,7 @@ import (
 func run(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code = app.New(&out, &errOut).Run(context.Background(), args)
+	code = app.New(strings.NewReader(""), &out, &errOut).Run(context.Background(), args)
 	return code, out.String(), errOut.String()
 }
 
@@ -94,7 +94,7 @@ func recording[T any](r *recorder, name string) func(*graph.Scope) (T, error) {
 // recordingApp returns blobfs with every node of its graph Replace-d by a
 // recording constructor, so r shows any constructor a run reaches.
 func recordingApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
-	a := app.New(stdout, stderr)
+	a := app.New(strings.NewReader(""), stdout, stderr)
 	g, n := a.Graph(), a.Nodes()
 	g.Replace(n.DatabaseConfig, recording[godatabase.Config](r, "database config"))
 	g.Replace(n.StorageConfig, recording[storage.Config](r, "storage config"))
@@ -103,6 +103,7 @@ func recordingApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
 	g.Replace(n.Store, recording[*storage.Store](r, "store"))
 	g.Replace(n.Migrator, recording[*schema.Client](r, "migrator"))
 	g.Replace(n.Files, recording[*files.Store](r, "files"))
+	g.Replace(n.Objects, recording[*files.Objects](r, "objects"))
 	return a
 }
 
@@ -216,7 +217,7 @@ func TestRun_ConfigurationReadOnlyOnRequest(t *testing.T) {
 func TestNew_IsCold(t *testing.T) {
 	var out, errOut bytes.Buffer
 
-	app.New(&out, &errOut)
+	app.New(strings.NewReader(""), &out, &errOut)
 
 	if out.Len() != 0 || errOut.Len() != 0 {
 		t.Errorf("New() wrote %q, %q, want nothing", out.String(), errOut.String())

@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -217,6 +221,263 @@ func (g group) removeDirectory() *cli.Command {
 			return output.Line(inv.Stdout, fmt.Sprintf("rmdir: %s (id %s)", inv.Args[0], dir.ID))
 		},
 	}
+}
+
+// ObjectCommands builds the object commands, put, cat, cp, and rm, over
+// objects, the composition root's node for [Objects]. Each declares
+// objects with Use, so the dispatcher builds and starts the database, the
+// Store's statement check, and the object store before the body runs; a
+// store that cannot be reached fails the command at start, naming the
+// store's node, before anything is read or written. Each validates its
+// arguments in Args, so a malformed path-or-id, or an id where a path is
+// needed, is a usage error before anything is built.
+func ObjectCommands(objects *graph.Node[*Objects]) []*cli.Command {
+	g := objectGroup{objects: objects}
+	return []*cli.Command{
+		g.put().Use(objects),
+		g.cat().Use(objects),
+		g.copy().Use(objects),
+		g.remove().Use(objects),
+	}
+}
+
+// objectGroup is the object commands' handle on their Objects node.
+type objectGroup struct {
+	objects *graph.Node[*Objects]
+}
+
+// objectsOf returns the Objects the dispatcher built for inv.
+func (g objectGroup) objectsOf(inv *cli.Invocation) *Objects {
+	return inv.System.Get(g.objects)
+}
+
+// put is put <local-file|-> <path|id:<uuid>> [--content-type <type>]: the
+// local file, or standard input for -, written as the file at the path,
+// or into the directory with the id under the local file's base name.
+// Standard input has no name, so - takes a path.
+func (g objectGroup) put() *cli.Command {
+	var contentType string
+	var dst Ref
+	cmd := &cli.Command{
+		Name:     "put",
+		Summary:  "Upload a local file, or stdin for -, as the file at a path or into a directory",
+		Synopsis: "<local-file|-> <path|id:<uuid>>",
+		Args: func(args []string) error {
+			if err := cli.ExactArgs(2)(args); err != nil {
+				return err
+			}
+			var err error
+			if dst, err = parseRefArg(args[1]); err != nil {
+				return err
+			}
+			if dst.ID != "" && args[0] == "-" {
+				return cli.Usagef("put - %s: stdin has no name to store under; give the destination as a path", args[1])
+			}
+			return nil
+		},
+		Run: func(ctx context.Context, inv *cli.Invocation) error {
+			src := inv.Args[0]
+			body, size, closeBody, err := openLocal(inv.Stdin, src)
+			if err != nil {
+				return fmt.Errorf("files: put %s: %w", src, err)
+			}
+			defer closeBody()
+			c := Content{Body: body, Size: size, ContentType: declaredType(contentType, src)}
+			o := g.objectsOf(inv)
+			label := inv.Args[1]
+			var res PutResult
+			if dst.ID != "" {
+				name := filepath.Base(src)
+				label = name + " in " + inv.Args[1]
+				res, err = o.PutFile(ctx, dst.ID, name, c)
+			} else {
+				res, err = o.Put(ctx, dst.Path, c)
+			}
+			if err != nil {
+				return err
+			}
+			resumed := ""
+			if res.Resumed {
+				resumed = ", resumed the pending row"
+			}
+			f := res.File
+			return output.Line(inv.Stdout, fmt.Sprintf("put: %s (id %s, %d bytes, etag %s%s)", label, f.ID, sizeOf(f), etagOf(f), resumed))
+		},
+	}
+	cmd.Flags().StringVar(&contentType, "content-type", "", "the media type to store with the object; the default comes from the local file's extension, else application/octet-stream")
+	return cmd
+}
+
+// cat is cat <path|id:<uuid>>: the available file's content streamed to
+// stdout as it is.
+func (g objectGroup) cat() *cli.Command {
+	var ref Ref
+	return &cli.Command{
+		Name:     "cat",
+		Summary:  "Write an available file's content to stdout",
+		Synopsis: "<path|id:<uuid>>",
+		Args: func(args []string) error {
+			if err := cli.ExactArgs(1)(args); err != nil {
+				return err
+			}
+			var err error
+			ref, err = parseRefArg(args[0])
+			return err
+		},
+		Run: func(ctx context.Context, inv *cli.Invocation) error {
+			o := g.objectsOf(inv)
+			var body io.ReadCloser
+			var err error
+			if ref.ID != "" {
+				body, _, err = o.OpenFile(ctx, ref.ID)
+			} else {
+				body, _, err = o.Open(ctx, ref.Path)
+			}
+			if err != nil {
+				return err
+			}
+			defer func() { _ = body.Close() }()
+			if _, err := io.Copy(inv.Stdout, body); err != nil {
+				return fmt.Errorf("files: cat %s: %w", inv.Args[0], err)
+			}
+			return nil
+		},
+	}
+}
+
+// copy is cp <src> <dst>: the available file at src copied into the
+// existing directory dst under its own name, or to the new path dst. With
+// two ids, the file with the first is copied into the directory with the
+// second under its own name. A name already taken is refused.
+func (g objectGroup) copy() *cli.Command {
+	var src, dst Ref
+	return &cli.Command{
+		Name:     "cp",
+		Summary:  "Copy an available file into a directory or to a new path",
+		Synopsis: "<src> <dst>",
+		Args: func(args []string) error {
+			if err := cli.ExactArgs(2)(args); err != nil {
+				return err
+			}
+			var err error
+			src, dst, err = parsePair("cp", args[0], args[1])
+			return err
+		},
+		Run: func(ctx context.Context, inv *cli.Invocation) error {
+			o := g.objectsOf(inv)
+			var res CopyResult
+			var err error
+			if src.ID != "" {
+				res, err = o.CopyFile(ctx, src.ID, dst.ID)
+			} else {
+				res, err = o.Copy(ctx, src.Path, dst.Path)
+			}
+			if err != nil {
+				return err
+			}
+			f := res.File
+			return output.Line(inv.Stdout, fmt.Sprintf("cp: %s -> %s (id %s, %d bytes, etag %s)", res.From, res.To, f.ID, sizeOf(f), etagOf(f)))
+		},
+	}
+}
+
+// remove is rm <path|id:<uuid>>, a file deleted, and rm --recursive
+// <path>, a directory and everything beneath it deleted, reported as the
+// totals its sweep removed. There is no -r shorthand.
+func (g objectGroup) remove() *cli.Command {
+	var recursive bool
+	var ref Ref
+	cmd := &cli.Command{
+		Name:     "rm",
+		Summary:  "Delete a file, or with --recursive a directory and everything beneath it",
+		Synopsis: "<path|id:<uuid>>",
+		Args: func(args []string) error {
+			if err := cli.ExactArgs(1)(args); err != nil {
+				return err
+			}
+			var err error
+			if ref, err = parseRefArg(args[0]); err != nil {
+				return err
+			}
+			if recursive && ref.ID != "" {
+				return cli.Usagef("rm --recursive %s: a branch is removed by path, not by id", args[0])
+			}
+			return nil
+		},
+		Run: func(ctx context.Context, inv *cli.Invocation) error {
+			o := g.objectsOf(inv)
+			if recursive {
+				res, err := o.RemoveTree(ctx, ref.Path)
+				if err != nil {
+					return err
+				}
+				return output.Line(inv.Stdout, fmt.Sprintf("rm --recursive: %s (%d files, %d directories)", ref.Path, res.Files, res.Directories))
+			}
+			var f blobfs.File
+			var err error
+			if ref.ID != "" {
+				f, err = o.RemoveFile(ctx, ref.ID)
+			} else {
+				f, err = o.Remove(ctx, ref.Path)
+			}
+			if err != nil {
+				return err
+			}
+			return output.Line(inv.Stdout, fmt.Sprintf("rm: %s (id %s)", inv.Args[0], f.ID))
+		},
+	}
+	cmd.Flags().BoolVar(&recursive, "recursive", false, "delete the directory at the path and everything beneath it")
+	return cmd
+}
+
+// openLocal opens the body put uploads: stdin for -, its length unknown,
+// or the local file named, its length from the file system so the store
+// holds the body to it. The close function releases what was opened.
+func openLocal(stdin io.Reader, name string) (body io.Reader, size int64, closeBody func(), err error) {
+	if name == "-" {
+		return stdin, 0, func() {}, nil
+	}
+	file, err := os.Open(name)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, 0, nil, err
+	}
+	return file, info.Size(), func() { _ = file.Close() }, nil
+}
+
+// declaredType is the content type put declares: the flag when given,
+// else the type the standard library registers for the local file's
+// extension, else application/octet-stream, which is also stdin's.
+func declaredType(flag, local string) string {
+	if flag != "" {
+		return flag
+	}
+	if local != "-" {
+		if t := mime.TypeByExtension(filepath.Ext(local)); t != "" {
+			return t
+		}
+	}
+	return "application/octet-stream"
+}
+
+// sizeOf returns a file's size, or 0 when the row records none.
+func sizeOf(f blobfs.File) int64 {
+	if f.Size == nil {
+		return 0
+	}
+	return *f.Size
+}
+
+// etagOf returns a file's etag, or - when the row records none.
+func etagOf(f blobfs.File) string {
+	if f.ETag == nil {
+		return "-"
+	}
+	return *f.ETag
 }
 
 // fileRecord lays a file row out as the fields stat prints, in order. The
