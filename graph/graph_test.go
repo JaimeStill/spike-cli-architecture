@@ -447,6 +447,24 @@ func TestWiringPanics(t *testing.T) {
 		var n *graph.Node[int]
 		mustPanic(t, "Build of a nil node", func() { _, _ = g.Build(n) })
 	})
+	t.Run("nil root after a real one", func(t *testing.T) {
+		g, c := graph.New(), counter{}
+		real := g.Define("real", constant(c, "real", 1))
+		var n *graph.Node[int]
+		mustPanic(t, "Build of a nil node", func() { _, _ = g.Build(real, n) })
+		if c["real"] != 0 {
+			t.Errorf("real's constructor ran %d times before the panic, want 0", c["real"])
+		}
+	})
+	t.Run("foreign root after a real one", func(t *testing.T) {
+		g, h, c := graph.New(), graph.New(), counter{}
+		real := g.Define("real", constant(c, "real", 1))
+		foreign := h.Define("foreign", constant(c, "foreign", 2))
+		mustPanic(t, `Build of "foreign", a node defined on another Graph`, func() { _, _ = g.Build(real, foreign) })
+		if c["real"] != 0 || c["foreign"] != 0 {
+			t.Errorf("constructors ran %v before the panic, want none", c)
+		}
+	})
 
 	escaped := func(t *testing.T) (*graph.Scope, *graph.Node[int]) {
 		t.Helper()

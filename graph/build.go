@@ -45,7 +45,8 @@ type abort struct {
 // wrapping the error, whether the node is a root or a dependency some Use
 // reached. Build panics on a nil root, a root defined on another Graph, or a
 // dependency cycle, among the nodes Use reaches or the ordering edges After
-// adds among them.
+// adds among them. It checks every root before it constructs any, so a
+// wiring mistake in one root panics before another root's constructor runs.
 func (g *Graph) Build(roots ...Ref) (sys *System, err error) {
 	g.built = true
 	b := &build{graph: g, entries: make(map[*node]*entry)}
@@ -58,8 +59,13 @@ func (g *Graph) Build(roots ...Ref) (sys *System, err error) {
 			sys, err = nil, a.err
 		}
 	}()
-	for _, r := range roots {
-		n := b.resolve(r, "Build")
+	// Resolve every root first, so a nil or foreign root anywhere in the
+	// list panics before any constructor runs.
+	nodes := make([]*node, len(roots))
+	for i, r := range roots {
+		nodes[i] = b.resolve(r, "Build")
+	}
+	for _, n := range nodes {
 		if err := b.construct(n); err != nil {
 			return nil, err
 		}

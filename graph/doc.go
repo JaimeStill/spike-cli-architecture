@@ -57,7 +57,9 @@
 // dependency cycle, a node used on a Graph it was not defined on, a Scope
 // used after its constructor returned, a hook recorded twice, a Replace
 // after Build, a Get of a node not in the System, a nil constructor, and an
-// empty or duplicate name.
+// empty or duplicate name. Build checks its roots, for a nil node or one
+// defined on another Graph, before it constructs any of them, so a mistake
+// in any root panics before a constructor runs.
 //
 // # Promotion
 //

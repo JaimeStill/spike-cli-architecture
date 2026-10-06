@@ -80,6 +80,7 @@ func (f *fake) Shutdown(context.Context) error {
 // constructors, the fakes, and the leaves record to rec.
 type useTree struct {
 	root  *cli.Command
+	data  *cli.Command // the parent that declares db
 	g     *graph.Graph
 	cfg   *graph.Node[lifecycle.Config]
 	db    *graph.Node[*fake]
@@ -147,6 +148,7 @@ func newUseTree() *useTree {
 			return u.hookErr
 		},
 	}
+	u.data = data
 	u.root.Add(data, &cli.Command{Name: "plain", Run: leaf("plain")})
 	return u
 }
@@ -447,19 +449,39 @@ func TestUse_PanicsOnAnUntypedNilRef(t *testing.T) {
 
 func TestUse_NilNodePanicsAtDispatch(t *testing.T) {
 	// A nil *graph.Node passes Use and reaches graph.Build, which panics on
-	// it when a dispatch runs a leaf whose path declares it.
+	// it when a dispatch runs a leaf whose path declares it. Build checks
+	// every root before it constructs any, so no constructor runs even when
+	// a real node comes before the nil one, declared on the leaf or
+	// inherited from a parent.
 	var nilNode *graph.Node[*fake]
-	for name, refs := range map[string]func(u *useTree) []graph.Ref{
-		"alone":           func(*useTree) []graph.Ref { return []graph.Ref{nilNode} },
-		"after a non-nil": func(u *useTree) []graph.Ref { return []graph.Ref{u.db, nilNode} },
-	} {
-		t.Run(name, func(t *testing.T) {
+	tests := []struct {
+		name string
+		// add adds a leaf named broken to u's tree, declaring nilNode, and
+		// returns the path that dispatches it.
+		add func(u *useTree, leaf *cli.Command) []string
+	}{
+		{"alone", func(u *useTree, leaf *cli.Command) []string {
+			u.root.Add(leaf.Use(nilNode))
+			return []string{"broken"}
+		}},
+		{"after a non-nil", func(u *useTree, leaf *cli.Command) []string {
+			u.root.Add(leaf.Use(u.db, nilNode))
+			return []string{"broken"}
+		}},
+		{"after a parent's node", func(u *useTree, leaf *cli.Command) []string {
+			// data declares db, which the leaf inherits ahead of nilNode.
+			u.data.Add(leaf.Use(nilNode))
+			return []string{"data", "broken"}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			u := newUseTree()
 			broken := &cli.Command{Name: "broken", Run: func(context.Context, *cli.Invocation) error {
 				u.rec.add("run broken")
 				return nil
 			}}
-			u.root.Add(broken.Use(refs(u)...))
+			args := tt.add(u, broken)
 			defer func() {
 				want := "graph: Build of a nil node"
 				if r := recover(); r != want {
@@ -468,11 +490,11 @@ func TestUse_NilNodePanicsAtDispatch(t *testing.T) {
 				if u.rec.count("run broken") != 0 {
 					t.Error("the leaf ran")
 				}
-				if name == "alone" && u.builds() != 0 {
+				if u.builds() != 0 {
 					t.Errorf("events = %q, want no constructor to run", u.rec.list())
 				}
 			}()
-			u.run(context.Background(), "broken")
+			u.run(context.Background(), args...)
 		})
 	}
 }
