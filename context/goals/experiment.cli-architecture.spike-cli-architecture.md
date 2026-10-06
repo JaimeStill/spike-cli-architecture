@@ -346,8 +346,9 @@ redirected at the session brief; slices 4/4 of the new brief · standards ✓ ·
   reflect.
 - composition: `graph.Build` checks every root, for nil or another Graph, before it constructs
   any, so a mistake in one root panics before another root's constructor runs.
-- composition: the architect's commit: `version` reports v0.0.0 when the binary has no build
-  info, and internal/app drops the `godatabase` and `sqlatepostgres` import aliases.
+- composition: the architect's commit drops internal/app's `godatabase` and `sqlatepostgres`
+  import aliases. Its `version` fallback to v0.0.0 was reverted to "(devel)" (architect), since
+  go run reports "(devel)" itself and the fallback fired only under go test.
 
 ## Pending edits
 
