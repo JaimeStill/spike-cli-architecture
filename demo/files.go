@@ -129,7 +129,7 @@ func (o objects) catFile(ctx context.Context, sys *graph.System, r *scenario.Rep
 	defer func() { _ = body.Close() }()
 	b, err := io.ReadAll(body)
 	if err != nil {
-		return fmt.Errorf("files: cat %s: %w", path, err)
+		return fmt.Errorf("cat %s: %w", path, err)
 	}
 	if string(b) != want {
 		return fmt.Errorf("cat %s read %q, want the %q the tour put", path, b, want)

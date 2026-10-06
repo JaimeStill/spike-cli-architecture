@@ -123,6 +123,20 @@ func TestRemoveBookmark_AFileTheUnitHasNotBookmarkedIsErrNoBookmark(t *testing.T
 	}
 }
 
+func TestRemoveBookmark_AMissingFileIsLabelledOnceAsTheRemoval(t *testing.T) {
+	s, _ := open(t, resolved(dirID, blobfs.RootID, "reports", 1), fileRows())
+
+	_, err := s.RemoveBookmark(context.Background(), "/reports/a.txt", unitID)
+
+	if !errors.Is(err, blobfs.ErrNotFound) {
+		t.Fatalf("RemoveBookmark() = %v, want ErrNotFound", err)
+	}
+	want := "files: bookmark rm /reports/a.txt as unit " + unitID + ": "
+	if msg := err.Error(); !strings.HasPrefix(msg, want) || strings.Count(msg, "files:") != 1 {
+		t.Errorf("RemoveBookmark() = %q, want it to start %q and name the package once", msg, want)
+	}
+}
+
 func TestListBookmarks_ReadsTheUnitsPageInPathOrder(t *testing.T) {
 	size := int64(3)
 	s, rec := open(t, sqltest.WithTotal(sqltest.Response{Columns: bookmarkColumns, Rows: [][]driver.Value{

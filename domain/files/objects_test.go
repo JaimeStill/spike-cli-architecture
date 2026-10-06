@@ -234,6 +234,45 @@ func TestOpen_APendingFileIsNotAvailable(t *testing.T) {
 	}
 }
 
+func TestMissingSources_AreLabelledOnceByTheOperation(t *testing.T) {
+	// Each read of a file that does not exist is reported under the
+	// operation the caller ran, once, and not under the lookup it ran
+	// first.
+	tests := []struct {
+		name      string
+		responses []sqltest.Response
+		call      func(*files.Objects) error
+		want      string
+	}{
+		{"cat by path", []sqltest.Response{resolvedRoot(), fileRows()}, func(o *files.Objects) error {
+			_, _, err := o.Open(context.Background(), "/a.txt")
+			return err
+		}, "files: cat /a.txt: "},
+		{"cat by id", []sqltest.Response{fileRows()}, func(o *files.Objects) error {
+			_, _, err := o.OpenFile(context.Background(), fileID)
+			return err
+		}, "files: cat file " + fileID + ": "},
+		{"cp by path", []sqltest.Response{resolvedRoot(), fileRows()}, func(o *files.Objects) error {
+			_, err := o.Copy(context.Background(), "/a.txt", "/b.txt")
+			return err
+		}, "files: cp /a.txt /b.txt: "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o, _, _ := openObjects(t, tt.responses...)
+
+			err := tt.call(o)
+
+			if !errors.Is(err, blobfs.ErrNotFound) {
+				t.Fatalf("error = %v, want ErrNotFound", err)
+			}
+			if msg := err.Error(); !strings.HasPrefix(msg, tt.want) || strings.Count(msg, "files:") != 1 {
+				t.Errorf("error = %q, want it to start %q and name the package once", msg, tt.want)
+			}
+		})
+	}
+}
+
 func TestCopy_RefusesANameAlreadyTakenBeforeTheStore(t *testing.T) {
 	// The source is read, the destination /b.txt names no directory, so
 	// its parent is resolved, and the copy's create meets the name taken:

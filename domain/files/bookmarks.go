@@ -67,11 +67,11 @@ func (s *Store) AddBookmark(ctx context.Context, path, unit string, active bool)
 // Removing the active bookmark leaves the unit with none, which a later add
 // with active may fill.
 func (s *Store) RemoveBookmark(ctx context.Context, path, unit string) (blobfs.File, error) {
-	f, err := s.Stat(ctx, path)
-	if err != nil {
-		return blobfs.File{}, err
+	f, err := s.stat(ctx, path)
+	if err == nil {
+		err = s.deleteBookmark(ctx, s.db, unit, f.ID)
 	}
-	if err := s.deleteBookmark(ctx, s.db, unit, f.ID); err != nil {
+	if err != nil {
 		return blobfs.File{}, fmt.Errorf("files: bookmark rm %s as unit %s: %w", path, unit, err)
 	}
 	return f, nil

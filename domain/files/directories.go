@@ -151,19 +151,25 @@ func (s *Store) contents(ctx context.Context, sess sqlate.Session, path, id stri
 // not, is blobfs.ErrNotFound; the root, which is no file, is
 // blobfs.ErrRootDirectory.
 func (s *Store) Stat(ctx context.Context, path string) (blobfs.File, error) {
-	parent, name, err := splitParent(path)
-	if err != nil {
-		return blobfs.File{}, fmt.Errorf("files: stat %s: %w", path, err)
-	}
-	dir, err := s.resolve(ctx, s.db, parent)
-	if err != nil {
-		return blobfs.File{}, fmt.Errorf("files: stat %s: %w", path, err)
-	}
-	f, err := s.blobfs.Files.FindByName(ctx, s.db, dir.ID, name)
+	f, err := s.stat(ctx, path)
 	if err != nil {
 		return blobfs.File{}, fmt.Errorf("files: stat %s: %w", path, err)
 	}
 	return f, nil
+}
+
+// stat is Stat's body, its errors unlabelled, so the operations that read
+// a file by path first label its errors as their own.
+func (s *Store) stat(ctx context.Context, path string) (blobfs.File, error) {
+	parent, name, err := splitParent(path)
+	if err != nil {
+		return blobfs.File{}, err
+	}
+	dir, err := s.resolve(ctx, s.db, parent)
+	if err != nil {
+		return blobfs.File{}, err
+	}
+	return s.blobfs.Files.FindByName(ctx, s.db, dir.ID, name)
 }
 
 // StatFile returns the row of the file with id, whatever its status, on

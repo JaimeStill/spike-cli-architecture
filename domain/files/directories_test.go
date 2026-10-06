@@ -428,6 +428,9 @@ func TestMove_StaysUnderOneTopLevelDirectory(t *testing.T) {
 			if !errors.Is(err, files.ErrMoveAcrossScopes) {
 				t.Fatalf("Move(%s, %s) = %v, want ErrMoveAcrossScopes", tt.src, tt.dst, err)
 			}
+			if n := strings.Count(err.Error(), "files:"); n != 1 {
+				t.Errorf("Move(%s, %s) = %q, want the package named once", tt.src, tt.dst, err)
+			}
 			want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpRollback}
 			if got := rec.Ops(); !slices.Equal(got, want) {
 				t.Errorf("ops = %v, want %v: refused after the destination's resolution alone", got, want)

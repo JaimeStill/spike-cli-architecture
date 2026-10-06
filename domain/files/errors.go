@@ -18,8 +18,9 @@ var (
 	// owner binds, so a move that crossed it would carry an entry out of
 	// one owner's scope into another's, or move a top-level directory to
 	// another depth. A rename of a top-level directory stays at the top
-	// level and is allowed, and the owner row follows it by id.
-	ErrMoveAcrossScopes = errors.New("files: a move stays under one top-level directory")
+	// level and is allowed, and the owner row follows it by id. It carries
+	// no "files:" prefix because the move that refuses it names itself so.
+	ErrMoveAcrossScopes = errors.New("a move stays under one top-level directory")
 
 	// ErrNotAvailable reports a cat or a cp of a file that has no content
 	// to read: a pending file, whose object is not written yet, or a

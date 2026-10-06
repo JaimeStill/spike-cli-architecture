@@ -150,9 +150,9 @@ func (o *Objects) write(ctx context.Context, directoryID, name string, c Content
 // content: a pending or deleting one is ErrNotAvailable, before the store
 // is reached.
 func (o *Objects) Open(ctx context.Context, path string) (io.ReadCloser, blobfs.File, error) {
-	f, err := o.store.Stat(ctx, path)
+	f, err := o.store.stat(ctx, path)
 	if err != nil {
-		return nil, blobfs.File{}, err
+		return nil, blobfs.File{}, fmt.Errorf("files: cat %s: %w", path, err)
 	}
 	body, err := o.open(ctx, f)
 	if err != nil {
@@ -163,9 +163,9 @@ func (o *Objects) Open(ctx context.Context, path string) (io.ReadCloser, blobfs.
 
 // OpenFile opens the content of the file with id, as Open does by path.
 func (o *Objects) OpenFile(ctx context.Context, id string) (io.ReadCloser, blobfs.File, error) {
-	f, err := o.store.StatFile(ctx, id)
+	f, err := o.store.blobfs.Files.Find(ctx, o.store.db, id)
 	if err != nil {
-		return nil, blobfs.File{}, err
+		return nil, blobfs.File{}, fmt.Errorf("files: cat file %s: %w", id, err)
 	}
 	body, err := o.open(ctx, f)
 	if err != nil {
@@ -208,7 +208,7 @@ func (o *Objects) Copy(ctx context.Context, src, dst string) (CopyResult, error)
 	if !strings.HasPrefix(dst, "/") {
 		return CopyResult{}, fmt.Errorf("files: cp %s %s: %w: %q does not start with /", src, dst, blobfs.ErrInvalidPath, dst)
 	}
-	f, err := o.store.Stat(ctx, src)
+	f, err := o.store.stat(ctx, src)
 	if err != nil {
 		return CopyResult{}, fmt.Errorf("files: cp %s %s: %w", src, dst, err)
 	}
