@@ -147,7 +147,7 @@ Two-way. The spike publishes nothing and writes only its own repository.
 
 ## Progress
 
-redirected at the session brief; slices 0/4 of the new brief · standards — · spec — · editor —
+redirected at the session brief; slices 1/4 of the new brief · standards — · spec — · editor —
 
 ## Decisions
 
@@ -289,6 +289,10 @@ redirected at the session brief; slices 0/4 of the new brief · standards — ·
 
 - composition: a built node is a graph.Dependency (name, value, OnStart/OnShutdown hooks), returned
   by System.Layers() [][]Dependency; rejected Member (too generic), Instance, Built (architect).
+
+- composition: a long-running node that nothing Uses (go-web-service's reactors) is its own
+  Build root, and the runtime root orders after it with After; layers for the stage table come
+  out config → database, store → domain, schema, storage → reactors → server.
 
 ## Pending edits
 
