@@ -1,6 +1,6 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** brief ready
+- **State:** building
 - **Task:** composition
 - **Branch:** composition
 
@@ -322,6 +322,12 @@ redirected at the session brief; slices 4/4 of the new brief · standards ✓ ·
 - composition: a value constructed by a Build that then fails is not shut down: nothing started,
   and the process exits.
 - composition: internal/app's non-test code went from 379 lines to 229.
+
+- composition: redirected at the session brief (architect): `mise run integration` must boot
+  its own isolated compose project on its own ports and tear it down with its volumes, as
+  go-web-service's does and tests-and-docs.md states; the brief had followed spike-blobfs and
+  run against the `mise run up` stack. Project spike-cli-architecture-integration on 5437 and
+  10011; compose files drop container_name so the project scopes names.
 
 ## Pending edits
 
