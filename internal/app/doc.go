@@ -16,10 +16,10 @@
 // it needs with Use: the schema group declares the migrator, and its verbs
 // inherit it, so a schema verb builds the migrator, the database, and their
 // configuration, and never the object store; each directory command, mkdir,
-// ls, stat, mv, and rmdir, declares the files node, and likewise never
-// builds the object store; each object command, put, cat, cp, and rm,
-// declares the objects node, so it builds the database and the object
-// store, and a store that cannot be reached fails it at start, naming the
+// ls, stat, mv, and rmdir, and each bookmark command declares the files
+// node, and likewise never builds the object store; each object command,
+// put, cat, cp, and rm, declares the objects node, so it builds the
+// database and the object store, and a store that cannot be reached fails it at start, naming the
 // store's node, with the database shut down. Each demo tour declares the
 // nodes it reads: demo directories the files node, so it never builds the
 // object store, and demo files the files and objects nodes. version and

@@ -14,7 +14,7 @@
 // crosses from one owner's scope into another's. A bookmark binds a unit to
 // a file, at most one of a unit's bookmarks active; rm refuses a file a
 // unit bookmarks, and rm --recursive a branch holding one, before anything
-// is touched.
+// is deleted.
 //
 // The package has one file per role:
 //

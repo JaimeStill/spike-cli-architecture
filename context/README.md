@@ -30,8 +30,8 @@ staged composition?
 2. A CLI with no cobra in its module graph reproduces spike-blobfs's whole command surface over
    published blobfs, go-storage/azureblob, and Postgres.
 3. Each command opens only the dependencies it declares: help, usage errors, and
-   dependency-free commands work with the stack down; schema commands open Postgres only; file
-   commands open Postgres and the object store.
+   dependency-free commands work with the stack down; schema, directory, and bookmark commands
+   open Postgres only; object commands open Postgres and the object store.
 4. Each declared dependency comes up once per run, and dependencies close in reverse order on
    success, on error, and on signal cancellation.
 5. A dependency that fails to come up is reported once as the command's error and exits
@@ -60,19 +60,26 @@ staged composition?
   serves until its context ends instead. A value takes part by implementing `Subsystem`, and
   `Config` carries the shutdown timeout. It imports the standard library, go-core, and `graph`,
   and is a go-core promotion candidate.
-- **Composition root** (package `internal/app`): New/Run and the graph nodes for configuration,
-  the database, the object store, and the schema migrator. It has no initializer: each command
+- **Composition root** (package `internal/app`): New/Run, and the graph nodes for configuration,
+  the database, the object store, the schema migrator, and the files domain's `files` and
+  `objects` nodes. Each layer file mounts its own commands. It has no initializer: each command
   declares its nodes with `Use`, and the dispatcher builds and runs them.
 - **Infrastructure**: Postgres through go-database with sqlate migrations, the object store
   through go-storage/azureblob, and the compose stack of Postgres and Azurite: the development
   project on 5436 and 10010 (`mise run up`), and the integration project on 5437 and 10011.
-- **Domain and admin commands**: schema (package `admin/schema`, with status, up, down, and
-  reset); files and bookmarks are planned.
-- **Output and scenarios**: package `output` renders a command's result as a line or a table;
-  scenarios are planned.
-- **Tests**: buffer-driven app tests, fakes, and integration tests that `mise run integration`
-  runs over an isolated compose project it boots and tears down; black-box tests over the built
-  binary are planned.
+- **Domain and admin commands** (evidence 2): schema (package `admin/schema`, with status, up,
+  down, and reset), and spike-blobfs's files surface on published blobfs (package
+  `domain/files`). Its `files` node, a Store over the database, serves the directory commands
+  (mkdir, ls, stat, mv, rmdir) and bookmark add, ls, and rm. Its `objects` node, over `files`
+  and the object store, serves put, cat, cp, rm, and rm --recursive.
+- **Output and scenarios** (evidence 8): package `output` renders a command's result as a line,
+  a table, a record, a directory listing, or a bookmark listing. Package `scenario` runs a
+  narrated scenario whose command declares its nodes with `Use`; package `demo` holds the
+  `directories` and `files` tours under `blobfs demo`, and `blobfs list` prints them.
+- **Tests** (evidence 7): buffer-driven app tests; domain tests over sqltest and
+  `storagetest.Fake`; and, under `mise run integration`, on an isolated compose project it boots
+  and tears down, integration tests and a black-box suite (package `integration`) that runs the
+  built binary as a child process.
 
 ## References
 

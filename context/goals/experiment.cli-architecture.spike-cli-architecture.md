@@ -106,7 +106,7 @@ Door          two-way: the spike repository only, no release
 
 ## Progress
 
-slices 4/4 committed · standards — · spec — · editor —
+slices 4/4 committed · standards ✓ · spec ✓ · editor ✓
 
 ## Decisions
 
@@ -317,7 +317,8 @@ slices 4/4 committed · standards — · spec — · editor —
   finishes any branch an earlier run marked (a deliberate difference from spike-blobfs's walk).
 - files: --fail-after is dropped from put, cp, and rm; the domain calls blobfs's WriteFile,
   EnsureFile, and RemoveFileID protocols, which blobfs's conformance suite proves; put still resumes
-  a pending row (a deliberate difference).
+  a pending row (a deliberate difference). *Superseded in part: rm calls RemoveFile, not
+  RemoveFileID.*
 - files: --variant is dropped; the composition root fixes blobfs's Postgres engine, as
   go-web-service does, so the black-box script runs once (a deliberate difference, like --dsn).
 - files: stdin is a parameter of cli.Run and app.New beside stdout and stderr, exposed as
@@ -328,6 +329,68 @@ slices 4/4 committed · standards — · spec — · editor —
   `scenario` parent with `list` beside them.
 - files: a scenario drops slab's Needs; its dependencies come only from Use, the Coordinator reports
   an unreachable one naming its node, and `list` prints each scenario's declared node names.
+
+- files: bad input exits 2 as a usage error, checked before anything is built: a malformed ref,
+  sort or filter term, `--total`, or `--unit`; a path mixed with an id; `ls id: --unit`; and
+  `rm --recursive id:`. spike-blobfs exited 1.
+- files: a half continued from a cursor prints "total not counted"; sort and filter terms reach the
+  directory half only for spike-blobfs's set; a directory's new blobfs `status` field is not
+  printed.
+- files: mv keeps spike-blobfs's rule that a move stays under one top-level directory
+  (ErrMoveAcrossScopes); a renamed top-level directory keeps its owner row.
+- files: the domain is two graph nodes. `files`, a Store over the database, serves the directory
+  and bookmark commands; its start checks blobfs's statements and the domain's own
+  (domain/files/statements). `objects`, over `files` and the store, serves put, cat, cp, and rm.
+- files: put looks the name up first and resumes a pending row through EnsureFile under that row's
+  id, keeping its first content type; any other put calls WriteFile with Files.Create.
+- files: cp calls WriteFile with Files.Create, so it refuses any taken name, a pending one included,
+  and never resumes (spike-blobfs's cp resumed). Its source opens on the body's first read, so a
+  refused name never reaches the store.
+- files: rm by path and by id both call RemoveFile with a pick callback; RemoveFileID is unused.
+- files: rm holds the file before counting its bookmarks, in the first transaction, so a bookmark
+  added concurrently can't lose the object.
+- files: rm --recursive counts the branch's bookmarks right after marking it, in the same
+  transaction; any bookmark refuses the command and rolls the mark back, because blobfs's sweep
+  deletes the object before the foreign key would refuse the row. spike-blobfs stopped partway.
+- files: rm --recursive uses blobfs's default batch with no stale reclaim, and reports the last
+  pass's error with the counts so far; owner rows are removed through the sweep's OnRemoveDirectory
+  hook.
+- files: bookmark add --active is refused while another of the unit's bookmarks is active, as in
+  spike-blobfs.
+- files: --unit is parsed with the standard library's uuid (Go 1.27), not blobfs.ParseID, which
+  refuses the nil UUID. The owner listing (`ls / --unit`) pages by number only and hides deleting
+  directories.
+- files: bookmark ls always prints paths; spike-blobfs's path-less listing, its Paths option, and
+  its Scope type are dropped.
+- files: an error is labelled once, by the operation the caller ran; sentinels carry no `files:`
+  prefix.
+- files: scenarios: the runner is package `scenario` and the tours package `demo` (slab's split).
+  scenario.Node is `graph.Ref` plus `Name()`, so one typed node drives Use, list's names, and
+  System.Get. A step receives (ctx, *graph.System, *Reporter); a failed step reads
+  `step N (intent): err`.
+- files: `list` prints the nodes a scenario declares, not the transitive set, since finding
+  dependencies needs construction and list builds nothing; `demo files` declares files and objects.
+- files: the tours work in fixed areas (/demo-directories, /demo-files), clear leftovers first, and
+  use a constant demo unit. They hold no bookmarks: a bookmark needs a file, and a file needs the
+  store.
+- files: each layer file in internal/app mounts its own commands; the demo renders through files'
+  exported WriteContents, WriteFileRecord, and WriteDirectoryRecord.
+- files: the integration suite runs the binary bounded by go-core's processtest.Failsafe, with its
+  own runner, since processtest.Launch takes no args or stdin and merges stdout with stderr. Each
+  test gets its own database and container. The unreachable-store test runs two object commands,
+  since each waits about 9s on the Azure SDK's retries; the hermetic tests cover all of them.
+- files: the integration tests seed a pending row and a deleting branch by SQL, the only way in
+  since --fail-after was dropped. Open question for the architect: tests-and-docs.md wants
+  production surfaces.
+- files: spike-blobfs's root help appended the scenario listing; cli's generated help has no hook
+  for it (for the evidence-6 record).
+- files: stdin as a cli.Run parameter changes the go-cli-sdk candidate's signature (for the
+  evidence-6 record).
+- files: go-core's processtest doesn't fit a CLI (no args or stdin, merged streams), a go-core or
+  go-cli-sdk candidate (for the evidence-6 record).
+- files: internal/app's export_test.go exports production constructors (Nodes.Files,
+  Nodes.Objects, NewFiles, NewObjects) for Graph.Replace, beyond the clock or probe hook
+  tests-and-docs.md allows, continuing main's pattern. Open question for the architect.
 
 ## Pending edits
 

@@ -269,9 +269,10 @@ type script struct {
 }
 
 // TestScript is the scripted run of the directory, object, and bookmark
-// commands through the built binary, in its own database and container: the steps below in order, each a
-// subtest, and the script stops at the first step that fails. The
-// transcript under -v is the record of what the binary does.
+// commands through the built binary, in its own database and container:
+// the steps below in order, each a subtest, and the script stops at the
+// first step that fails. The transcript under -v is the record of what the
+// binary does.
 func TestScript(t *testing.T) {
 	s := &script{tg: open(t)}
 	for _, step := range []struct {
