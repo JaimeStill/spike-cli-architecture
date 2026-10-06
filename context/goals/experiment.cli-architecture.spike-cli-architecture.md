@@ -147,7 +147,7 @@ Two-way. The spike publishes nothing and writes only its own repository.
 
 ## Progress
 
-redirected at the session brief; slices 2/4 of the new brief · standards — · spec — · editor —
+redirected at the session brief; slices 3/4 of the new brief · standards — · spec — · editor —
 
 ## Decisions
 
