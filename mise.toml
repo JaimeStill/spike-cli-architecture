@@ -48,16 +48,17 @@ done
 [tasks.integration]
 description = "Start an isolated compose stack, run the integration tests against it, and tear it down"
 run = '''
-set -e
+set -eu
 export GOWORK=off
 export COMPOSE_PROJECT_NAME=spike-cli-architecture-integration POSTGRES_PORT=5437 AZURITE_BLOB_PORT=10011
-trap 'docker compose down -v' EXIT
+export BLOBFS_DATABASE_PORT="$POSTGRES_PORT"
+export BLOBFS_STORAGE_ENDPOINT="http://127.0.0.1:$AZURITE_BLOB_PORT/devstoreaccount1"
+trap 'cd "$MISE_PROJECT_ROOT" && docker compose down -v' EXIT
 docker compose up -d --wait
 for mod in $GO_MODULES; do
   echo "integration: $mod"
   cd "$MISE_PROJECT_ROOT/$mod"
-  BLOBFS_DATABASE_PORT=5437 BLOBFS_STORAGE_ENDPOINT=http://127.0.0.1:10011/devstoreaccount1 \
-    go test -race -tags integration -count=1 ./...
+  go test -race -tags integration -count=1 ./...
 done
 '''
 
