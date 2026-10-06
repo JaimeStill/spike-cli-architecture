@@ -42,12 +42,10 @@
 //
 // # Layers
 //
-// The layers are the longest-path layering of the discovered edges: a node
-// with no dependencies is in layer 0, and any other node is one layer above
-// the highest of its Use and After dependencies. Every node's dependencies
-// therefore sit in lower layers, so the nodes of one layer can start
-// together once the layers below them have. Within a layer, nodes are in
-// definition order.
+// The layers are the longest-path layering of the discovered Use and After
+// edges, as [System.Layers] states: every node's dependencies sit in lower
+// layers, so the nodes of one layer can start together once the layers
+// below them have.
 //
 // # Errors and panics
 //

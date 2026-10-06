@@ -55,12 +55,9 @@ type Command struct {
 	// Uses names the graph nodes the command needs. A leaf needs the union
 	// of the Uses along its path, from the root to itself, so a parent's
 	// Uses is inherited by every leaf below it, and a node named at several
-	// levels counts once. When that union is not empty, a dispatch to the
-	// leaf builds it, with the lifecycle configuration node, from the graph
-	// [WithGraph] gave Run, starts what it built, runs the leaf with
-	// [Invocation].System set, and shuts it down. A tree with any Uses
-	// dispatched by a Run without WithGraph panics at the start of the
-	// dispatch.
+	// levels counts once. [Run] builds that union and runs the leaf under
+	// it, with [Invocation].System set. Uses anywhere in a tree requires
+	// Run's [WithGraph] option.
 	Uses []graph.Ref
 
 	flags     *flag.FlagSet
