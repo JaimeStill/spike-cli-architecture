@@ -50,6 +50,7 @@ func New(stdin io.Reader, stdout, stderr io.Writer) *App {
 	)
 	a.root.Add(files.Commands(a.domain.files)...)
 	a.root.Add(files.ObjectCommands(a.domain.objects)...)
+	a.root.Add(listCommand(a.domain), mountDemo(a.domain))
 	return a
 }
 

@@ -7,7 +7,10 @@
 // TestScript is one ordered script over the directory and object commands;
 // TestTheStoreUnreachable runs them with the object store's endpoint
 // closed, where the directory commands succeed and the object commands
-// fail naming the store. Every run logs its command line and output, so
+// fail naming the store. scenarios_test.go runs list with nothing
+// reachable, each demo tour twice in a row and after an interrupted run,
+// and demo directories with the store unreachable, where demo files fails
+// naming the store. Every run logs its command line and output, so
 // go test -v prints the transcript.
 //
 // The package has no code outside its tests.
