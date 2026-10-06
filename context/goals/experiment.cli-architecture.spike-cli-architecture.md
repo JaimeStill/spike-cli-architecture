@@ -1,8 +1,8 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** idle
-- **Task:** none
-- **Branch:** none
+- **State:** building
+- **Task:** files
+- **Branch:** files
 
 ## Tasks
 
@@ -10,6 +10,103 @@
 2. [x] composition
 3. [ ] files
 4. [ ] validate
+
+## Task brief · files
+
+```
+Problem       blobfs serves only schema and version. Evidence 2, 7, and 8 need
+              spike-blobfs's files and bookmark surface rebuilt on published
+              blobfs, go-storage/azureblob, and Postgres. Each command declares
+              only the dependencies it uses. The work is tested in the layout's
+              tiers and joined by a scenario package whose commands declare
+              their dependencies like any command. Without it, the experiment
+              can't show the dispatcher and the graph holding up in a real CLI.
+Behaviors     1. mkdir, ls, stat, mv, and rmdir behave as spike-blobfs's do:
+                 absolute paths and id:<uuid> refs, cp/mv taking two paths or
+                 two ids. ls has --page, --size, repeatable --sort and --filter,
+                 --total exact|none, --after-dirs/--after-files, --cursors, and
+                 --unit; mkdir has --unit. Each declares Postgres alone and
+                 succeeds with the object store unreachable.
+              2. bookmark add, ls, and rm behave as spike-blobfs's do, each
+                 with a required --unit, add with --active, and at most one
+                 active bookmark per unit. Each declares Postgres alone.
+              3. put uploads a local file, or stdin for `-`, to a path or into
+                 a directory id. Its content type comes from --content-type,
+                 then the file's extension, then application/octet-stream. A
+                 put onto a pending row resumes it. A name an available file
+                 holds is refused.
+              4. cat streams an available file's content to stdout. cp copies
+                 an available file to a new path or into a directory, refusing
+                 a name already taken. rm deletes a file, and refuses a file a
+                 unit has bookmarked before touching anything.
+              5. rm --recursive takes a path, not an id. It marks the branch
+                 deleting, sweeps until no work remains, and prints the files
+                 and directories removed as totals. A rerun after an
+                 interruption finishes the branch. The root is refused.
+              6. put, cat, cp, and rm declare Postgres and the object store. An
+                 unreachable store fails them once, naming the store, with the
+                 database shut down. The directory and bookmark commands are
+                 unaffected.
+              7. A files command run against a schema that isn't applied fails
+                 at start, naming the files node, before its body runs.
+              8. blobfs runs on blobfs's Postgres engine, fixed in the
+                 composition root. It has no --dsn, --variant, or --fail-after,
+                 and --recursive has no -r shorthand. No module in its graph is
+                 cobra.
+              9. The dispatcher hands a command stdin beside stdout and stderr.
+                 cli.Run and app.New take it as a parameter, a command reads it
+                 as Invocation.Stdin, and main passes the process's stdin.
+              10. `blobfs list` prints each scenario's name, its summary, and
+                  the names of the nodes it declares. It builds nothing and
+                  succeeds with the stack down.
+              11. `blobfs demo directories` declares Postgres alone, and
+                  `blobfs demo files` declares Postgres and the store. Each
+                  narrates every step before doing it, brings up only what it
+                  declares, reports an unreachable dependency as the start
+                  error naming its node, and succeeds twice in a row.
+              12. Hermetic tier: app tests drive the command tree over
+                  buffers; domain tests run over sqltest and storagetest.Fake
+                  with no network.
+              13. Integration tier: under `mise run integration`, on its
+                  isolated compose project (5437, 10011), the built binary runs
+                  as a child process through one ordered script over every
+                  command, each test with its own throwaway database and
+                  container. A directory command succeeds with the store
+                  endpoint unreachable.
+Test seams    the blobfs program's arguments, stdin, stdout, stderr, and exit
+              code: App.Run over buffers in the hermetic tier, the built binary
+              in the integration tier. The domain's own API over sqltest and
+              storagetest.Fake.
+Slices        1. Directory commands: mkdir, ls, stat, mv, rmdir over published
+                 blobfs on its Postgres engine. blobfs v0.5.0 enters as a direct
+                 requirement. Adds the files node over the database, the
+                 statement check at start, ls's listing output, and the
+                 black-box harness over the built binary. Demo: mkdir and ls
+                 with Azurite stopped. (Behaviors 1, 7, 8, 12, 13)
+              2. Object commands: stdin through the dispatcher; put, cat, cp,
+                 rm, and rm --recursive over the store node. Demo: `put -`,
+                 cat round-trips the bytes, then rm --recursive prints its
+                 totals. (Behaviors 3–6, 9)
+              3. Ownership and bookmarks: --unit on mkdir and ls, bookmark
+                 add, ls, and rm, and rm's bookmark refusal. Demo: bookmark
+                 add --active, then bookmark ls, then a refused rm.
+                 (Behaviors 1, 2, 4)
+              4. Scenarios: the scenario package, `list` at the root, and the
+                 `directories` and `files` tours under `demo`. Demo: `blobfs
+                 list` with the stack down, then `blobfs demo files` twice.
+                 (Behaviors 10, 11)
+              (No upgrade slice: `mise run currency` reports nothing.)
+Out of scope  promoting graph, lifecycle, or cli to go-core or go-cli-sdk; the
+              evidence-6 record and the README's answer (the validate task); a
+              background or standalone sweep command; shorthand flags; the
+              root's help listing the scenarios; a blobfs variant other than
+              Postgres
+Door          two-way: the spike repository only, no release
+```
+
+## Progress
+
+slices 0/4 committed · standards — · spec — · editor —
 
 ## Decisions
 
@@ -211,6 +308,26 @@
 - composition: the architect's commit drops internal/app's `godatabase` and `sqlatepostgres`
   import aliases. Its `version` fallback to v0.0.0 was reverted to "(devel)" (architect), since
   go run reports "(devel)" itself and the fallback fired only under go test.
+
+- files: the object store is declared only by the commands that touch objects (put, cat, cp, rm, rm
+  --recursive); mkdir, ls, stat, mv, rmdir, and bookmark declare Postgres alone, as spike-blobfs
+  never opened the store for them.
+- files: rm --recursive marks the branch deleting and sweeps it to completion in the same run,
+  blobfs's own branch-delete protocol; it prints totals, not a line per row, and its sweep also
+  finishes any branch an earlier run marked (a deliberate difference from spike-blobfs's walk).
+- files: --fail-after is dropped from put, cp, and rm; the domain calls blobfs's WriteFile,
+  EnsureFile, and RemoveFileID protocols, which blobfs's conformance suite proves; put still resumes
+  a pending row (a deliberate difference).
+- files: --variant is dropped; the composition root fixes blobfs's Postgres engine, as
+  go-web-service does, so the black-box script runs once (a deliberate difference, like --dsn).
+- files: stdin is a parameter of cli.Run and app.New beside stdout and stderr, exposed as
+  Invocation.Stdin, replacing cobra's InOrStdin; rejected a WithStdin option.
+- files: two scenarios ship, `directories` (Postgres alone) and `files` (Postgres and the store), so
+  the listing and a run show scenarios bringing up different subsets.
+- files: scenarios mount as leaves under `demo`, with `list` at the root, slab's shape; rejected a
+  `scenario` parent with `list` beside them.
+- files: a scenario drops slab's Needs; its dependencies come only from Use, the Coordinator reports
+  an unreachable one naming its node, and `list` prints each scenario's declared node names.
 
 ## Pending edits
 
