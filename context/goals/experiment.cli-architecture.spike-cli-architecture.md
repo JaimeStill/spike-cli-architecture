@@ -1,6 +1,6 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** brief ready
+- **State:** building
 - **Task:** composition
 - **Branch:** composition
 
@@ -13,96 +13,141 @@
 
 ## Task brief · composition
 
-**Problem.** A cobra CLI makes every command pay for the whole stack. The spike must show two
-things. First, each command declares its dependencies, and one central initializer brings up
-only those and closes them correctly. Second, the initializer sits on a small reverse-order
-stack that go-core's lifecycle.Coordinator could also be built on, so a CLI and a service share
-one primitive. The schema commands are the first real consumers, run against a local Postgres
-and Azurite stack. This is evidence 3, 4 and 5.
+**Problem.** Our infrastructure assumes every application describes, constructs, and starts all
+its dependencies once, in one place. A CLI needs a different subset per command, and fighting
+that assumption produced brittle code. The spike must show three things:
+- a typed dependency graph that describes any dependency inertly, with no reflection;
+- that building any subset of it gives a System that one Coordinator runs layer by layer;
+- that a dispatcher whose commands declare what they use brings up only that, transparently to
+  the command body.
+
+The same primitive must also express go-web-service's staged composition. This covers evidence
+3, 4, and 5, and it is the candidate for go-core.
 
 ### Behaviors
 
-The stack:
-1. It starts phases on demand, running each phase's steps concurrently. The first failure
-   cancels the rest of its phase, and the cancellations that follow are dropped. Errors are
-   labelled with the step name and joined.
-2. It unwinds only the steps that started, last phase first. The unwind runs under one context
-   derived from Background and bounded by the given timeout. On overrun it adds one deadline
-   error, still attempts the remaining phases, and leaves the stack empty.
-3. Its package imports only the standard library. The package documentation records the
-   phase-by-phase mapping of lifecycle.Coordinator onto the Stack, including the requirement
-   that the run context is cancelled before the drain. It also records the anticipated criteria
-   for promoting the package to go-core.
+The graph:
 
-Commands and their dependencies:
+1. Defining a node constructs and starts nothing. `Define` returns a typed `Node[T]`. A node can
+   be any value, with or without a lifecycle.
+2. `Build(roots...)` constructs only what the roots reach through `Use`, cold. A node reached by
+   several dependents is constructed once and shared.
+3. Layers are computed from the discovered dependencies by longest-path layering, so a node sits
+   one layer above its deepest dependency.
+   - `After(n)` orders a node after `n` without passing a value.
+   - `After` pulls nothing into the System on its own: it orders only nodes that `Use` brought
+     in.
+4. Wiring mistakes panic, and a constructor error fails `Build` with the node's name, after
+   which nothing in that Build starts. The wiring mistakes are:
+   - a dependency cycle;
+   - `Use` of a node from another graph;
+   - `Use` outside a running constructor;
+   - `Replace` after the graph has built.
+5. `Replace(n, ctor)` swaps a node's constructor before `Build`, and the substitute goes through
+   the same build and lifecycle as the original.
+6. A black-box test expresses go-web-service's stage table:
+   - the infrastructure nodes;
+   - the schema stage, which uses the database;
+   - the reactors, which run `After` the schema;
+   - the server at the root.
 
-4. Help, `--help`, a parent run alone, an unknown command, a usage error, and `version` open
-   nothing and read no dependency configuration. They succeed with the stack down and the
-   environment empty.
-5. Commands declare their dependencies where the composition root mounts them. The schema
-   commands declare Postgres only and never open the object store.
-6. A declared dependency opens at most once per run, the first time the command asks for it.
-7. Dependencies close in reverse order after the command: on success, on a command error, and
-   when the signal context is cancelled mid-command.
-8. A dependency that fails to come up is reported once, as the command's error with the
-   command's path, and the run exits 1. Whatever had already opened is closed, and the command
-   body doesn't run.
-9. A close error is reported once, joined with the command's result, and makes the exit 1.
+   The computed layers reproduce the table's order.
 
-The schema commands:
+The lifecycle:
 
-10. `schema status` prints one row per migration set: name, table, version, latest, pending,
-    dirty. blobfs's set comes first, then the app's.
-11. `schema up` applies every pending migration, bottom set first.
-12. `schema down` reverts every set, top set first, and keeps the history tables.
-13. `schema reset --yes` reverts everything and drops the history tables. `schema reset`
-    without `--yes` is refused before anything opens.
+7. `New(sys, cfg)` with `Exec(ctx, fn)` does three things:
+   - starts the System's subsystems layer by layer, lowest first, concurrently within a layer;
+   - runs `fn`;
+   - shuts the subsystems down in reverse.
 
-Configuration and the local stack:
+   `Run(ctx)` does the same, but serves until `ctx` ends.
+8. A value is a subsystem when it implements `Start` and `Shutdown`. `OnStart` and `OnShutdown`
+   hooks override that. Values without either take no part in the lifecycle.
+9. On the first start failure, the rest of that layer is cancelled, and no higher layer starts.
+   Every subsystem that started is shut down. So is the one whose Start failed, so it leaks
+   nothing. The start error is reported once.
+10. Shutdown runs every started subsystem, last layer first. It uses a context detached from
+    cancellation and bounded by `ShutdownTimeout`, so it also runs on success, on error, and on
+    signal cancellation. A shutdown error is joined with the run's result and fails it.
+11. The package documentation:
+    - maps go-core's Coordinator onto the new shape (`Add` and stages give way to a System; `Run`
+      and the readiness parts stay);
+    - names the break at promotion;
+    - states the promotion criteria.
 
-14. Configuration comes only from the environment: `BLOBFS_DATABASE_*` and `BLOBFS_STORAGE_*`,
-    read when a dependency first opens. There is no `--dsn` flag.
-15. `mise run up` starts Postgres and Azurite on ports no other workspace stack uses and waits
-    until both are healthy. `mise run integration` runs the integration tests against that
-    stack.
+The dispatcher:
+
+12. `Uses` on a command, inherited as the union along its path, names the nodes it needs. The
+    dispatcher's order is Args, required flags, exclusive groups, PreRun, then Build of the
+    path's `Uses` plus the lifecycle config node, then `Exec` around Run.
+13. Help, `--help`, a parent run alone, an unknown command, usage errors, and `version`:
+    - build nothing and read no configuration;
+    - succeed under the dispatcher's exit conventions with the stack down and the environment
+      empty.
+14. Command bodies read typed values through `inv.System.Get(node)`. A Build, start, or shutdown
+    failure is reported once under the command's path and exits 1. A `Uses` without
+    `cli.WithGraph` panics at the start of dispatch. A CLI with no `Uses` calls `cli.Run` as
+    before.
+
+The blobfs composition:
+
+15. The composition root defines these nodes, and has no dependency enum, opener struct, or
+    per-dependency accessor:
+    - configuration: database, storage, and lifecycle;
+    - the database;
+    - the object store;
+    - the schema migrator.
+16. The schema group `Uses` the migrator only, so its verbs open Postgres and never the object
+    store. This is proven hermetically: with an invalid storage configuration, schema still
+    fails only on Postgres.
+17. The schema verbs, configuration, and compose stack behave as the first build proved:
+    - status, up, down, and `reset --yes`, with `reset` refused before anything is built;
+    - configuration from `BLOBFS_DATABASE_*` and `BLOBFS_STORAGE_*` only, with no `--dsn`;
+    - Postgres on 5436 and Azurite on 10010.
+18. Against the real stack, a command using Postgres and the store starts both and shuts them
+    down in reverse. With either one unreachable, it reports once, exits 1, and closes whatever
+    had started.
 
 ### Test seams
-- The Stack's exported API, tested black-box with recording steps.
-- `App.Run(ctx, args)` over buffers. A test-only hook swaps the real openers for recording
-  fakes. Integration tests drive the same `Run` against the compose stack, with it up and with
-  it down.
 
-### Slices (nothing trails, so there is no upgrade slice)
-1. **The Stack.** A root-level `lifecycle` package on the standard library only, held there by
-   the import check. Its documentation carries the Coordinator mapping and the promotion
-   criteria. Demo: black-box tests for behaviors 1–3.
-2. **Declarations and the initializer over the Stack, against fakes.** Demo: hermetic
-   `App.Run` tests for behaviors 4 and 6–9.
-3. **The compose stack and the Postgres opener.** Postgres opens through go-database from the
-   environment. The mise up, down, reset and integration tasks are added. Demo: an integration
-   bring-up and close, and one failure message when the stack is down (behaviors 8, 14, 15).
-4. **The schema commands.** Both migration sets run over sqlate's migrator, with the output
-   table. Demo: `schema up`, `status`, `down` and `reset --yes` against the stack. Hermetic
-   tests show that schema opens Postgres only and that `reset` without `--yes` opens nothing
-   (behaviors 5, 10–13).
-5. **The object store opener.** It uses go-storage/azureblob, configured from
-   `BLOBFS_STORAGE_*`. Demo: an integration bring-up of both dependencies, closed in reverse
-   order.
+- `graph` and `lifecycle` exported APIs, black-box, with fake values.
+- `cli.Run` over buffers, with a test graph.
+- `App.Run(ctx, args)` over buffers. Its graph is reached through an export_test probe for
+  `Replace`, and the testpackage comment returns to "clock or probe hook".
+- Integration over the compose stack, with it up and with it down.
+
+### Slices
+
+Nothing trails, so there is no upgrade slice.
+
+1. **graph.** The package, on the standard library only and held there by depguard. Black-box
+   tests cover behaviors 1–6, including the go-web-service layering test.
+2. **lifecycle.** `Subsystem`, `Config`, and `Coordinator`, with `New`, `Exec`, and `Run`, over a
+   `graph.System`. The Stack's engine becomes internal. The documentation carries the go-core
+   mapping and the promotion criteria. Behaviors 7–11.
+3. **cli.** `Uses`, `Invocation.System`, `WithGraph`, and the extended dispatch. The cli depguard
+   rule admits `graph` and `lifecycle`. Behaviors 12–14.
+4. **Composition root on the graph.** It replaces `deps.go`, the opener hook, and the probe
+   groups, and rewires schema, the hermetic tests, and the integration tests. Behaviors 15–18.
 
 ### Out of scope
-- Any change to go-core or the other references.
-- A test-only Coordinator.
-- Changes to `cli`.
-- The files and bookmark commands, `--variant`, and any command that uses the object store.
-- Black-box tests over the built binary, and scenarios.
-- The evidence-6 record and the written answer, which belong to the validate task.
 
-**Door.** Two-way. The spike publishes nothing and writes only its own repository. The compose
-volumes are local, and `mise run reset` removes them.
+- Any change to go-core, go-web-service, or the other references. Promotion follows the
+  experiment.
+- Readiness, `OnReady`, and `Monitor` on the spike's Coordinator. They are mapped in its
+  documentation, not built.
+- Per-node start scheduling. The layer barrier stands.
+- The files and bookmark commands, scenarios, and black-box tests over the built binary. These
+  belong to the files task.
+- The evidence-6 record and the written answer. These belong to the validate task.
+
+### Door
+
+Two-way. The spike publishes nothing and writes only its own repository.
 
 ## Progress
 
-slices 5/5 committed · standards ✓ · spec ✓ · editor ✓
+redirected at the session brief; slices 0/4 of the new brief · standards — · spec — · editor —
 
 ## Decisions
 
@@ -210,14 +255,53 @@ slices 5/5 committed · standards ✓ · spec ✓ · editor ✓
 - composition: the store uses container `cliarch`; Store.Start creates it; the mise env carries
   Azurite's published development key.
 
+- composition: redirected at the session brief (architect): per-command dependency code was
+  brittle and more complex than go-web-service's root. The cause is that go-core's lifecycle
+  fuses description, construction, and lifecycle; the task now builds a general dependency
+  graph and a Coordinator that runs any built subset. Supersedes the per-group mount, the
+  lazy initializer, the opener hook, and the exported Stack decisions above.
+- composition: no reflection; stdlib plus Go 1.27 generic methods. Rejected uber-go/dig and fx:
+  reflection-based frameworks, out on the same no-frameworks line as cobra.
+- composition: the dependency strategy is in this spike's scope regardless of CLIs (architect);
+  promotion to go-core follows the experiment.
+- composition: dependencies are discovered by constructors through Scope.Use, memoized per node,
+  so a shared node is built once (architect asked; Build Systems à la Carte's dynamic
+  dependencies with a suspending scheduler). Layers are computed by longest-path layering;
+  rejected author-declared layer numbers and author-nested layers (a manual topological sort).
+- composition: Scope.After is order-only and pulls nothing into a System (systemd's After=, not
+  Make's order-only prerequisite).
+- composition: a layer barrier on start; configuration is a node; lifecycle inferred from
+  Start/Shutdown with Scope.OnStart/OnShutdown overrides; tests swap nodes with Graph.Replace.
+- composition: names: package graph (Graph, Define, Node[T], Scope, Use, After, Build, System,
+  Get, Replace, Ref); cli.Command.Uses, inherited as the union along the path;
+  Invocation.System; cli.WithGraph(g, lifecycleConfig).
+- composition: lifecycle: one Coordinator, New(sys, cfg), Exec (one-shot, architect's name over
+  Do) and Run (long-running); the participant interface is Subsystem, rejected Service
+  (overloaded), Process (go-core's process package and the OS process), Component and Unit.
+- composition: the shutdown timeout is configuration, lifecycle.Config{ShutdownTimeout}, default
+  10s, <PREFIX>_SHUTDOWN_TIMEOUT, supplied as a graph node; "drain timeout" becomes "shutdown
+  timeout".
+- composition: dependencies are part of the command (architect), reopening dispatcher round 1's
+  "cli unchanged"; cli may import the spike's graph and lifecycle, both go-core candidates.
+- composition: a subsystem whose Start fails is still shut down, so it leaks nothing; loosens
+  go-core's started-only Shutdown contract. Readiness, OnReady, and Monitor stay mapped in the
+  documentation, not built.
+
 ## Pending edits
 
 - architecture · `standards/go-elemental/principles/topology-and-naming.md`: state that the
   rule "cmd/* imports only internal/*" covers the module's own packages. `cmd/*` may import
   go-core for process setup (as `principles/composition-root.md` has the entrypoint trap
   signals), but no package of its own module outside `internal/`.
-- coordinator · `context/roadmap.toml`: add a go-core goal, "lifecycle: promote the
-  reverse-order Stack and rebuild Coordinator on it", to `planned` ahead of `cli`, citing the
-  spike's answer.
+- coordinator · `context/roadmap.toml`: add a go-core goal, "go-core: the dependency graph,
+  and lifecycle rebuilt as its executor (Coordinator over a System; Add and stages retired)", to
+  `planned` ahead of `cli`, citing the spike's answer.
+- coordinator · `context/roadmap.toml`: widen the spike's and the composition task's summaries
+  to the general composition primitive: a dependency graph, a Coordinator over any built
+  subset, and commands that declare what they use.
 - coordinator · `context/cli-applications.md`: every library promotion the experiment
   identifies runs once the experiment completes and before `cli` builds.
+- architecture · a definitions page for the composition ontology (graph, node, system, layer,
+  subsystem, coordinator, Exec/Run; "stage" retired; "service" kept for the deployed
+  application and the infrastructure tiers), with `standards/go-elemental/principles/
+  lifecycle-and-context.md` and `principles/composition-root.md` updated to it.
