@@ -282,7 +282,8 @@ redirected at the session brief; slices 4/4 of the new brief · standards ✓ ·
   Start/Shutdown with Scope.OnStart/OnShutdown overrides; tests swap nodes with Graph.Replace.
 - composition: names: package graph (Graph, Define, Node[T], Scope, Use, After, Build, System,
   Get, Replace, Ref); cli.Command.Uses, inherited as the union along the path;
-  Invocation.System; cli.WithGraph(g, lifecycleConfig).
+  Invocation.System; cli.WithGraph(g, lifecycleConfig). *Superseded: `cli.Command.Uses` is now
+  the method `Use`; see the last composition decision.*
 - composition: lifecycle: one Coordinator, New(sys, cfg), Exec (one-shot, architect's name over
   Do) and Run (long-running); the participant interface is Subsystem, rejected Service
   (overloaded), Process (go-core's process package and the OS process), Component and Unit.
@@ -338,6 +339,15 @@ redirected at the session brief; slices 4/4 of the new brief · standards ✓ ·
   `cmd.Use(refs...) *Command` (architect, at the brief), in the style of Require, Exclusive,
   and Add and with Scope.Use's verb; the exported `Uses` field goes and the list is unexported.
   Inheritance along the path and the dispatch order are unchanged.
+- composition: `Use` with no refs declares nothing, as Require with no names requires nothing;
+  an untyped nil ref panics in `Use`, and a typed nil `*graph.Node` panics in `graph.Build` when
+  a dispatch runs the leaf.
+- composition: no reflection in cli: `Use` catches only an untyped nil, so cli no longer imports
+  reflect.
+- composition: `graph.Build` checks every root, for nil or another Graph, before it constructs
+  any, so a mistake in one root panics before another root's constructor runs.
+- composition: the architect's commit: `version` reports v0.0.0 when the binary has no build
+  info, and internal/app drops the `godatabase` and `sqlatepostgres` import aliases.
 
 ## Pending edits
 

@@ -49,12 +49,12 @@ staged composition?
 ## Capabilities
 
 - **Dispatcher** (package `cli`): flag parsing, the command tree, help, and usage exits. A
-  command's `Uses` names the graph nodes it needs, inherited along its path; `cli.WithGraph`
-  gives `cli.Run` the graph to build them from, and the body reads each value through
-  `Invocation.System`.
+  command's `Use` method declares the graph nodes it needs, inherited along its path;
+  `cli.WithGraph` gives `cli.Run` the graph to build them from, and the body reads each value
+  through `Invocation.System`.
 - **Dependency graph** (package `graph`): a typed graph whose nodes are defined inertly and
-  whose Build constructs only what its roots reach through `Use`, into a System of computed
-  layers. It imports only the standard library and is a go-core promotion candidate.
+  whose Build constructs only what its roots reach through `Scope.Use`, into a System of
+  computed layers. It imports only the standard library and is a go-core promotion candidate.
 - **Lifecycle** (package `lifecycle`): a Coordinator over a built System. `Exec` starts the
   System's subsystems layer by layer, runs a function, and shuts them down in reverse; `Run`
   serves until its context ends instead. A value takes part by implementing `Subsystem`, and
@@ -62,7 +62,7 @@ staged composition?
   and is a go-core promotion candidate.
 - **Composition root** (package `internal/app`): New/Run and the graph nodes for configuration,
   the database, the object store, and the schema migrator. It has no initializer: each command
-  names its nodes in `Uses`, and the dispatcher builds and runs them.
+  declares its nodes with `Use`, and the dispatcher builds and runs them.
 - **Infrastructure**: Postgres through go-database with sqlate migrations, the object store
   through go-storage/azureblob, and the compose stack of Postgres and Azurite: the development
   project on 5436 and 10010 (`mise run up`), and the integration project on 5437 and 10011.

@@ -143,8 +143,8 @@ func (c *Command) Add(subs ...*Command) *Command {
 // nothing. An untyped nil ref panics here, as Add's wiring mistakes do,
 // since nothing declared later can make it valid. A nil *graph.Node is not
 // caught here: it reaches [graph.Graph.Build], which panics on it when a
-// dispatch runs a leaf at or below c, after PreRun and after constructing
-// any node the path declared before it. Use anywhere in a tree requires
+// dispatch runs a leaf at or below c, after PreRun and before any node is
+// constructed. Use anywhere in a tree requires
 // Run's [WithGraph] option, which is checked when the tree is dispatched
 // and panics then, whichever command is selected.
 func (c *Command) Use(refs ...graph.Ref) *Command {

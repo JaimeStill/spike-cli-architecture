@@ -3,8 +3,8 @@
 // and hands the root to [Run] with the process arguments; Run walks the tree
 // to the selected command, parses its flags, runs it, and returns the exit
 // code the program passes to os.Exit, following go-core's process
-// convention. Wiring mistakes in the tree panic when it is built or at the
-// start of its first dispatch, as each symbol's documentation states.
+// convention. Wiring mistakes in the tree panic when it is built or when it
+// is dispatched, as each symbol's documentation states.
 //
 // The package exports:
 //
