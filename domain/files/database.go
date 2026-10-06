@@ -2,31 +2,56 @@ package files
 
 import (
 	"context"
+	"embed"
+	"errors"
 	"fmt"
 
+	"github.com/standards-lab/blobfs"
 	bfdata "github.com/standards-lab/blobfs/data"
 	"github.com/standards-lab/sqlate"
 	"github.com/standards-lab/sqlate/query"
 )
 
+//go:embed statements/*.sql
+var statementFiles embed.FS
+
 // Store is the domain's client over the database alone: blobfs's
-// persistence compiled against the domain's pattern catalog, and the
-// session it runs on. It holds no object store, so the directory commands
-// run with the store's configuration unread and the store unreachable. Its
-// methods are the domain's directory operations. Only this file imports the
-// query library: it lowers a Listing to the query library's directives, so
-// the operations compose blobfs's methods without naming it.
+// persistence and the domain's own statements, over the ownership and
+// bookmark tables, both compiled against the domain's pattern catalog, and
+// the session they run on. It holds no object store, so the directory and
+// bookmark commands run with the store's configuration unread and the
+// store unreachable. Its methods are the domain's directory and bookmark
+// operations. Only this file imports the query library: it lowers a
+// Listing to the query library's directives and wraps each of the domain's
+// statements in a typed method, so the operations compose blobfs's methods
+// and the domain's without naming it.
 type Store struct {
 	db     *sqlate.DB
 	blobfs *bfdata.Store
+	stmts  *query.Statements
+
+	createOwner      query.Statement
+	removeOwner      query.Statement
+	directoryOwned   query.Rows[count]
+	ownedDirectories query.Projection[blobfs.Directory]
+	createBookmark   query.Statement
+	removeBookmark   query.Statement
+	bookmarks        query.Projection[Bookmark]
+	fileBookmarks    query.Rows[count]
+	branchBookmarks  query.Rows[count]
+}
+
+// count is the one row of the domain's counting statements.
+type count struct {
+	N int64 `json:"n"`
 }
 
 // New builds the catalog from the query library's patterns and blobfs's
-// published namespace and compiles blobfs's statements against it for db's
-// dialect. opts reach blobfs's store as they are: the composition root
-// fixes blobfs's engine with bfdata.WithEngine, and without one the store
-// runs blobfs's baseline. No I/O happens here; [Store.Verify] checks the
-// statements against the database.
+// published namespace and compiles blobfs's statements, and then the
+// domain's, against it for db's dialect. opts reach blobfs's store as they
+// are: the composition root fixes blobfs's engine with bfdata.WithEngine,
+// and without one the store runs blobfs's baseline. No I/O happens here;
+// [Store.Verify] checks the statements against the database.
 func New(db *sqlate.DB, opts ...bfdata.Option) (*Store, error) {
 	catalog, err := query.NewCatalog(query.Patterns(), bfdata.Patterns())
 	if err != nil {
@@ -36,15 +61,33 @@ func New(db *sqlate.DB, opts ...bfdata.Option) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("files: %w", err)
 	}
-	return &Store{db: db, blobfs: fs}, nil
+	stmts, err := catalog.Compile(statementFiles, "statements", db.Dialect())
+	if err != nil {
+		return nil, fmt.Errorf("files: %w", err)
+	}
+	return &Store{
+		db:               db,
+		blobfs:           fs,
+		stmts:            stmts,
+		createOwner:      stmts.Statement("create_directory_owner"),
+		removeOwner:      stmts.Statement("remove_directory_owner"),
+		directoryOwned:   stmts.Statement("directory_owned").Scan(query.Scanner[count]()),
+		ownedDirectories: stmts.Statement("owned_directories").Project(query.Scanner[blobfs.Directory]()),
+		createBookmark:   stmts.Statement("create_bookmark"),
+		removeBookmark:   stmts.Statement("remove_bookmark"),
+		bookmarks:        stmts.Statement("bookmarks").Project(query.Scanner[Bookmark]()),
+		fileBookmarks:    stmts.Statement("file_bookmark_count").Scan(query.Scanner[count]()),
+		branchBookmarks:  stmts.Statement("branch_bookmark_count").Scan(query.Scanner[count]()),
+	}, nil
 }
 
 // Verify prepares every statement of blobfs's, its engine's included, and
-// probes both listings' field contracts against the database, so a schema
-// that is not applied, or no longer matches the statements, fails before a
-// command does any work. A failure wraps ErrVerify and the causes.
+// of the domain's, and probes every listing's field contract against the
+// database, so a schema that is not applied, or no longer matches the
+// statements, fails before a command does any work. A failure wraps
+// ErrVerify and the causes.
 func (s *Store) Verify(ctx context.Context) error {
-	if err := s.blobfs.Verify(ctx, s.db); err != nil {
+	if err := query.Verify(ctx, s.db, s.blobfs, s.stmts, s.ownedDirectories, s.bookmarks); err != nil {
 		return fmt.Errorf("%w: %w", ErrVerify, err)
 	}
 	return nil
@@ -100,9 +143,144 @@ func half[T any](ctx context.Context, sess sqlate.Session, list bfdata.Listing[T
 	if err != nil {
 		return Page[T]{}, err
 	}
-	total := c.Total
-	if total == query.NoTotal {
-		total = NoTotal
+	return Page[T]{Rows: c.Items, Total: totalOf(c.Total), More: c.More, Next: string(c.Next)}, nil
+}
+
+// insertOwner writes the ownership row that binds the directory with
+// directoryID to the unit with unitID, inside tx.
+func (s *Store) insertOwner(ctx context.Context, tx *sqlate.Tx, directoryID, unitID string) error {
+	if _, err := s.createOwner.Exec(ctx, tx, query.Args{"directory_id": directoryID, "unit_id": unitID}); err != nil {
+		return fmt.Errorf("create the owner row of %s: %w", directoryID, err)
 	}
-	return Page[T]{Rows: c.Items, Total: total, More: c.More, Next: string(c.Next)}, nil
+	return nil
+}
+
+// deleteOwner removes the ownership row of the directory with directoryID
+// inside tx, if the directory has one; none is not an error.
+func (s *Store) deleteOwner(ctx context.Context, tx *sqlate.Tx, directoryID string) error {
+	if _, err := s.removeOwner.Exec(ctx, tx, query.Args{"directory_id": directoryID}); err != nil {
+		return fmt.Errorf("remove the owner row of %s: %w", directoryID, err)
+	}
+	return nil
+}
+
+// owns reports whether the unit with unitID owns the directory with
+// directoryID, through sess: one read of the owner table. A directory with
+// no owner row, or one another unit owns, is not owned.
+func (s *Store) owns(ctx context.Context, sess sqlate.Session, unitID, directoryID string) (bool, error) {
+	c, err := s.directoryOwned.One(ctx, sess, query.Args{"directory_id": directoryID, "unit_id": unitID})
+	if err != nil {
+		return false, fmt.Errorf("the owner of %s: %w", directoryID, err)
+	}
+	return c.N > 0, nil
+}
+
+// ownedBy reads one page, by number, of the directories the unit with
+// unitID owns, through sess, under the terms of l that name a directory
+// field, as the directory half of ls takes them. The read model pages by
+// number only, so the page carries no cursor.
+func (s *Store) ownedBy(ctx context.Context, sess sqlate.Session, unitID string, l Listing) (Page[blobfs.Directory], error) {
+	c, err := s.ownedDirectories.List(ctx, sess, directives(l, directoryFields, false), query.Page{Number: l.Page, Size: l.Size}, query.With("unit_id", unitID))
+	if err != nil {
+		return Page[blobfs.Directory]{}, fmt.Errorf("the directories unit %s owns: %w", unitID, err)
+	}
+	return Page[blobfs.Directory]{Rows: c.Items, Total: totalOf(c.Total), More: c.More}, nil
+}
+
+// insertBookmark writes the unit with unitID's bookmark of the file with
+// fileID through sess, active or not. A violated constraint of the
+// bookmark table reaches the caller as its sentinel.
+func (s *Store) insertBookmark(ctx context.Context, sess sqlate.Session, unitID, fileID string, active bool) error {
+	_, err := s.createBookmark.Exec(ctx, sess, query.Args{"unit_id": unitID, "file_id": fileID, "active": active})
+	if err != nil {
+		return classifyBookmark(err)
+	}
+	return nil
+}
+
+// deleteBookmark removes the unit with unitID's bookmark of the file with
+// fileID through sess. No row affected is ErrNoBookmark.
+func (s *Store) deleteBookmark(ctx context.Context, sess sqlate.Session, unitID, fileID string) error {
+	n, err := s.removeBookmark.Exec(ctx, sess, query.Args{"unit_id": unitID, "file_id": fileID})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNoBookmark
+	}
+	return nil
+}
+
+// bookmarksOf reads one page, by number, of the unit with unitID's
+// bookmarks, through sess, each with its file's full path, sorted by l's
+// terms and by path when l names none; the projection appends file_id as
+// the tie-breaker. The read model pages by number only, so the page
+// carries no cursor.
+func (s *Store) bookmarksOf(ctx context.Context, sess sqlate.Session, unitID string, l Listing) (Page[Bookmark], error) {
+	d := directives(l, nil, false)
+	if len(d.Sort) == 0 {
+		d.Sort = []query.Sort{{Field: "path"}}
+	}
+	c, err := s.bookmarks.List(ctx, sess, d, query.Page{Number: l.Page, Size: l.Size}, query.With("unit_id", unitID))
+	if err != nil {
+		return Page[Bookmark]{}, err
+	}
+	return Page[Bookmark]{Rows: c.Items, Total: totalOf(c.Total), More: c.More}, nil
+}
+
+// bookmarksOfFile returns how many units bookmark the file with fileID,
+// through sess.
+func (s *Store) bookmarksOfFile(ctx context.Context, sess sqlate.Session, fileID string) (int64, error) {
+	c, err := s.fileBookmarks.One(ctx, sess, query.Args{"file_id": fileID})
+	if err != nil {
+		return 0, fmt.Errorf("the bookmarks of file %s: %w", fileID, err)
+	}
+	return c.N, nil
+}
+
+// bookmarksInBranch returns how many bookmarks hold files in the branch
+// whose root is the directory with id, through sess.
+func (s *Store) bookmarksInBranch(ctx context.Context, sess sqlate.Session, id string) (int64, error) {
+	c, err := s.branchBookmarks.One(ctx, sess, query.Args{"id": id})
+	if err != nil {
+		return 0, fmt.Errorf("the bookmarks in branch %s: %w", id, err)
+	}
+	return c.N, nil
+}
+
+// bookmarkSentinels maps the constraints a bookmark insert can violate to
+// the sentinel each one means there, under the violation class the
+// constraint reports: the primary key is a bookmark the unit holds
+// already, the partial unique index another active bookmark of the unit,
+// and the foreign key a file that no longer exists. The names are the
+// domain's own, so blobfs's classification never sees them.
+var bookmarkSentinels = map[string]struct{ class, sentinel error }{
+	ConstraintPrimaryKeyBookmark:     {sqlate.ErrUniqueViolation, ErrAlreadyBookmarked},
+	ConstraintUniqueBookmarkActive:   {sqlate.ErrUniqueViolation, ErrActiveBookmark},
+	ConstraintForeignKeyBookmarkFile: {sqlate.ErrForeignKeyViolation, blobfs.ErrNotFound},
+}
+
+// classifyBookmark maps a violation of a constraint bookmarkSentinels
+// lists to its sentinel, as a blobfs.ViolationError, blobfs's own wrapper,
+// whose message names the sentinel and the constraint and which keeps the
+// sqlate.ConstraintError reachable. Any other error is returned as it
+// came.
+func classifyBookmark(err error) error {
+	var ce *sqlate.ConstraintError
+	if !errors.As(err, &ce) {
+		return err
+	}
+	m, ok := bookmarkSentinels[ce.Constraint]
+	if !ok || !errors.Is(ce.Class, m.class) {
+		return err
+	}
+	return &blobfs.ViolationError{Sentinel: m.sentinel, Constraint: ce.Constraint, Err: err}
+}
+
+// totalOf translates the query library's total to the domain's.
+func totalOf(total int) int {
+	if total == query.NoTotal {
+		return NoTotal
+	}
+	return total
 }

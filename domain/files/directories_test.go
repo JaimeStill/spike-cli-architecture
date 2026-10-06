@@ -87,7 +87,7 @@ func fileRows(rows ...[]driver.Value) sqltest.Response {
 	return sqltest.Response{Columns: fileColumns, Rows: rows}
 }
 
-func TestVerify_PreparesBlobfsAndTheEnginesStatements(t *testing.T) {
+func TestVerify_PreparesBlobfsTheEnginesAndTheDomainsStatements(t *testing.T) {
 	s, rec := open(t)
 
 	if err := s.Verify(context.Background()); err != nil {
@@ -100,6 +100,11 @@ func TestVerify_PreparesBlobfsAndTheEnginesStatements(t *testing.T) {
 	}
 	if !slices.ContainsFunc(prepared, func(q string) bool { return strings.Contains(q, "pg_advisory_xact_lock") }) {
 		t.Errorf("Verify did not prepare the engine's tree lock; prepared:\n%s", strings.Join(prepared, "\n---\n"))
+	}
+	for _, table := range []string{"INSERT INTO directory_owner", "JOIN directory_owner", "INSERT INTO bookmark", "FROM bookmark b"} {
+		if !slices.ContainsFunc(prepared, func(q string) bool { return strings.Contains(q, table) }) {
+			t.Errorf("Verify did not prepare a statement with %q", table)
+		}
 	}
 	if ops := rec.Ops(); slices.ContainsFunc(ops, func(op sqltest.Op) bool { return op != sqltest.OpPrepare }) {
 		t.Errorf("ops = %v, want prepares only", ops)
@@ -340,7 +345,7 @@ func TestFind_FileFirstThenDirectory(t *testing.T) {
 func TestMkdir_CreatesUnderTheResolvedParent(t *testing.T) {
 	s, rec := open(t, resolved(dirID, blobfs.RootID, "reports", 1), directories(directoryRow(otherID, dirID, "2026")))
 
-	d, err := s.Mkdir(context.Background(), "/reports/2026")
+	d, err := s.Mkdir(context.Background(), "/reports/2026", "")
 
 	if err != nil || d.ID != otherID {
 		t.Fatalf("Mkdir() = %+v, %v", d, err)
@@ -364,7 +369,7 @@ func TestMkdir_RefusesBeforeAnyIO(t *testing.T) {
 		t.Run(tt.path, func(t *testing.T) {
 			s, rec := open(t)
 
-			_, err := s.Mkdir(context.Background(), tt.path)
+			_, err := s.Mkdir(context.Background(), tt.path, "")
 
 			if !errors.Is(err, tt.want) {
 				t.Errorf("Mkdir(%q) = %v, want %v", tt.path, err, tt.want)
@@ -379,7 +384,7 @@ func TestMkdir_RefusesBeforeAnyIO(t *testing.T) {
 func TestMkdir_AMissingParentIsNotFound(t *testing.T) {
 	s, rec := open(t, resolvedRoot())
 
-	_, err := s.Mkdir(context.Background(), "/missing/child")
+	_, err := s.Mkdir(context.Background(), "/missing/child", "")
 
 	if !errors.Is(err, blobfs.ErrNotFound) {
 		t.Errorf("Mkdir() = %v, want ErrNotFound", err)

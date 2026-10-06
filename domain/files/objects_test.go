@@ -79,6 +79,20 @@ func nameTaken() sqltest.Response {
 // purged is the delete of a deleting row that removed it.
 func purged() sqltest.Response { return sqltest.Response{Affected: 1} }
 
+// held is the Postgres engine's hold of the file with id: its locking read
+// found the row.
+func held(id string) sqltest.Response {
+	return sqltest.Response{Columns: []string{"id"}, Rows: [][]driver.Value{{id}}}
+}
+
+// counted is the one row of one of the domain's counting statements.
+func counted(n int64) sqltest.Response {
+	return sqltest.Response{Columns: []string{"n"}, Rows: [][]driver.Value{{n}}}
+}
+
+// noOwner is the removal of a directory's owner row that found none.
+func noOwner() sqltest.Response { return sqltest.Response{} }
+
 // object returns the content the Fake holds under key.
 func object(t *testing.T, fake *storagetest.Fake, key string) string {
 	t.Helper()
@@ -290,6 +304,8 @@ func TestRemove_AMissingObjectIsNoRefusal(t *testing.T) {
 	o, rec, _ := openObjects(t,
 		resolvedRoot(),
 		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
+		held(fileID),
+		counted(0),
 		fileRows(deletingFileRow(fileID, blobfs.RootID, "a.txt")),
 		purged(),
 	)
@@ -299,9 +315,42 @@ func TestRemove_AMissingObjectIsNoRefusal(t *testing.T) {
 	if err != nil || f.ID != fileID {
 		t.Fatalf("Remove() = %+v, %v", f, err)
 	}
-	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpCommit, sqltest.OpExec}
+	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpCommit, sqltest.OpExec}
 	if got := nonPrepares(rec); !slices.Equal(got, want) {
-		t.Errorf("ops = %v, want %v: the lookup and the delete in one transaction, then the purge", got, want)
+		t.Errorf("ops = %v, want %v: the lookup, the hold, the bookmark count, and the delete in one transaction, then the purge", got, want)
+	}
+}
+
+func TestRemove_RefusesABookmarkedFileBeforeTouchingAnything(t *testing.T) {
+	// The file is held, its bookmarks counted, and the count refuses the
+	// delete before Files.Delete runs: the transaction rolls back with the
+	// row available, and the store is never reached.
+	o, rec, fake := openObjects(t,
+		resolvedRoot(),
+		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
+		held(fileID),
+		counted(2),
+	)
+	store(t, fake, fileID+"/a.txt", "hello")
+	puts := fake.Puts()
+
+	_, err := o.Remove(context.Background(), "/a.txt")
+
+	if !errors.Is(err, files.ErrBookmarked) || !strings.Contains(err.Error(), "2 unit(s) bookmark the file") {
+		t.Fatalf("Remove() = %v, want ErrBookmarked naming the count", err)
+	}
+	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpRollback}
+	if got := nonPrepares(rec); !slices.Equal(got, want) {
+		t.Errorf("ops = %v, want %v: refused before the delete, and rolled back", got, want)
+	}
+	if hold := rec.Calls()[len(rec.Calls())-3]; !strings.Contains(hold.SQL, "FOR NO KEY UPDATE") || !slices.Contains(hold.Args, any(fileID)) {
+		t.Errorf("the hold ran %q with %v, want the file's row locked", hold.SQL, hold.Args)
+	}
+	if fake.Puts() != puts {
+		t.Errorf("puts = %d, want %d: the store is not reached", fake.Puts(), puts)
+	}
+	if got := object(t, fake, fileID+"/a.txt"); got != "hello" {
+		t.Errorf("the object after the refusal = %q, want it intact", got)
 	}
 }
 
@@ -309,6 +358,8 @@ func TestRemove_DeletesTheObject(t *testing.T) {
 	o, _, fake := openObjects(t,
 		resolvedRoot(),
 		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
+		held(fileID),
+		counted(0),
 		fileRows(deletingFileRow(fileID, blobfs.RootID, "a.txt")),
 		purged(),
 	)
@@ -325,23 +376,28 @@ func TestRemove_DeletesTheObject(t *testing.T) {
 func TestRemoveTree_MarksTheBranchAndSweepsEveryMarkedBranch(t *testing.T) {
 	// /d holds f.txt and the empty directory s; the branch e, which an
 	// earlier, interrupted run marked, is empty. The mark runs under the
-	// tree lock, and the sweep's one pass finishes both branches: d's
-	// file, then s, then d, then e.
+	// tree lock and is followed by the branch's bookmark count, and the
+	// sweep's one pass finishes both branches: d's file, then s, then d,
+	// then e, each directory's owner row removed before the directory.
 	o, rec, fake := openObjects(t,
 		resolved(dirID, blobfs.RootID, "d", 1),
 		sqltest.Response{}, // the tree lock
 		sqltest.Response{Affected: 2},
 		sqltest.Response{Affected: 1},
+		counted(0),
 		directories(deletingDirectoryRow(dirID, blobfs.RootID, "d"), deletingDirectoryRow(earlierID, blobfs.RootID, "e")),
 		fileRows(deletingFileRow(fileID, dirID, "f.txt")),
 		purged(),
 		directories(deletingDirectoryRow(otherID, dirID, "s")),
 		fileRows(),
 		directories(),
+		noOwner(),
 		purged(),
+		sqltest.Response{Affected: 1}, // d's owner row
 		purged(),
 		fileRows(),
 		directories(),
+		noOwner(),
 		purged(),
 	)
 	store(t, fake, fileID+"/f.txt", "hello")
@@ -360,8 +416,57 @@ func TestRemoveTree_MarksTheBranchAndSweepsEveryMarkedBranch(t *testing.T) {
 	if n := rec.Pending(); n != 0 {
 		t.Errorf("%d scripted responses unconsumed", n)
 	}
-	if lock := rec.SQL(sqltest.OpExec)[0]; !strings.Contains(lock, "pg_advisory_xact_lock") {
-		t.Errorf("the mark's first statement = %q, want the tree lock", lock)
+	execs := rec.SQL(sqltest.OpExec)
+	if !strings.Contains(execs[0], "pg_advisory_xact_lock") {
+		t.Errorf("the mark's first statement = %q, want the tree lock", execs[0])
+	}
+	// After the mark's three statements and the file's purge, each
+	// directory's removal is its owner row's and then its own.
+	for i, removal := range execs[4:] {
+		want := "DELETE FROM blobfs_directory"
+		if i%2 == 0 {
+			want = "DELETE FROM directory_owner"
+		}
+		if !strings.HasPrefix(removal, want) {
+			t.Errorf("removal statement %d = %q, want %s", i, removal, want)
+		}
+	}
+	if n := len(execs[4:]); n != 6 {
+		t.Errorf("removal statements = %d, want an owner row's and a directory's for each of 3 directories", n)
+	}
+}
+
+func TestRemoveTree_RefusesABranchWithABookmarkedFileBeforeTouchingAnything(t *testing.T) {
+	// The mark runs, the count finds two bookmarks in the branch, and the
+	// refusal rolls the mark back: no sweep runs and the store is never
+	// reached.
+	o, rec, fake := openObjects(t,
+		resolved(dirID, blobfs.RootID, "d", 1),
+		sqltest.Response{},
+		sqltest.Response{Affected: 1},
+		sqltest.Response{Affected: 1},
+		counted(2),
+	)
+	store(t, fake, fileID+"/f.txt", "hello")
+	puts := fake.Puts()
+
+	_, err := o.RemoveTree(context.Background(), "/d")
+
+	if !errors.Is(err, files.ErrBookmarked) || !strings.Contains(err.Error(), "2 bookmark(s) hold files in the branch") {
+		t.Fatalf("RemoveTree() = %v, want ErrBookmarked naming the count", err)
+	}
+	want := []sqltest.Op{sqltest.OpQuery, sqltest.OpBegin, sqltest.OpExec, sqltest.OpExec, sqltest.OpExec, sqltest.OpQuery, sqltest.OpRollback}
+	if got := nonPrepares(rec); !slices.Equal(got, want) {
+		t.Errorf("ops = %v, want %v: the mark rolled back and no sweep", got, want)
+	}
+	if count := rec.SQL(sqltest.OpQuery)[1]; !strings.Contains(count, "WITH RECURSIVE") || !strings.Contains(count, "bookmark") {
+		t.Errorf("the count ran %q, want the branch's bookmarks", count)
+	}
+	if fake.Puts() != puts {
+		t.Errorf("puts = %d, want %d: the store is not reached", fake.Puts(), puts)
+	}
+	if got := object(t, fake, fileID+"/f.txt"); got != "hello" {
+		t.Errorf("the object after the refusal = %q, want it intact", got)
 	}
 }
 
@@ -374,6 +479,7 @@ func TestRemoveTree_ReportsWhatItRemovedBeforeARefusal(t *testing.T) {
 		sqltest.Response{},
 		sqltest.Response{Affected: 1},
 		sqltest.Response{Affected: 1},
+		counted(0),
 		directories(deletingDirectoryRow(dirID, blobfs.RootID, "d")),
 		fileRows(deletingFileRow(fileID, dirID, "f.txt")),
 		directories(),

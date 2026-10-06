@@ -31,19 +31,36 @@ import (
 const (
 	reportsID = "00000000-0000-7000-8000-000000000001"
 	planID    = "00000000-0000-7000-8000-000000000002"
+	unitID    = "00000000-0000-7000-8000-0000000000aa"
 )
 
-// directoryVerbs are the directory commands, each as a run that reaches
-// its body.
+// directoryVerbs are the directory and bookmark commands, each as a run
+// that reaches its body.
 var directoryVerbs = [][]string{
 	{"mkdir", "/reports"},
+	{"mkdir", "/reports", "--unit", unitID},
 	{"ls", "/"},
+	{"ls", "/", "--unit", unitID},
+	{"ls", "/reports", "--unit", unitID},
 	{"ls", "id:" + reportsID},
 	{"stat", "/reports"},
 	{"stat", "id:" + reportsID},
 	{"mv", "/reports", "/archive"},
 	{"mv", "id:" + planID, "id:" + reportsID},
 	{"rmdir", "/reports"},
+	{"bookmark", "add", "/reports/plan.txt", "--unit", unitID, "--active"},
+	{"bookmark", "ls", "--unit", unitID},
+	{"bookmark", "rm", "/reports/plan.txt", "--unit", unitID},
+}
+
+// commandPath returns the path of the command args run, as the dispatcher
+// labels its errors: the bookmark subcommand under its parent, any other
+// command alone.
+func commandPath(args []string) string {
+	if args[0] == "bookmark" {
+		return "blobfs bookmark " + args[1]
+	}
+	return "blobfs " + args[0]
 }
 
 func TestFiles_CommandsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
@@ -81,7 +98,7 @@ func TestFiles_CommandsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
 			if code != process.ExitFailure {
 				t.Errorf("code = %d, want %d", code, process.ExitFailure)
 			}
-			if want := "blobfs " + args[0] + ": lifecycle config: recorded\n"; errOut.String() != want {
+			if want := commandPath(args) + ": lifecycle config: recorded\n"; errOut.String() != want {
 				t.Errorf("stderr = %q, want %q", errOut.String(), want)
 			}
 			wantRun := []string{"files", "database", "database config", "lifecycle config"}
@@ -136,7 +153,7 @@ func TestFiles_AnUnappliedSchemaFailsAtStartNamingTheFilesNode(t *testing.T) {
 			if code != process.ExitFailure {
 				t.Errorf("code = %d, want %d", code, process.ExitFailure)
 			}
-			want := "blobfs " + args[0] + ": files: " + files.ErrVerify.Error()
+			want := commandPath(args) + ": files: " + files.ErrVerify.Error()
 			if !strings.HasPrefix(errOut.String(), want) {
 				t.Errorf("stderr = %q, want it to start with %q", errOut.String(), want)
 			}
@@ -264,11 +281,12 @@ func TestFiles_HelpListsTheDirectoryCommands(t *testing.T) {
 		t.Errorf("code = %d, want %d", code, process.ExitUsage)
 	}
 	want := "" +
-		"  mkdir     Create a directory under an existing parent\n" +
-		"  ls        List a directory: its directories, then its files, one page each\n" +
-		"  stat      Show a file's or a directory's row, one field per line\n" +
-		"  mv        Move or rename a directory or a file within its top-level directory\n" +
-		"  rmdir     Remove an empty directory\n"
+		"  mkdir      Create a directory under an existing parent\n" +
+		"  ls         List a directory: its directories, then its files, one page each\n" +
+		"  stat       Show a file's or a directory's row, one field per line\n" +
+		"  mv         Move or rename a directory or a file within its top-level directory\n" +
+		"  rmdir      Remove an empty directory\n" +
+		"  bookmark   Bookmark files for a unit, at most one of them active: add, ls, rm\n"
 	if !strings.Contains(stdout, want) {
 		t.Errorf("stdout =\n%s\nwant it to contain\n%s", stdout, want)
 	}

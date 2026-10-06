@@ -236,10 +236,10 @@ func TestObjects_HelpListsTheObjectCommands(t *testing.T) {
 		t.Errorf("code = %d, want %d", code, process.ExitUsage)
 	}
 	for _, want := range []string{
-		"  put       Upload a local file, or stdin for -, as the file at a path or into a directory\n",
-		"  cat       Write an available file's content to stdout\n",
-		"  cp        Copy an available file into a directory or to a new path\n",
-		"  rm        Delete a file, or with --recursive a directory and everything beneath it\n",
+		"  put        Upload a local file, or stdin for -, as the file at a path or into a directory\n",
+		"  cat        Write an available file's content to stdout\n",
+		"  cp         Copy an available file into a directory or to a new path\n",
+		"  rm         Delete a file, or with --recursive a directory and everything beneath it\n",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout =\n%s\nwant it to contain %q", stdout, want)

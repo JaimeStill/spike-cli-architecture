@@ -75,3 +75,39 @@ func TestListing_NoEntriesWritesTheHeader(t *testing.T) {
 		t.Errorf("output =\n%s\nwant\n%s", b.String(), want)
 	}
 }
+
+func TestBookmarks_WritesTheEntriesThenThePage(t *testing.T) {
+	updated := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	size := int64(12)
+	var b bytes.Buffer
+
+	err := output.Bookmarks(&b, []output.BookmarkEntry{
+		{Path: "/reports/plan.txt", Size: &size, Status: "available", Active: true, Updated: updated},
+		{Path: "/draft.bin", Status: "pending", Updated: updated},
+	}, output.Page{Number: 1, Size: 20, Listed: 2, Total: 2, Counted: true, Next: "ignored"})
+
+	if err != nil {
+		t.Fatalf("Bookmarks() = %v", err)
+	}
+	want := "" +
+		"PATH               SIZE  STATUS     ACTIVE  UPDATED\n" +
+		"/reports/plan.txt  12    available  active  2026-10-06 12:00:00\n" +
+		"/draft.bin         -     pending    -       2026-10-06 12:00:00\n" +
+		"bookmarks: 2 on page 1 of size 20, total 2\n" +
+		"more: no\n"
+	if b.String() != want {
+		t.Errorf("Bookmarks() wrote\n%s\nwant\n%s", b.String(), want)
+	}
+}
+
+func TestBookmarks_NoEntriesWritesTheHeader(t *testing.T) {
+	var b bytes.Buffer
+
+	if err := output.Bookmarks(&b, nil, output.Page{Number: 1, Size: 20}); err != nil {
+		t.Fatalf("Bookmarks() = %v", err)
+	}
+	want := "PATH  SIZE  STATUS  ACTIVE  UPDATED\nbookmarks: 0 on page 1 of size 20, total not counted\nmore: no\n"
+	if b.String() != want {
+		t.Errorf("Bookmarks() wrote\n%q\nwant\n%q", b.String(), want)
+	}
+}

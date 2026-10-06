@@ -318,10 +318,12 @@ func (b *deferredBody) close() {
 // row as the delete found it. It is blobfs's RemoveFile: the parent's
 // resolution, the file's lookup, the domain's check that the file may be
 // removed, and blobfs's Files.Delete run in one transaction, which commits
-// the row deleting; the object is then deleted and the row purged. A
-// delete that stopped after its first step left the row deleting, and a
-// later Remove finishes it. The root is blobfs.ErrRootDirectory before any
-// I/O, and a file that does not exist is blobfs.ErrNotFound.
+// the row deleting; the object is then deleted and the row purged. A file
+// a unit has bookmarked is refused with ErrBookmarked in that transaction,
+// before anything is touched. A delete that stopped after its first step
+// left the row deleting, and a later Remove finishes it. The root is
+// blobfs.ErrRootDirectory before any I/O, and a file that does not exist
+// is blobfs.ErrNotFound.
 func (o *Objects) Remove(ctx context.Context, path string) (blobfs.File, error) {
 	parent, name, err := splitParent(path)
 	if err != nil {
@@ -370,11 +372,29 @@ func (o *Objects) remove(ctx context.Context, find func(*sqlate.Tx) (blobfs.File
 }
 
 // removable is the check a file's delete runs in its first transaction,
-// after the file is read and before anything is touched: a refusal here
-// rolls the transaction back with the row and the object as they were. It
-// is where the domain refuses a file its own rows still need; it refuses
-// nothing yet.
-func (o *Objects) removable(context.Context, *sqlate.Tx, blobfs.File) error {
+// after the file is read and before anything is touched: a file a unit has
+// bookmarked is refused with ErrBookmarked, which rolls the transaction
+// back with the row and the object as they were.
+//
+// blobfs's RemoveFile runs this check before its Files.Delete, whose
+// update would take the file's row lock, so the check takes the lock
+// itself first, with Files.Hold: bookmark add holds the row before it
+// inserts, so an add that held first has committed its bookmark before the
+// count reads, and one that arrives later waits for this transaction and
+// then refuses the deleting row. A row deleting already, which an earlier
+// rm left, cannot be held and needs no hold, since no add can reach it; its
+// bookmarks are counted all the same.
+func (o *Objects) removable(ctx context.Context, tx *sqlate.Tx, f blobfs.File) error {
+	if err := o.store.blobfs.Files.Hold(ctx, tx, f.ID); err != nil && !errors.Is(err, blobfs.ErrDeleting) {
+		return err
+	}
+	n, err := o.store.bookmarksOfFile(ctx, tx, f.ID)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("%d unit(s) bookmark the file; remove the bookmarks and rerun rm: %w", n, ErrBookmarked)
+	}
 	return nil
 }
 
@@ -383,7 +403,17 @@ func (o *Objects) removable(context.Context, *sqlate.Tx, blobfs.File) error {
 // deleting in one transaction, after which the branch takes nothing new,
 // and blobfs's sweep then runs passes until no work remains, deleting each
 // file's object and purging its row, and removing each directory once it
-// is empty. The result counts what the passes removed.
+// is empty. Each directory's owner row is removed in the transaction that
+// removes the directory, through the sweep's OnRemoveDirectory hook, so an
+// owned top-level directory goes with its owner row. The result counts
+// what the passes removed.
+//
+// A branch that holds a file a unit has bookmarked is refused with
+// ErrBookmarked in the mark's transaction, after the mark and before it
+// commits, so the refusal rolls the mark back and nothing is touched. The
+// mark takes every file's row lock, as a file's delete does, so it waits
+// on a bookmark add's hold, and the count after it sees every bookmark a
+// hold admitted; once the branch is marked, no add can hold its files.
 //
 // The sweep finishes every marked branch, not only this one, so a branch
 // an earlier RemoveTree marked and did not finish, because it was
@@ -403,16 +433,30 @@ func (o *Objects) RemoveTree(ctx context.Context, path string) (TreeRemoval, err
 		return TreeRemoval{}, fmt.Errorf("files: rm --recursive %s: %w", path, err)
 	}
 	_, err = db.Transact(ctx, func(tx *sqlate.Tx) (bfdata.Marked, error) {
-		return fs.Directories.MarkDeleting(ctx, tx, dir.ID)
+		marked, err := fs.Directories.MarkDeleting(ctx, tx, dir.ID)
+		if err != nil {
+			return bfdata.Marked{}, err
+		}
+		n, err := o.store.bookmarksInBranch(ctx, tx, dir.ID)
+		if err != nil {
+			return bfdata.Marked{}, err
+		}
+		if n > 0 {
+			return bfdata.Marked{}, fmt.Errorf("%d bookmark(s) hold files in the branch; remove the bookmarks and rerun rm --recursive: %w", n, ErrBookmarked)
+		}
+		return marked, nil
 	})
 	if err != nil {
 		return TreeRemoval{}, fmt.Errorf("files: rm --recursive %s: %w", path, err)
 	}
+	removeOwner := bfdata.OnRemoveDirectory(func(ctx context.Context, tx *sqlate.Tx, dir blobfs.Directory) error {
+		return o.store.deleteOwner(ctx, tx, dir.ID)
+	})
 	var removed TreeRemoval
 	var last error
 	err = bfdata.SweepUntilDone(ctx, nil,
 		func(ctx context.Context) (bfdata.SweepResult, error) {
-			return fs.Sweep(ctx, db, o.objects)
+			return fs.Sweep(ctx, db, o.objects, removeOwner)
 		},
 		func(res bfdata.SweepResult, err error) {
 			removed.Files += res.Files

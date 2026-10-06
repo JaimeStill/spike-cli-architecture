@@ -11,7 +11,8 @@ import (
 	"github.com/standards-lab/sqlate"
 )
 
-// This file composes the directory operations from blobfs's methods. Ids
+// This file composes the directory operations from blobfs's methods and
+// the domain's owner statements. Ids
 // are the primary handle: ListDirectory, StatFile, StatDirectory, Find, and
 // MoveEntry take ids, and the path forms List, Stat, Resolve, and Move
 // resolve their paths and then run the same steps, so a caller that holds
@@ -26,26 +27,96 @@ import (
 // two halves see one snapshot and agree with each other. A path that names
 // no directory is blobfs.ErrNotFound, and one that does not start with a
 // slash blobfs.ErrInvalidPath.
+//
+// A unit in l scopes the listing to what the unit owns. Below the root,
+// the path's top-level directory is resolved first and its owner row read,
+// and a unit that does not own it is refused with ErrNotOwned before the
+// rest of the path is resolved. At the root, the listing is the unit's own
+// top-level directories, read through the owner read model under the
+// terms that name a directory field, and no files: a file in the root has
+// no top-level directory and belongs to no unit. That read model pages by
+// number only, so a cursor there is ErrNoCursorAtRoot, before any I/O.
 func (s *Store) List(ctx context.Context, path string, l Listing) (Contents, error) {
+	if path == "/" && l.Unit != "" && l.After != (After{}) {
+		return Contents{}, fmt.Errorf("files: ls / as unit %s: %w", l.Unit, ErrNoCursorAtRoot)
+	}
 	c, err := s.db.Transact(ctx, func(tx *sqlate.Tx) (Contents, error) {
-		dir, err := s.resolve(ctx, tx, path)
+		if l.Unit == "" {
+			dir, err := s.resolve(ctx, tx, path)
+			if err != nil {
+				return Contents{}, err
+			}
+			return s.contents(ctx, tx, path, dir.ID, l)
+		}
+		if path == "/" {
+			return s.topLevel(ctx, tx, l)
+		}
+		dir, err := s.resolveOwned(ctx, tx, path, l.Unit)
 		if err != nil {
 			return Contents{}, err
 		}
 		return s.contents(ctx, tx, path, dir.ID, l)
 	}, sqlate.ReadOnly(), sqlate.Isolation(sql.LevelRepeatableRead))
 	if err != nil {
+		if l.Unit != "" {
+			return Contents{}, fmt.Errorf("files: ls %s as unit %s: %w", path, l.Unit, err)
+		}
 		return Contents{}, fmt.Errorf("files: ls %s: %w", path, err)
 	}
 	return c, nil
+}
+
+// resolveOwned resolves the directory at path, below the root, through
+// sess for the unit: the path's top-level directory first, then its owner
+// row, and the rest of the path only once the unit is known to own it, so
+// a unit learns nothing of a branch it does not own. A unit that does not
+// own the top-level directory is ErrNotOwned.
+func (s *Store) resolveOwned(ctx context.Context, sess sqlate.Session, path, unit string) (blobfs.Directory, error) {
+	top := topLevelOf(path)
+	dir, err := s.resolve(ctx, sess, top)
+	if err != nil {
+		return blobfs.Directory{}, err
+	}
+	owned, err := s.owns(ctx, sess, unit, dir.ID)
+	if err != nil {
+		return blobfs.Directory{}, err
+	}
+	if !owned {
+		return blobfs.Directory{}, fmt.Errorf("%s: %w", top, ErrNotOwned)
+	}
+	if top == path {
+		return dir, nil
+	}
+	return s.resolve(ctx, sess, path)
+}
+
+// topLevel is the listing of the root as the unit l names: the unit's
+// top-level directories through the owner read model, one page by number,
+// and an empty file half, whose total is 0 when l counts and NoTotal when
+// it does not.
+func (s *Store) topLevel(ctx context.Context, sess sqlate.Session, l Listing) (Contents, error) {
+	dirs, err := s.ownedBy(ctx, sess, l.Unit, l)
+	if err != nil {
+		return Contents{}, err
+	}
+	files := Page[blobfs.File]{Total: 0}
+	if l.Total == TotalNone {
+		files.Total = NoTotal
+	}
+	return Contents{Path: "/", Directories: dirs, Files: files}, nil
 }
 
 // ListDirectory returns the contents of the directory with id under l, as
 // List does for a path, in one read-only repeatable-read transaction. The
 // directory is read first, since blobfs lists a directory that does not
 // exist as empty, so an id no directory holds is blobfs.ErrNotFound. The
-// contents' Path is empty: no path is computed for a listing by id.
+// contents' Path is empty: no path is computed for a listing by id. A
+// listing by id has no path to derive a unit's scope from, so a unit in l
+// is ErrNotOwned before any I/O.
 func (s *Store) ListDirectory(ctx context.Context, id string, l Listing) (Contents, error) {
+	if l.Unit != "" {
+		return Contents{}, fmt.Errorf("files: ls directory %s as unit %s: a listing by id has no path to derive the scope from: %w", id, l.Unit, ErrNotOwned)
+	}
 	c, err := s.db.Transact(ctx, func(tx *sqlate.Tx) (Contents, error) {
 		if _, err := s.blobfs.Directories.Find(ctx, tx, id); err != nil {
 			return Contents{}, err
@@ -149,39 +220,70 @@ func (s *Store) Find(ctx context.Context, id string) (Entry, error) {
 	return Entry{Kind: EntryDirectory, Directory: d}, nil
 }
 
-// Mkdir creates the directory at path under its parent, which must exist,
-// on the pool. There is no -p: a missing parent is blobfs.ErrNotFound. The
-// root is blobfs.ErrRootDirectory before any I/O, and a name an active
-// directory holds in the parent is blobfs.ErrNameTaken.
-func (s *Store) Mkdir(ctx context.Context, path string) (blobfs.Directory, error) {
+// Mkdir creates the directory at path under its parent, which must exist.
+// There is no -p: a missing parent is blobfs.ErrNotFound. The root is
+// blobfs.ErrRootDirectory before any I/O, and a name an active directory
+// holds in the parent is blobfs.ErrNameTaken.
+//
+// Without a unit the parent is resolved and the directory created on the
+// pool. With one, the path must name a top-level directory (ErrUnitDepth
+// otherwise, before any I/O), and the directory and the owner row that
+// binds it to the unit are written in one transaction, so a directory
+// created with a unit never exists without its owner.
+func (s *Store) Mkdir(ctx context.Context, path, unit string) (blobfs.Directory, error) {
 	parent, name, err := splitParent(path)
 	if err != nil {
 		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", path, err)
 	}
-	dir, err := s.resolve(ctx, s.db, parent)
-	if err != nil {
-		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", path, err)
+	if unit != "" && parent != "/" {
+		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", path, ErrUnitDepth)
 	}
-	made, err := s.blobfs.Directories.Create(ctx, s.db, dir.ID, name)
+	create := func(sess sqlate.Session) (blobfs.Directory, error) {
+		dir, err := s.resolve(ctx, sess, parent)
+		if err != nil {
+			return blobfs.Directory{}, err
+		}
+		return s.blobfs.Directories.Create(ctx, sess, dir.ID, name)
+	}
+	var made blobfs.Directory
+	if unit == "" {
+		made, err = create(s.db)
+	} else {
+		made, err = s.db.Transact(ctx, func(tx *sqlate.Tx) (blobfs.Directory, error) {
+			made, err := create(tx)
+			if err != nil {
+				return blobfs.Directory{}, err
+			}
+			return made, s.insertOwner(ctx, tx, made.ID, unit)
+		})
+	}
 	if err != nil {
 		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", path, err)
 	}
 	return made, nil
 }
 
-// RemoveDirectory removes the empty directory at path, on the pool. A
-// directory that still has directories or files under it is
-// blobfs.ErrNotEmpty, and the root is blobfs.ErrRootDirectory before any
-// I/O.
+// RemoveDirectory removes the empty directory at path, with its owner row
+// when it has one, in one transaction: the path is resolved, the owner row
+// removed, and the directory removed through blobfs, whose refusal rolls
+// the owner row back with it. A directory that still has directories or
+// files under it is blobfs.ErrNotEmpty, and the root is
+// blobfs.ErrRootDirectory before any I/O.
 func (s *Store) RemoveDirectory(ctx context.Context, path string) (blobfs.Directory, error) {
 	if _, _, err := splitParent(path); err != nil {
 		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", path, err)
 	}
-	dir, err := s.resolve(ctx, s.db, path)
+	dir, err := s.db.Transact(ctx, func(tx *sqlate.Tx) (blobfs.Directory, error) {
+		dir, err := s.resolve(ctx, tx, path)
+		if err != nil {
+			return blobfs.Directory{}, err
+		}
+		if err := s.deleteOwner(ctx, tx, dir.ID); err != nil {
+			return blobfs.Directory{}, err
+		}
+		return dir, s.blobfs.Directories.Delete(ctx, tx, dir.ID)
+	})
 	if err != nil {
-		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", path, err)
-	}
-	if err := s.blobfs.Directories.Delete(ctx, s.db, dir.ID); err != nil {
 		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", path, err)
 	}
 	return dir, nil
@@ -411,6 +513,13 @@ func sameScope(from, to string) error {
 		return nil
 	}
 	return fmt.Errorf("%s is under %s and %s under %s: %w", from, scopePath(from), to, scopePath(to), ErrMoveAcrossScopes)
+}
+
+// topLevelOf returns the path of the top-level directory that contains the
+// entry at path, the path itself for a top-level entry.
+func topLevelOf(path string) string {
+	first, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	return "/" + first
 }
 
 // scopeOf returns the normalized name of the top-level directory that

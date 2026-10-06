@@ -2,6 +2,7 @@ package files
 
 import (
 	"io"
+	"time"
 
 	"github.com/standards-lab/blobfs"
 )
@@ -23,11 +24,14 @@ const (
 // not the first, so no row carried the count.
 const NoTotal = -1
 
-// Listing is one page request of ls, as the command line states it: the
-// 1-based page and its size, the filters and the sort terms in order, the
-// total mode, and the cursors to continue each half from. It is the
-// domain's own shape of a read request; database.go lowers it to the query
-// library's directives, since no other file of the package names them.
+// Listing is one page request of ls or of bookmark ls, as the command
+// line states it: the 1-based page and its size, the filters and the sort
+// terms in order, the total mode, the cursors to continue each half from,
+// and the unit whose scope ls checks when Unit is not empty. bookmark ls
+// takes the page, the size, the sort terms, and the total mode alone. It
+// is the domain's own shape of a read request; database.go lowers it to
+// the query library's directives, since no other file of the package
+// names them.
 type Listing struct {
 	Page    int
 	Size    int
@@ -35,6 +39,7 @@ type Listing struct {
 	Sort    []Sort
 	Total   TotalMode
 	After   After
+	Unit    string
 }
 
 // Filter is one filter term of a Listing: a declared field of a listing,
@@ -157,6 +162,26 @@ type CopyResult struct {
 	From string
 	To   string
 	File blobfs.File
+}
+
+// Bookmark is one row of the domain's bookmark read model: a unit's
+// bookmark of a file, with the file's id and directory id, its full path,
+// and the file's columns bookmark ls shows. Active says the bookmark is
+// the unit's one active bookmark. Size is nil for a file whose write has
+// not completed. CreatedAt and UpdatedAt are the bookmark's, not the
+// file's. The json tags are the scan contract: the read model's columns
+// carry the same names.
+type Bookmark struct {
+	FileID      string        `json:"file_id"`
+	DirectoryID string        `json:"directory_id"`
+	Active      bool          `json:"active"`
+	Path        string        `json:"path"`
+	Name        string        `json:"name"`
+	Status      blobfs.Status `json:"status"`
+	Size        *int64        `json:"size"`
+	ContentType string        `json:"content_type"`
+	CreatedAt   time.Time     `json:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at"`
 }
 
 // TreeRemoval is what rm --recursive returns: how many files and

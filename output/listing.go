@@ -104,3 +104,39 @@ func page(w io.Writer, half, label string, p Page) error {
 	}
 	return err
 }
+
+// BookmarkEntry is one line of a bookmark listing: a file the unit
+// bookmarks, at its full path. Size is nil for a file whose size is not
+// known yet. Active marks the unit's one active bookmark. Updated is the
+// bookmark's.
+type BookmarkEntry struct {
+	Path    string
+	Size    *int64
+	Status  string
+	Active  bool
+	Updated time.Time
+}
+
+// Bookmarks writes a bookmark listing to w: the entries as aligned columns
+// under PATH SIZE STATUS ACTIVE UPDATED, in the order given, then a line
+// saying what the page holds and its total, and a more: line saying
+// whether rows remain after it. The listing pages by number only, so p's
+// Next is not read and no cursor line is written.
+func Bookmarks(w io.Writer, entries []BookmarkEntry, p Page) error {
+	rows := make([][]string, 0, len(entries))
+	for _, e := range entries {
+		size, active := "-", "-"
+		if e.Size != nil {
+			size = strconv.FormatInt(*e.Size, 10)
+		}
+		if e.Active {
+			active = "active"
+		}
+		rows = append(rows, []string{e.Path, size, e.Status, active, e.Updated.UTC().Format(time.DateTime)})
+	}
+	if err := Table(w, []string{"PATH", "SIZE", "STATUS", "ACTIVE", "UPDATED"}, rows); err != nil {
+		return err
+	}
+	p.Cursor, p.Next = false, ""
+	return page(w, "bookmarks", "", p)
+}

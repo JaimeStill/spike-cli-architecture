@@ -1,0 +1,208 @@
+package files_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/standards-lab/blobfs"
+	"github.com/standards-lab/sqlate"
+	"github.com/standards-lab/sqlate/sqltest"
+
+	"github.com/JaimeStill/spike-cli-architecture/domain/files"
+)
+
+// Ownership over the scripted driver: mkdir --unit writes the directory
+// and its owner row together, ls --unit checks the owner row of the
+// path's top-level directory and lists a unit's own top-level directories
+// at the root, and rmdir removes the owner row with the directory.
+
+const unitID = "00000000-0000-7000-8000-0000000000aa"
+
+func TestMkdir_WithAUnitWritesTheDirectoryAndItsOwnerTogether(t *testing.T) {
+	s, rec := open(t, resolvedRoot(), directories(directoryRow(dirID, blobfs.RootID, "reports")), sqltest.Response{Affected: 1})
+
+	d, err := s.Mkdir(context.Background(), "/reports", unitID)
+
+	if err != nil || d.ID != dirID {
+		t.Fatalf("Mkdir() = %+v, %v", d, err)
+	}
+	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpExec, sqltest.OpCommit}
+	if got := nonPrepares(rec); !slices.Equal(got, want) {
+		t.Errorf("ops = %v, want %v: the create and the owner row in one transaction", got, want)
+	}
+	owner := rec.Calls()[len(rec.Calls())-2]
+	if !strings.HasPrefix(owner.SQL, "INSERT INTO directory_owner") || !slices.Equal(owner.Args, []any{dirID, unitID}) {
+		t.Errorf("the owner row ran %q with %v, want the directory and the unit", owner.SQL, owner.Args)
+	}
+}
+
+func TestMkdir_AFailedOwnerRowRollsTheDirectoryBack(t *testing.T) {
+	s, rec := open(t, resolvedRoot(), directories(directoryRow(dirID, blobfs.RootID, "reports")), sqltest.Response{Err: errors.New("the owner table is gone")})
+
+	_, err := s.Mkdir(context.Background(), "/reports", unitID)
+
+	if err == nil || !strings.Contains(err.Error(), "create the owner row of "+dirID) {
+		t.Fatalf("Mkdir() = %v, want the owner row's failure", err)
+	}
+	if ops := nonPrepares(rec); ops[len(ops)-1] != sqltest.OpRollback {
+		t.Errorf("ops = %v, want the create rolled back with the owner row", ops)
+	}
+}
+
+func TestMkdir_AUnitBindsATopLevelDirectoryOnly(t *testing.T) {
+	s, rec := open(t)
+
+	_, err := s.Mkdir(context.Background(), "/reports/2026", unitID)
+
+	if !errors.Is(err, files.ErrUnitDepth) {
+		t.Errorf("Mkdir() = %v, want ErrUnitDepth", err)
+	}
+	if len(rec.Calls()) != 0 {
+		t.Errorf("calls = %v, want none", rec.Ops())
+	}
+}
+
+func TestList_AsAUnitChecksTheTopLevelDirectorysOwner(t *testing.T) {
+	// /reports/2026 as the unit: /reports is resolved and its owner row
+	// read, and only then the full path, and both halves are listed.
+	s, rec := open(t,
+		resolved(dirID, blobfs.RootID, "reports", 1),
+		counted(1),
+		resolved(otherID, dirID, "2026", 2),
+		sqltest.WithTotal(directories(), 0),
+		listed(otherID),
+		sqltest.WithTotal(fileRows(fileRow(fileID, otherID, "a.txt", 3)), 1),
+		listed(otherID),
+	)
+
+	c, err := s.List(context.Background(), "/reports/2026", files.Listing{Page: 1, Size: 20, Unit: unitID})
+
+	if err != nil {
+		t.Fatalf("List() = %v", err)
+	}
+	if len(c.Files.Rows) != 1 || c.Path != "/reports/2026" {
+		t.Errorf("List() = %+v, want the file under /reports/2026", c)
+	}
+	calls := rec.Calls()
+	if args := calls[1].Args; len(args) != 2 || fmt.Sprint(args[1]) != "[reports]" {
+		t.Errorf("the first resolution bound %v, want the top-level directory alone", args)
+	}
+	if owner := calls[2]; !strings.Contains(owner.SQL, "FROM directory_owner") || !slices.Equal(owner.Args, []any{dirID, unitID}) {
+		t.Errorf("the owner read ran %q with %v, want the top-level directory and the unit", owner.SQL, owner.Args)
+	}
+	if opts := calls[0].TxOptions; !opts.ReadOnly {
+		t.Errorf("transaction options = %+v, want read-only", opts)
+	}
+}
+
+func TestList_AUnitThatDoesNotOwnTheTopLevelDirectoryIsRefused(t *testing.T) {
+	s, rec := open(t, resolved(dirID, blobfs.RootID, "reports", 1), counted(0))
+
+	_, err := s.List(context.Background(), "/reports/2026", files.Listing{Page: 1, Size: 20, Unit: unitID})
+
+	if !errors.Is(err, files.ErrNotOwned) || !strings.Contains(err.Error(), "as unit "+unitID) {
+		t.Fatalf("List() = %v, want ErrNotOwned naming the unit", err)
+	}
+	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpRollback}
+	if got := nonPrepares(rec); !slices.Equal(got, want) {
+		t.Errorf("ops = %v, want %v: nothing below the top-level directory is resolved", got, want)
+	}
+}
+
+func TestList_TheRootAsAUnitListsItsOwnTopLevelDirectories(t *testing.T) {
+	// The owner read model lists the unit's directories, under the terms
+	// that name a directory field; the size filter is the file half's and
+	// is left off. The file half is empty and counted.
+	s, rec := open(t, sqltest.WithTotal(directories(directoryRow(dirID, blobfs.RootID, "reports")), 1))
+	l := files.Listing{Page: 1, Size: 20, Unit: unitID, Filters: []files.Filter{{Field: "name", Op: "like", Value: "r%"}, {Field: "size", Op: "gt", Value: "1"}}}
+
+	c, err := s.List(context.Background(), "/", l)
+
+	if err != nil {
+		t.Fatalf("List() = %v", err)
+	}
+	if len(c.Directories.Rows) != 1 || c.Directories.Rows[0].Name != "reports" || c.Directories.Total != 1 || len(c.Files.Rows) != 0 || c.Files.Total != 0 || c.Directories.Next != "" {
+		t.Errorf("List() = %+v, want the unit's one directory, no files, and no cursor", c)
+	}
+	queries := rec.SQL(sqltest.OpQuery)
+	if len(queries) != 1 || !strings.Contains(queries[0], "JOIN directory_owner") || !strings.Contains(queries[0], "LIKE") || strings.Contains(queries[0], "size") {
+		t.Errorf("queries = %q, want the owner read model with the name filter alone", queries)
+	}
+	if args := rec.Calls()[1].Args; args[0] != unitID {
+		t.Errorf("the read model bound %v, want the unit first", args)
+	}
+
+	s, _ = open(t, directories())
+	l.Total = files.TotalNone
+	c, err = s.List(context.Background(), "/", l)
+	if err != nil || c.Directories.Total != files.NoTotal || c.Files.Total != files.NoTotal {
+		t.Errorf("List() under TotalNone = %+v, %v, want NoTotal for both halves", c, err)
+	}
+}
+
+func TestList_TheRootAsAUnitTakesNoCursor(t *testing.T) {
+	s, rec := open(t)
+
+	_, err := s.List(context.Background(), "/", files.Listing{Page: 1, Size: 20, Unit: unitID, After: files.After{Directories: "c"}})
+
+	if !errors.Is(err, files.ErrNoCursorAtRoot) {
+		t.Errorf("List() = %v, want ErrNoCursorAtRoot", err)
+	}
+	if len(rec.Calls()) != 0 {
+		t.Errorf("calls = %v, want none", rec.Ops())
+	}
+}
+
+func TestListDirectory_TakesNoUnit(t *testing.T) {
+	s, rec := open(t)
+
+	_, err := s.ListDirectory(context.Background(), dirID, files.Listing{Page: 1, Size: 20, Unit: unitID})
+
+	if !errors.Is(err, files.ErrNotOwned) {
+		t.Errorf("ListDirectory() = %v, want ErrNotOwned", err)
+	}
+	if len(rec.Calls()) != 0 {
+		t.Errorf("calls = %v, want none", rec.Ops())
+	}
+}
+
+func TestRemoveDirectory_RemovesTheOwnerRowWithTheDirectory(t *testing.T) {
+	s, rec := open(t, resolved(dirID, blobfs.RootID, "reports", 1), sqltest.Response{Affected: 1}, purged())
+
+	d, err := s.RemoveDirectory(context.Background(), "/reports")
+
+	if err != nil || d.ID != dirID {
+		t.Fatalf("RemoveDirectory() = %+v, %v", d, err)
+	}
+	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpExec, sqltest.OpExec, sqltest.OpCommit}
+	if got := nonPrepares(rec); !slices.Equal(got, want) {
+		t.Errorf("ops = %v, want %v", got, want)
+	}
+	execs := rec.SQL(sqltest.OpExec)
+	if !strings.HasPrefix(execs[0], "DELETE FROM directory_owner") || !strings.HasPrefix(execs[1], "DELETE FROM blobfs_directory") {
+		t.Errorf("execs = %q, want the owner row and then the directory", execs)
+	}
+}
+
+func TestRemoveDirectory_ARefusalKeepsTheOwnerRow(t *testing.T) {
+	// The directory still has contents: blobfs refuses the delete, and the
+	// owner row's removal rolls back with it.
+	s, rec := open(t, resolved(dirID, blobfs.RootID, "reports", 1), sqltest.Response{Affected: 1}, sqltest.Response{Err: &sqlate.ConstraintError{
+		Constraint: blobfs.ConstraintForeignKeyFileDirectory,
+		Class:      sqlate.ErrForeignKeyViolation,
+		Err:        errors.New("update or delete violates foreign key constraint"),
+	}})
+
+	_, err := s.RemoveDirectory(context.Background(), "/reports")
+
+	if !errors.Is(err, blobfs.ErrNotEmpty) {
+		t.Fatalf("RemoveDirectory() = %v, want ErrNotEmpty", err)
+	}
+	if ops := nonPrepares(rec); ops[len(ops)-1] != sqltest.OpRollback {
+		t.Errorf("ops = %v, want the owner row's removal rolled back", ops)
+	}
+}

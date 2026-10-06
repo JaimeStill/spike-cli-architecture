@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/standards-lab/blobfs"
 
@@ -20,13 +21,16 @@ import (
 )
 
 // Commands builds the directory commands, mkdir, ls, stat, mv, and rmdir,
-// over store, the composition root's node for the [Store]. Each declares
-// store with Use, so the dispatcher builds and starts the database and the
-// store's statement check before the body runs, and shuts them down after;
-// the body reads the Store from the Invocation's System. None declares the
-// object store. Each validates its arguments and flags in Args, so a
-// malformed path-or-id, filter, sort term, or total mode is a usage error
-// before anything is built.
+// and the bookmark command with its add, ls, and rm subcommands, over
+// store, the composition root's node for the [Store]. Each declares store
+// with Use, the bookmark subcommands through their parent, so the
+// dispatcher builds and starts the database and the store's statement
+// check before the body runs, and shuts them down after; the body reads the
+// Store from the Invocation's System. None declares the object store. Each
+// validates its arguments and flags in Args, so a malformed path-or-id,
+// unit, filter, sort term, or total mode is a usage error before anything
+// is built, and each bookmark subcommand requires --unit, so a run without
+// it is a usage error too.
 func Commands(store *graph.Node[*Store]) []*cli.Command {
 	g := group{store: store}
 	return []*cli.Command{
@@ -35,6 +39,7 @@ func Commands(store *graph.Node[*Store]) []*cli.Command {
 		g.stat().Use(store),
 		g.move().Use(store),
 		g.removeDirectory().Use(store),
+		g.bookmark().Use(store),
 	}
 }
 
@@ -48,27 +53,44 @@ func (g group) storeOf(inv *cli.Invocation) *Store {
 	return inv.System.Get(g.store)
 }
 
-// mkdir is mkdir <path>: the last segment created under its existing
-// parent. There is no -p; a missing parent is an error.
+// mkdir is mkdir <path> [--unit <uuid>]: the last segment created under
+// its existing parent, and with --unit, at a top-level path, the owner row
+// that binds it to the unit, in the same transaction. There is no -p; a
+// missing parent is an error.
 func (g group) mkdir() *cli.Command {
-	return &cli.Command{
+	var unit string
+	cmd := &cli.Command{
 		Name:     "mkdir",
 		Summary:  "Create a directory under an existing parent",
 		Synopsis: "<path>",
-		Args:     cli.ExactArgs(1),
+		Args: func(args []string) error {
+			if err := cli.ExactArgs(1)(args); err != nil {
+				return err
+			}
+			var err error
+			unit, err = parseUnit(unit)
+			return err
+		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			dir, err := g.storeOf(inv).Mkdir(ctx, inv.Args[0])
+			dir, err := g.storeOf(inv).Mkdir(ctx, inv.Args[0], unit)
 			if err != nil {
 				return err
+			}
+			if unit != "" {
+				return output.Line(inv.Stdout, fmt.Sprintf("mkdir: %s (id %s, unit %s)", inv.Args[0], dir.ID, unit))
 			}
 			return output.Line(inv.Stdout, fmt.Sprintf("mkdir: %s (id %s)", inv.Args[0], dir.ID))
 		},
 	}
+	cmd.Flags().StringVar(&unit, "unit", "", "the id of the unit that owns the directory, a UUID; top-level paths only")
+	return cmd
 }
 
 // list is ls <path|id:<uuid>>: the directories under the directory first,
 // then its files, each one page, with a line per half stating the page and
-// the total, and the cursor lines only under --cursors.
+// the total, and the cursor lines only under --cursors. With --unit the
+// unit must own the path's top-level directory, and ls / lists the unit's
+// own top-level directories; a listing by id takes no unit.
 func (g group) list() *cli.Command {
 	var f listingFlags
 	var ref Ref
@@ -85,8 +107,13 @@ func (g group) list() *cli.Command {
 			if ref, err = parseRefArg(args[0]); err != nil {
 				return err
 			}
-			l, err = f.listing()
-			return err
+			if l, err = f.listing(); err != nil {
+				return err
+			}
+			if ref.ID != "" && l.Unit != "" {
+				return cli.Usagef("ls %s --unit: a listing by id has no path to derive the unit's scope from; list the path instead", args[0])
+			}
+			return nil
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
 			s := g.storeOf(inv)
@@ -221,6 +248,119 @@ func (g group) removeDirectory() *cli.Command {
 			return output.Line(inv.Stdout, fmt.Sprintf("rmdir: %s (id %s)", inv.Args[0], dir.ID))
 		},
 	}
+}
+
+// bookmark is the bookmark command: add, ls, and rm, each under the unit
+// its required --unit names.
+func (g group) bookmark() *cli.Command {
+	return (&cli.Command{
+		Name:    "bookmark",
+		Summary: "Bookmark files for a unit, at most one of them active: add, ls, rm",
+	}).Add(g.bookmarkAdd(), g.bookmarkList(), g.bookmarkRemove())
+}
+
+// bookmarkAdd is bookmark add <path> --unit <uuid> [--active]: the unit's
+// bookmark of the file at the path, active when asked, and refused while
+// another bookmark of the unit is active.
+func (g group) bookmarkAdd() *cli.Command {
+	var unit string
+	var active bool
+	cmd := &cli.Command{
+		Name:     "add",
+		Summary:  "Bookmark the file at a path for a unit; --active makes it the unit's one active bookmark",
+		Synopsis: "<path>",
+		Args: func(args []string) error {
+			if err := cli.ExactArgs(1)(args); err != nil {
+				return err
+			}
+			var err error
+			unit, err = parseUnit(unit)
+			return err
+		},
+		Run: func(ctx context.Context, inv *cli.Invocation) error {
+			f, err := g.storeOf(inv).AddBookmark(ctx, inv.Args[0], unit, active)
+			if err != nil {
+				return err
+			}
+			state := "inactive"
+			if active {
+				state = "active"
+			}
+			return output.Line(inv.Stdout, fmt.Sprintf("bookmark add: %s (file %s, unit %s, %s)", inv.Args[0], f.ID, unit, state))
+		},
+	}
+	cmd.Flags().StringVar(&unit, "unit", "", "the id of the unit that bookmarks the file, a UUID")
+	cmd.Flags().BoolVar(&active, "active", false, "make this bookmark the unit's one active bookmark; refused while another is active")
+	cmd.Require("unit")
+	return cmd
+}
+
+// bookmarkList is bookmark ls --unit <uuid>: the unit's bookmarks with
+// their files' full paths, one page by number, and a line stating the page
+// and the total.
+func (g group) bookmarkList() *cli.Command {
+	var f pageFlags
+	var unit string
+	var l Listing
+	cmd := &cli.Command{
+		Name:    "ls",
+		Summary: "List a unit's bookmarks with their files' paths, one page",
+		Args: func(args []string) error {
+			if err := cli.NoArgs(args); err != nil {
+				return err
+			}
+			var err error
+			if unit, err = parseUnit(unit); err != nil {
+				return err
+			}
+			l, err = f.listing()
+			return err
+		},
+		Run: func(ctx context.Context, inv *cli.Invocation) error {
+			p, err := g.storeOf(inv).ListBookmarks(ctx, unit, l)
+			if err != nil {
+				return err
+			}
+			entries := make([]output.BookmarkEntry, 0, len(p.Rows))
+			for _, b := range p.Rows {
+				entries = append(entries, output.BookmarkEntry{Path: b.Path, Size: b.Size, Status: string(b.Status), Active: b.Active, Updated: b.UpdatedAt})
+			}
+			return output.Bookmarks(inv.Stdout, entries, pageOf(l, "", p))
+		},
+	}
+	f.bind(cmd)
+	cmd.Flags().StringVar(&unit, "unit", "", "the id of the unit whose bookmarks to list, a UUID")
+	cmd.Require("unit")
+	return cmd
+}
+
+// bookmarkRemove is bookmark rm <path> --unit <uuid>: the unit's bookmark
+// of the file at the path removed, active or not.
+func (g group) bookmarkRemove() *cli.Command {
+	var unit string
+	cmd := &cli.Command{
+		Name:     "rm",
+		Summary:  "Remove a unit's bookmark of the file at a path, active or not",
+		Synopsis: "<path>",
+		Args: func(args []string) error {
+			if err := cli.ExactArgs(1)(args); err != nil {
+				return err
+			}
+			var err error
+			unit, err = parseUnit(unit)
+			return err
+		},
+		Run: func(ctx context.Context, inv *cli.Invocation) error {
+			f, err := g.storeOf(inv).RemoveBookmark(ctx, inv.Args[0], unit)
+			if err != nil {
+				return err
+			}
+			return output.Line(inv.Stdout, fmt.Sprintf("bookmark rm: %s (file %s, unit %s)", inv.Args[0], f.ID, unit))
+		},
+	}
+	cmd.Flags().StringVar(&unit, "unit", "", "the id of the unit whose bookmark to remove, a UUID")
+	cmd.Require("unit")
+	return cmd
 }
 
 // ObjectCommands builds the object commands, put, cat, cp, and rm, over
@@ -598,34 +738,28 @@ func pageOf[T any](l Listing, after string, p Page[T]) output.Page {
 	return out
 }
 
-// listingFlags is the flag set ls takes: the page and its size, the
-// repeatable sort and filter terms, the total mode, the cursor of each
-// half, and whether to print the next ones.
-type listingFlags struct {
-	page, size            int
-	sort, filter          []string
-	total                 string
-	afterDirs, afterFiles string
-	cursors               bool
+// pageFlags is the flag set every paged listing takes: the page and its
+// size, the repeatable sort term, and the total mode. bookmark ls takes it
+// alone.
+type pageFlags struct {
+	page, size int
+	sort       []string
+	total      string
 }
 
-// bind defines the listing flags on cmd.
-func (f *listingFlags) bind(cmd *cli.Command) {
+// bind defines the paging flags on cmd.
+func (f *pageFlags) bind(cmd *cli.Command) {
 	fs := cmd.Flags()
 	fs.IntVar(&f.page, "page", 1, "the 1-based page to list")
 	fs.IntVar(&f.size, "size", 20, "the number of rows per page")
 	cli.StringsVar(fs, &f.sort, "sort", nil, "a sort term, <field> or <field>:desc, applied in order")
-	cli.StringsVar(fs, &f.filter, "filter", nil, "a filter term, <field>:<op>:<value>, or <field>:null and <field>:notnull")
 	fs.StringVar(&f.total, "total", "exact", "exact to count the total, none to omit it")
-	fs.StringVar(&f.afterDirs, "after-dirs", "", "continue the directory half after this cursor, from an earlier next-dirs: line")
-	fs.StringVar(&f.afterFiles, "after-files", "", "continue the file half after this cursor, from an earlier next-files: line")
-	fs.BoolVar(&f.cursors, "cursors", false, "print the next-dirs: and next-files: lines with the cursors that continue each half")
 }
 
-// listing builds the Listing the flags state, validating the total mode
-// and parsing each filter and sort term. Every refusal is a usage error.
-func (f *listingFlags) listing() (Listing, error) {
-	l := Listing{Page: f.page, Size: f.size, After: After{Directories: f.afterDirs, Files: f.afterFiles}}
+// listing builds the Listing the paging flags state, validating the total
+// mode and parsing each sort term. Every refusal is a usage error.
+func (f *pageFlags) listing() (Listing, error) {
+	l := Listing{Page: f.page, Size: f.size}
 	switch f.total {
 	case "exact":
 		l.Total = TotalExact
@@ -641,6 +775,43 @@ func (f *listingFlags) listing() (Listing, error) {
 		}
 		l.Sort = append(l.Sort, s)
 	}
+	return l, nil
+}
+
+// listingFlags is the flag set ls takes: the paging flags, the repeatable
+// filter term, the cursor of each half and whether to print the next ones,
+// and the unit to list as.
+type listingFlags struct {
+	pageFlags
+	filter                []string
+	afterDirs, afterFiles string
+	cursors               bool
+	unit                  string
+}
+
+// bind defines the listing flags on cmd.
+func (f *listingFlags) bind(cmd *cli.Command) {
+	f.pageFlags.bind(cmd)
+	fs := cmd.Flags()
+	cli.StringsVar(fs, &f.filter, "filter", nil, "a filter term, <field>:<op>:<value>, or <field>:null and <field>:notnull")
+	fs.StringVar(&f.afterDirs, "after-dirs", "", "continue the directory half after this cursor, from an earlier next-dirs: line")
+	fs.StringVar(&f.afterFiles, "after-files", "", "continue the file half after this cursor, from an earlier next-files: line")
+	fs.BoolVar(&f.cursors, "cursors", false, "print the next-dirs: and next-files: lines with the cursors that continue each half")
+	fs.StringVar(&f.unit, "unit", "", "list as the unit with this id, a UUID; it must own the path's top-level directory, and at / the listing is its own")
+}
+
+// listing builds the Listing the flags state, validating the unit and the
+// total mode and parsing each filter and sort term. Every refusal is a
+// usage error.
+func (f *listingFlags) listing() (Listing, error) {
+	unit, err := parseUnit(f.unit)
+	if err != nil {
+		return Listing{}, err
+	}
+	l, err := f.pageFlags.listing()
+	if err != nil {
+		return Listing{}, err
+	}
 	for _, term := range f.filter {
 		filter, err := ParseFilter(term)
 		if err != nil {
@@ -648,7 +819,24 @@ func (f *listingFlags) listing() (Listing, error) {
 		}
 		l.Filters = append(l.Filters, filter)
 	}
+	l.After = After{Directories: f.afterDirs, Files: f.afterFiles}
+	l.Unit = unit
 	return l, nil
+}
+
+// parseUnit reads a --unit value: empty when the flag was not given, and
+// otherwise a UUID, returned in canonical form. A value that is not one is
+// a usage error. A required --unit that is missing is reported by the
+// dispatcher's Require, after Args, so the empty value passes here.
+func parseUnit(unit string) (string, error) {
+	if unit == "" {
+		return "", nil
+	}
+	id, err := uuid.Parse(unit)
+	if err != nil {
+		return "", cli.Usagef("--unit %q is not a UUID", unit)
+	}
+	return id.String(), nil
 }
 
 // ParseFilter reads one --filter term: <field>:<op>:<value>, where the

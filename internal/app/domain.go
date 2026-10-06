@@ -10,10 +10,10 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
-// domain is the graph's domain nodes: the files Store the directory
-// commands use, over the infrastructure's database and never its object
-// store, and the files domain's Objects the object commands use, over the
-// Store and the object store.
+// domain is the graph's domain nodes: the files Store the directory and
+// bookmark commands use, over the infrastructure's database and never its
+// object store, and the files domain's Objects the object commands use,
+// over the Store and the object store.
 type domain struct {
 	in      *infrastructure
 	files   *graph.Node[*files.Store]

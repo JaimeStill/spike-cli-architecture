@@ -247,7 +247,7 @@ func TestRun_NoArgumentsPrintsRootHelp(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Usage:\n  blobfs <command> [flags]\n",
-		"\nCommands:\n  version   Print the blobfs version\n  schema    Report, apply, revert, and reset the two migration sets\n",
+		"\nCommands:\n  version    Print the blobfs version\n  schema     Report, apply, revert, and reset the two migration sets\n",
 		"\nFlags:\n  --help   Show help for blobfs\n",
 	} {
 		if !strings.Contains(stdout, want) {

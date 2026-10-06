@@ -257,8 +257,8 @@ type script struct {
 	tg target
 }
 
-// TestScript is the scripted run of the directory and object commands
-// through the built binary, in its own database and container: the steps below in order, each a
+// TestScript is the scripted run of the directory, object, and bookmark
+// commands through the built binary, in its own database and container: the steps below in order, each a
 // subtest, and the script stops at the first step that fails. The
 // transcript under -v is the record of what the binary does.
 func TestScript(t *testing.T) {
@@ -279,6 +279,8 @@ func TestScript(t *testing.T) {
 		{"cp", s.copy},
 		{"rm", s.remove},
 		{"rm-recursive", s.removeTree},
+		{"units", s.units},
+		{"bookmarks", s.bookmarks},
 	} {
 		if !t.Run(step.name, step.fn) {
 			t.Logf("the script stops at step %s", step.name)
@@ -771,10 +773,205 @@ func (s *script) removeTree(t *testing.T) {
 	misused(t, s.tg, "flag provided but not defined: -r", "rm", "-r", "/objects")
 }
 
+// units is mkdir and ls under --unit: the owner row mkdir writes for a
+// top-level directory, ls scoped to the unit's top-level directory and, at
+// the root, to the unit's own top-level directories, and the refusals;
+// then mv carrying the owner row with a renamed top-level directory, and
+// rmdir and rm --recursive removing the owner rows with their directories.
+func (s *script) units(t *testing.T) {
+	unit, other := blobfs.NewID(), blobfs.NewID()
+	if out := ok(t, s.tg, "mkdir", "/owned", "--unit", unit); !strings.HasPrefix(out, "mkdir: /owned (id ") || !strings.HasSuffix(out, ", unit "+unit+")\n") {
+		t.Errorf("mkdir --unit stdout = %q, want the unit named", out)
+	}
+	ok(t, s.tg, "mkdir", "/owned/sub")
+	ok(t, s.tg, "mkdir", "/theirs", "--unit", strings.ToUpper(other))
+	put(t, s.tg, "/owned/sub/f.txt", "f")
+	refused(t, s.tg, "--unit applies to a top-level directory only", "mkdir", "/owned/deeper", "--unit", unit)
+	misused(t, s.tg, `--unit "nope" is not a UUID`, "mkdir", "/x", "--unit", "nope")
+
+	// ls --unit at the unit's top-level directory and below it.
+	if got := names(ok(t, s.tg, "ls", "/owned", "--unit", unit)); got != "sub" {
+		t.Errorf("ls /owned as the owner names = %s", got)
+	}
+	if got := names(ok(t, s.tg, "ls", "/owned/sub", "--unit", unit)); got != "f.txt" {
+		t.Errorf("ls /owned/sub as the owner names = %s", got)
+	}
+	refused(t, s.tg, "the unit does not own the directory", "ls", "/owned", "--unit", other)
+	refused(t, s.tg, "the unit does not own the directory", "ls", "/owned/sub", "--unit", other)
+	refused(t, s.tg, "the unit does not own the directory", "ls", "/reports", "--unit", unit)
+
+	// ls / --unit: the unit's own top-level directories, and no files.
+	out := ok(t, s.tg, "ls", "/", "--unit", unit)
+	if got := names(out); got != "owned" {
+		t.Errorf("ls / as the unit names = %s", got)
+	}
+	if !strings.Contains(out, "directories: 1 on page 1 of size 20, total 1\nmore: no\n") || !strings.Contains(out, "files: 0 on page 1 of size 20, total 0\nmore: no\n") {
+		t.Errorf("ls / as the unit stdout:\n%s", out)
+	}
+	if got := names(ok(t, s.tg, "ls", "/", "--unit", other)); got != "theirs" {
+		t.Errorf("ls / as the other unit names = %s", got)
+	}
+	if got := names(ok(t, s.tg, "ls", "/", "--unit", unit, "--filter", "name:like:own%", "--filter", "size:gt:1")); got != "owned" {
+		t.Errorf("ls / as the unit with a filter names = %s", got)
+	}
+	if got := names(ok(t, s.tg, "ls", "/", "--unit", unit, "--filter", "name:like:zzz%")); got != "" {
+		t.Errorf("ls / as the unit with a filter nothing matches names = %s", got)
+	}
+	refused(t, s.tg, "owner read model takes no cursor", "ls", "/", "--unit", unit, "--after-dirs", "x")
+	misused(t, s.tg, "a listing by id has no path to derive the unit's scope from", "ls", "id:"+ids(ok(t, s.tg, "ls", "/"))["owned"], "--unit", unit)
+	if got := names(ok(t, s.tg, "ls", "/")); got != "a c ids objects owned reports theirs" {
+		t.Errorf("ls / names = %s", got)
+	}
+
+	// A renamed top-level directory keeps its owner row, which follows it
+	// by id; rmdir removes the row with the directory.
+	ok(t, s.tg, "mv", "/theirs", "/mine")
+	if got := names(ok(t, s.tg, "ls", "/", "--unit", other)); got != "mine" {
+		t.Errorf("ls / as the other unit after the rename = %s", got)
+	}
+	ok(t, s.tg, "rmdir", "/mine")
+	if n := owners(t, s.tg, other); n != 0 {
+		t.Errorf("owner rows of the other unit after rmdir = %d, want 0", n)
+	}
+
+	// rm --recursive removes the owner row of the branch's root with it.
+	if out := ok(t, s.tg, "rm", "--recursive", "/owned"); out != "rm --recursive: /owned (1 files, 2 directories)\n" {
+		t.Errorf("rm --recursive of an owned branch stdout = %q", out)
+	}
+	if n := owners(t, s.tg, unit); n != 0 {
+		t.Errorf("owner rows of the unit after rm --recursive = %d, want 0", n)
+	}
+	if got := names(ok(t, s.tg, "ls", "/", "--unit", unit)); got != "" {
+		t.Errorf("ls / as the unit after rm --recursive = %s", got)
+	}
+}
+
+// bookmarks is the bookmark commands: add with --active and the refusal of
+// a second active bookmark, ls with the files' full paths and the active
+// marker, rm refused for a bookmarked file and for a branch holding one,
+// then bookmark rm, after which rm succeeds.
+func (s *script) bookmarks(t *testing.T) {
+	unit, other := blobfs.NewID(), blobfs.NewID()
+	ok(t, s.tg, "mkdir", "/library")
+	ok(t, s.tg, "mkdir", "/library/deep")
+	x := put(t, s.tg, "/library/x.txt", "x")
+	put(t, s.tg, "/library/y.txt", "yy")
+	z := put(t, s.tg, "/library/deep/z.txt", "zzz")
+
+	// add: the result lines, the single active bookmark, and the refusals.
+	if out := ok(t, s.tg, "bookmark", "add", "/library/deep/z.txt", "--unit", unit); out != "bookmark add: /library/deep/z.txt (file "+z+", unit "+unit+", inactive)\n" {
+		t.Errorf("bookmark add stdout = %q", out)
+	}
+	if out := ok(t, s.tg, "bookmark", "add", "/library/x.txt", "--unit", unit, "--active"); out != "bookmark add: /library/x.txt (file "+x+", unit "+unit+", active)\n" {
+		t.Errorf("bookmark add --active stdout = %q", out)
+	}
+	ok(t, s.tg, "bookmark", "add", "/library/x.txt", "--unit", other, "--active")
+	refused(t, s.tg, "the unit has an active bookmark already (constraint uq_bookmark_active)", "bookmark", "add", "/library/y.txt", "--unit", unit, "--active")
+	refused(t, s.tg, "the unit has bookmarked the file already (constraint pk_bookmark)", "bookmark", "add", "/library/deep/z.txt", "--unit", unit)
+	refused(t, s.tg, "not found", "bookmark", "add", "/library/missing.txt", "--unit", unit)
+	refused(t, s.tg, "not found", "bookmark", "add", "/library/deep", "--unit", unit)
+	misused(t, s.tg, "required flag --unit not set", "bookmark", "add", "/library/y.txt")
+	misused(t, s.tg, `--unit "nope" is not a UUID`, "bookmark", "ls", "--unit", "nope")
+
+	// ls: full paths in path order, the active marker, the page and its
+	// total; then paging, sorting, --total none, and another unit's.
+	out := ok(t, s.tg, "bookmark", "ls", "--unit", unit)
+	if got := bookmarkPaths(out); got != "/library/deep/z.txt /library/x.txt" {
+		t.Errorf("bookmark ls paths = %s", got)
+	}
+	if !strings.HasPrefix(out, "PATH ") || !strings.Contains(out, "bookmarks: 2 on page 1 of size 20, total 2\nmore: no\n") {
+		t.Errorf("bookmark ls stdout:\n%s", out)
+	}
+	for _, line := range lines(out) {
+		f := strings.Fields(line)
+		switch {
+		case strings.HasPrefix(line, "/library/x.txt ") && (f[1] != "1" || f[2] != "available" || f[3] != "active"):
+			t.Errorf("the active bookmark's line = %q", line)
+		case strings.HasPrefix(line, "/library/deep/z.txt ") && (f[1] != "3" || f[3] != "-"):
+			t.Errorf("the inactive bookmark's line = %q", line)
+		}
+	}
+	out = ok(t, s.tg, "bookmark", "ls", "--unit", unit, "--size", "1", "--sort", "path:desc")
+	if got := bookmarkPaths(out); got != "/library/x.txt" || !strings.Contains(out, "bookmarks: 1 on page 1 of size 1, total 2\nmore: yes\n") {
+		t.Errorf("bookmark ls --size 1 --sort path:desc stdout:\n%s", out)
+	}
+	if out := ok(t, s.tg, "bookmark", "ls", "--unit", unit, "--total", "none"); !strings.Contains(out, "bookmarks: 2 on page 1 of size 20, total not counted\nmore: no\n") {
+		t.Errorf("bookmark ls --total none stdout:\n%s", out)
+	}
+	if got := bookmarkPaths(ok(t, s.tg, "bookmark", "ls", "--unit", other)); got != "/library/x.txt" {
+		t.Errorf("bookmark ls of the other unit = %s", got)
+	}
+	if out := ok(t, s.tg, "bookmark", "ls", "--unit", blobfs.NewID()); !strings.Contains(out, "bookmarks: 0 on page 1 of size 20, total 0\nmore: no\n") {
+		t.Errorf("bookmark ls of a unit with none:\n%s", out)
+	}
+	refused(t, s.tg, "unknown sort field", "bookmark", "ls", "--unit", unit, "--sort", "key")
+
+	// rm of a bookmarked file is refused before anything is touched, and
+	// so is rm --recursive of a branch holding one.
+	refused(t, s.tg, "2 unit(s) bookmark the file; remove the bookmarks and rerun rm", "rm", "/library/x.txt")
+	refused(t, s.tg, "the file is bookmarked", "rm", "id:"+x)
+	if out := ok(t, s.tg, "stat", "/library/x.txt"); field(out, "status") != "available" || field(out, "version") != "2" {
+		t.Errorf("stat after the refused rm:\n%s\nwant the row untouched", out)
+	}
+	if got := ok(t, s.tg, "cat", "/library/x.txt"); got != "x" {
+		t.Errorf("cat after the refused rm = %q", got)
+	}
+	refused(t, s.tg, "3 bookmark(s) hold files in the branch; remove the bookmarks and rerun rm --recursive", "rm", "--recursive", "/library")
+	if got := names(ok(t, s.tg, "ls", "/library")); got != "deep x.txt y.txt" {
+		t.Errorf("ls /library after the refused rm --recursive = %s", got)
+	}
+
+	// bookmark rm: the active bookmark goes, another may become active,
+	// and once no unit bookmarks the file, rm succeeds.
+	if out := ok(t, s.tg, "bookmark", "rm", "/library/x.txt", "--unit", unit); out != "bookmark rm: /library/x.txt (file "+x+", unit "+unit+")\n" {
+		t.Errorf("bookmark rm stdout = %q", out)
+	}
+	refused(t, s.tg, "the unit has no bookmark of the file", "bookmark", "rm", "/library/x.txt", "--unit", unit)
+	refused(t, s.tg, "not found", "bookmark", "rm", "/library/missing.txt", "--unit", unit)
+	refused(t, s.tg, "1 unit(s) bookmark the file", "rm", "/library/x.txt")
+	ok(t, s.tg, "bookmark", "rm", "/library/x.txt", "--unit", other)
+	if out := ok(t, s.tg, "rm", "/library/x.txt"); out != "rm: /library/x.txt (id "+x+")\n" {
+		t.Errorf("rm after the bookmarks went stdout = %q", out)
+	}
+	ok(t, s.tg, "bookmark", "add", "/library/y.txt", "--unit", unit, "--active")
+	if got := bookmarkPaths(ok(t, s.tg, "bookmark", "ls", "--unit", unit)); got != "/library/deep/z.txt /library/y.txt" {
+		t.Errorf("bookmark ls after rm = %s", got)
+	}
+	ok(t, s.tg, "bookmark", "rm", "/library/y.txt", "--unit", unit)
+	ok(t, s.tg, "bookmark", "rm", "/library/deep/z.txt", "--unit", unit)
+	if out := ok(t, s.tg, "rm", "--recursive", "/library"); out != "rm --recursive: /library (2 files, 2 directories)\n" {
+		t.Errorf("rm --recursive after the bookmarks went stdout = %q", out)
+	}
+}
+
+// bookmarkPaths returns the first column of every entry line of a bookmark
+// listing, the paths, in the order printed, joined by spaces.
+func bookmarkPaths(out string) string {
+	var paths []string
+	for _, line := range lines(out) {
+		if strings.HasPrefix(line, "/") {
+			paths = append(paths, strings.Fields(line)[0])
+		}
+	}
+	return strings.Join(paths, " ")
+}
+
+// owners returns how many directories the unit with id owns, read from the
+// owner table on the test's own pool.
+func owners(t *testing.T, tg target, unit string) int {
+	t.Helper()
+	var n int
+	if err := tg.db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM directory_owner WHERE unit_id = $1", unit).Scan(&n); err != nil {
+		t.Fatalf("count the owner rows of %s: %v", unit, err)
+	}
+	return n
+}
+
 // TestTheStoreUnreachable runs the commands with the object store's
-// endpoint on a port nothing listens on: every directory command declares
-// the database alone, so none reaches the store and each succeeds, while
-// an object command fails at start, once, naming the store's node.
+// endpoint on a port nothing listens on: every directory and bookmark
+// command declares the database alone, so none reaches the store and each
+// succeeds, while an object command fails at start, once, naming the
+// store's node.
 func TestTheStoreUnreachable(t *testing.T) {
 	tg := open(t, fmt.Sprintf("BLOBFS_STORAGE_ENDPOINT=http://127.0.0.1:%d/devstoreaccount1", closedPort(t)))
 	ok(t, tg, "schema", "up")
@@ -790,6 +987,21 @@ func TestTheStoreUnreachable(t *testing.T) {
 	ok(t, tg, "stat", "id:"+id)
 	ok(t, tg, "mv", "/reports/2026", "/reports/2027")
 	ok(t, tg, "rmdir", "/reports/2027")
+
+	// Ownership and the bookmark commands, over a pending file seeded
+	// without the store.
+	unit := blobfs.NewID()
+	ok(t, tg, "mkdir", "/library", "--unit", unit)
+	if got := names(ok(t, tg, "ls", "/", "--unit", unit)); got != "library" {
+		t.Errorf("ls / --unit names = %s", got)
+	}
+	seedPending(t, tg, ids(ok(t, tg, "ls", "/"))["library"], "plan.txt")
+	ok(t, tg, "ls", "/library", "--unit", unit)
+	ok(t, tg, "bookmark", "add", "/library/plan.txt", "--unit", unit, "--active")
+	if got := bookmarkPaths(ok(t, tg, "bookmark", "ls", "--unit", unit)); got != "/library/plan.txt" {
+		t.Errorf("bookmark ls paths = %s", got)
+	}
+	ok(t, tg, "bookmark", "rm", "/library/plan.txt", "--unit", unit)
 
 	// Each refusal waits out the provider's retries, so two of the object
 	// commands stand for the rest, which the hermetic tier runs over a
