@@ -27,12 +27,12 @@ import (
 // BLOBFS_SHUTDOWN_TIMEOUT at its default, and tears the project down when
 // the suite ends.
 
-// probeApp returns blobfs with a test-only command, "probe", that Uses the
-// database and the store, which no production command combines yet. The
-// database and store nodes are Replace-d by their real constructors,
-// wrapped to record each value's Start and Shutdown into r, and the store
-// is ordered after the database, so the two, one layer in production, start
-// and shut down in an order the test can assert.
+// probeApp returns blobfs with a test-only command, "probe", that declares
+// the database and the store with Use, which no production command
+// combines yet. The database and store nodes are Replace-d by their real
+// constructors, wrapped to record each value's Start and Shutdown into r,
+// and the store is ordered after the database, so the two, one layer in
+// production, start and shut down in an order the test can assert.
 func probeApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
 	a := app.New(stdout, stderr)
 	g, n := a.Graph(), a.Nodes()
@@ -53,13 +53,12 @@ func probeApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
 		recordLifecycle(s, r, "store", st.Start, st.Shutdown)
 		return st, nil
 	})
-	a.Root().Add(&cli.Command{
+	a.Root().Add((&cli.Command{
 		Name:    "probe",
 		Summary: "Start and shut down the database and the store",
 		Args:    cli.NoArgs,
-		Uses:    []graph.Ref{n.Database, n.Store},
 		Run:     func(context.Context, *cli.Invocation) error { return nil },
-	})
+	}).Use(n.Database, n.Store))
 	return a
 }
 

@@ -14,13 +14,13 @@
 //     on the root are root flags, accepted at any depth
 //   - [Command.Require], which marks a leaf's flags as required
 //   - [Command.Exclusive], which declares a mutually exclusive flag group
-//   - [Command].Uses, the graph nodes a command needs
+//   - [Command.Use], which declares the graph nodes a command needs
 //   - [Invocation], what a running command receives, and
-//     [Invocation].System, the System built for its Uses
+//     [Invocation].System, the System built for the nodes its path declares
 //   - [Invocation.Changed], which reports whether a flag was given
 //   - [Run], which dispatches the arguments and returns the exit code
 //   - [Option], which configures one Run, and [WithGraph], the Option that
-//     gives Run the graph that Uses are built from
+//     gives Run the graph that declared nodes are built from
 //   - [StringsVar], which defines a repeatable string flag
 //   - [NoArgs] and [ExactArgs], the positional-argument validators
 //   - [UsageError], an error reported with the command's usage
@@ -28,12 +28,12 @@
 //
 // # Dependencies
 //
-// A command's dependencies are part of the command: [Command].Uses names
+// A command's dependencies are part of the command: [Command.Use] declares
 // the [graph.Node] values it needs, inherited along the command path, and
-// [Run] builds a leaf's Uses from the [WithGraph] graph and runs the leaf
-// under a [lifecycle.Coordinator] only once the dispatch reaches it, so
-// help, a usage error, or a PreRun error builds nothing. A leaf whose path
-// has no Uses runs with no Build and no lifecycle.
+// [Run] builds the union a leaf's path declares from the [WithGraph] graph
+// and runs the leaf under a [lifecycle.Coordinator] only once the dispatch
+// reaches it, so help, a usage error, or a PreRun error builds nothing. A leaf whose path
+// declares no nodes runs with no Build and no lifecycle.
 //
 // The package imports the standard library, go-core, and the spike's graph
 // and lifecycle packages.

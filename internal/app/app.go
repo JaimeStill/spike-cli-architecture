@@ -45,10 +45,11 @@ func New(stdout, stderr io.Writer) *App {
 }
 
 // Run dispatches args, the program arguments without the program name, and
-// returns the process exit code. The dispatcher builds the selected
-// command's Uses from the App's graph, with the lifecycle configuration
-// node, and shuts what it built down before Run returns, so a Build, start,
-// or shutdown error is reported with the command's result. An App runs one
+// returns the process exit code. The dispatcher builds the nodes the
+// selected command's path declares with Use from the App's graph, with the
+// lifecycle configuration node, and shuts what it built down before Run
+// returns, so a Build, start, or shutdown error is reported with the
+// command's result. An App runs one
 // command at a time, since a graph.Graph is not safe for concurrent use.
 func (a *App) Run(ctx context.Context, args []string) int {
 	return cli.Run(ctx, a.root, args, a.stdout, a.stderr, cli.WithGraph(a.graph, a.infra.lifecycleConfig))

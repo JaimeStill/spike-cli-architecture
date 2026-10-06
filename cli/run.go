@@ -23,12 +23,12 @@ type options struct {
 	lifecycleConfig *graph.Node[lifecycle.Config]
 }
 
-// WithGraph gives Run the graph that a leaf's [Command.Uses] are built from,
-// and the node whose value configures the [lifecycle.Coordinator] that runs
-// what was built. That node is added to every Build, so its constructor
-// supplies the shutdown timeout, and it must return a finalized Config:
-// lifecycle.New panics on one that is not. WithGraph panics on a nil g or
-// lifecycleConfig.
+// WithGraph gives Run the graph that the nodes a leaf's path declares with
+// [Command.Use] are built from, and the node whose value configures the
+// [lifecycle.Coordinator] that runs what was built. That node is added to
+// every Build, so its constructor supplies the shutdown timeout, and it
+// must return a finalized Config: lifecycle.New panics on one that is not.
+// WithGraph panics on a nil g or lifecycleConfig.
 func WithGraph(g *graph.Graph, lifecycleConfig *graph.Node[lifecycle.Config]) Option {
 	if g == nil || lifecycleConfig == nil {
 		panic("cli: WithGraph with a nil graph or lifecycle config node")
@@ -45,11 +45,11 @@ func WithGraph(g *graph.Graph, lifecycleConfig *graph.Node[lifecycle.Config]) Op
 // level's flags, select the leaf, validate its arguments with
 // [Command.Args], check its required flags and then its exclusive groups,
 // run the root's [Command.PreRun], run the leaf. When the leaf's path has
-// any [Command.Uses], running the leaf means building their union and the
-// lifecycle configuration node from the [WithGraph] graph, starting the
-// System with a [lifecycle.Coordinator], running the leaf under it with
-// [Invocation].System set, and shutting the System down; nothing is built
-// when the dispatch ends before the leaf would run.
+// nodes declared with [Command.Use], running the leaf means building their
+// union and the lifecycle configuration node from the [WithGraph] graph,
+// starting the System with a [lifecycle.Coordinator], running the leaf
+// under it with [Invocation].System set, and shutting the System down;
+// nothing is built when the dispatch ends before the leaf would run.
 //
 // Run owns every line the dispatcher prints, and returns go-core's process
 // exit codes:
@@ -65,7 +65,8 @@ func WithGraph(g *graph.Graph, lifecycleConfig *graph.Node[lifecycle.Config]) Op
 //   - a command that succeeds returns ExitOK
 //
 // Run panics at the start of the dispatch when any command in the tree has
-// Uses and no [WithGraph] option was given, whichever command is selected.
+// declared [Command.Use] and no [WithGraph] option was given, whichever
+// command is selected.
 func Run(ctx context.Context, root *Command, args []string, stdout, stderr io.Writer, opts ...Option) int {
 	var o options
 	for _, opt := range opts {
@@ -122,9 +123,9 @@ func parse(cmd *Command, args []string, stdout, stderr io.Writer) (rest []string
 }
 
 // execute validates the leaf's positional arguments and flag groups, runs
-// the root's PreRun and then the leaf, under a lifecycle when the path has
-// Uses, and maps the first error to an exit code. path holds the commands
-// from the root to the leaf.
+// the root's PreRun and then the leaf, under a lifecycle when the path
+// declares nodes with Use, and maps the first error to an exit code. path
+// holds the commands from the root to the leaf.
 func execute(ctx context.Context, o *options, path []*Command, args []string, stdout, stderr io.Writer) int {
 	root, cmd := path[0], path[len(path)-1]
 	if cmd.Args != nil {
@@ -171,12 +172,12 @@ func (o *options) run(ctx context.Context, uses []graph.Ref, cmd *Command, inv *
 	})
 }
 
-// uses returns the union of the Uses along path, root first, each node
-// once in the order first named.
+// uses returns the union of the nodes declared with Use along path, root
+// first, each node once in the order first declared.
 func uses(path []*Command) []graph.Ref {
 	var refs []graph.Ref
 	for _, cmd := range path {
-		for _, r := range cmd.Uses {
+		for _, r := range cmd.uses {
 			if !slices.Contains(refs, r) {
 				refs = append(refs, r)
 			}

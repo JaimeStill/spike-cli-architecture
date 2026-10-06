@@ -104,7 +104,7 @@ func recordingApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
 	return a
 }
 
-func TestRun_BuildsNothingWithoutALeafThatUses(t *testing.T) {
+func TestRun_BuildsNothingWithoutALeafThatDeclaresNodes(t *testing.T) {
 	tests := []struct {
 		name     string
 		args     []string

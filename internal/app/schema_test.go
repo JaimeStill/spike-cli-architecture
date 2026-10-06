@@ -14,8 +14,8 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
-// The schema group's Uses, driven through App.Run. The stack-backed tests
-// are in schema_integration_test.go.
+// The nodes the schema group declares with Use, driven through App.Run.
+// The stack-backed tests are in schema_integration_test.go.
 
 // schemaVerbs are the schema group's verbs, each as a run that reaches its
 // body.
@@ -37,9 +37,9 @@ func TestSchema_VerbsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
 			// The real migrator, database, and database configuration
 			// constructors run, each recorded; none does I/O. The lifecycle
 			// configuration, the Build's last root, keeps its failing
-			// recorder, so the Build runs every constructor the verb's Uses
-			// reach and stops before anything starts: a store or storage
-			// configuration the Uses reached would be recorded.
+			// recorder, so the Build runs every constructor the nodes the
+			// verb's path declares reach and stops before anything starts: a
+			// store or storage configuration they reached would be recorded.
 			g, n := a.Graph(), a.Nodes()
 			g.Replace(n.Migrator, func(s *graph.Scope) (*schema.Client, error) {
 				r.record("migrator")

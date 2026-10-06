@@ -15,17 +15,16 @@ import (
 
 // Commands builds the schema command with its status, up, down, and reset
 // subcommands over client, the composition root's node for the [Client].
-// The group's Uses names client, and every subcommand inherits it, so the
-// dispatcher builds and starts the client's dependencies before a verb's
-// body runs and shuts them down after; the body reads the client from the
-// Invocation's System. Every subcommand takes no arguments.
+// The group declares client with Use, and every subcommand inherits it, so
+// the dispatcher builds and starts the client's dependencies before a
+// verb's body runs and shuts them down after; the body reads the client
+// from the Invocation's System. Every subcommand takes no arguments.
 func Commands(client *graph.Node[*Client]) *cli.Command {
 	g := group{client: client}
 	return (&cli.Command{
 		Name:    "schema",
 		Summary: "Report, apply, revert, and reset the two migration sets",
-		Uses:    []graph.Ref{client},
-	}).Add(
+	}).Use(client).Add(
 		g.status(),
 		g.leaf("up", "Apply every pending migration, blobfs's set first and then the app's",
 			(*Client).Up, "schema up: both sets at head"),

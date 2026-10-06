@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"unicode"
 
@@ -17,7 +18,8 @@ import (
 // leaf: it parses its flags and runs.
 //
 // Set the exported fields in a composite literal, then attach subcommands
-// with [Command.Add] and define flags on [Command.Flags].
+// with [Command.Add], declare graph dependencies with [Command.Use], and
+// define flags on [Command.Flags].
 type Command struct {
 	// Name is the word that selects the command under its parent. For the
 	// root it is the program name shown in usage lines.
@@ -52,20 +54,13 @@ type Command struct {
 	// dispatched.
 	PreRun func(ctx context.Context, inv *Invocation) error
 
-	// Uses names the graph nodes the command needs. A leaf needs the union
-	// of the Uses along its path, from the root to itself, so a parent's
-	// Uses is inherited by every leaf below it, and a node named at several
-	// levels counts once. [Run] builds that union and runs the leaf under
-	// it, with [Invocation].System set. Uses anywhere in a tree requires
-	// Run's [WithGraph] option.
-	Uses []graph.Ref
-
 	flags     *flag.FlagSet
 	inherited map[string]bool // names of the root flags shared into flags
 	parent    *Command
 	children  []*Command
-	required  []string   // flag names from Require, in order
-	exclusive [][]string // flag groups from Exclusive, in order
+	required  []string    // flag names from Require, in order
+	exclusive [][]string  // flag groups from Exclusive, in order
+	uses      []graph.Ref // graph nodes from Use, in order
 }
 
 // Invocation is what a running command receives: its positional arguments
@@ -78,9 +73,10 @@ type Invocation struct {
 	Stdout io.Writer
 	Stderr io.Writer
 
-	// System is the System built for the leaf's Uses, set when the leaf's
-	// path has any; it is nil for a leaf whose path has none, and while
-	// the root's PreRun runs, since PreRun runs before the Build.
+	// System is the System built for the nodes the leaf's path declares
+	// with [Command.Use], set when the path declares any; it is nil for a
+	// leaf whose path declares none, and while the root's PreRun runs,
+	// since PreRun runs before the Build.
 	System *graph.System
 
 	changed map[string]bool
@@ -134,6 +130,38 @@ func (c *Command) Add(subs ...*Command) *Command {
 		c.children = append(c.children, sub)
 	}
 	return c
+}
+
+// Use declares the graph nodes the command needs, appended to any already
+// declared; it returns the command, so it chains like Add. A leaf needs the
+// union of the nodes declared along its path, from the root to itself, so a
+// parent's nodes are inherited by every leaf below it, and a node declared
+// at several levels counts once. [Run] builds that union and runs the leaf
+// under it, with [Invocation].System set.
+//
+// Use with no refs declares nothing, as Require with no names requires
+// nothing. A nil ref panics here, as Add's wiring mistakes do, since nothing
+// declared later can make it valid. Use anywhere in a tree requires Run's
+// [WithGraph] option, which is checked when the tree is dispatched and
+// panics then, whichever command is selected.
+func (c *Command) Use(refs ...graph.Ref) *Command {
+	for _, r := range refs {
+		if isNilRef(r) {
+			panic(fmt.Sprintf("cli: %s: Use of a nil node", c.path()))
+		}
+	}
+	c.uses = append(c.uses, refs...)
+	return c
+}
+
+// isNilRef reports whether r is nil, either an untyped nil or a nil
+// *graph.Node, the only type that implements graph.Ref.
+func isNilRef(r graph.Ref) bool {
+	if r == nil {
+		return true
+	}
+	v := reflect.ValueOf(r)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 // child returns the subcommand of c named name, or nil.

@@ -73,12 +73,12 @@ func (f *fake) Shutdown(context.Context) error {
 	return f.stopErr
 }
 
-// usesTree is a test tree with a graph: prog { data { get, put }, plain }.
-// data uses db; get adds store, which uses db, and names db again; put adds
-// nothing; plain and the root use nothing. get takes exactly one argument,
+// useTree is a test tree with a graph: prog { data { get, put }, plain }.
+// data declares db; get adds store, which uses db, and names db again; put adds
+// nothing; plain and the root declare nothing. get takes exactly one argument,
 // requires --key, and holds --a and --b exclusive. The root's PreRun, the
 // constructors, the fakes, and the leaves record to rec.
-type usesTree struct {
+type useTree struct {
 	root  *cli.Command
 	g     *graph.Graph
 	cfg   *graph.Node[lifecycle.Config]
@@ -99,8 +99,8 @@ type usesTree struct {
 	inv *cli.Invocation // what the last leaf to run received
 }
 
-func newUsesTree() *usesTree {
-	u := &usesTree{rec: &recorder{}, timeout: 5 * time.Second}
+func newUseTree() *useTree {
+	u := &useTree{rec: &recorder{}, timeout: 5 * time.Second}
 	u.g = graph.New()
 	u.cfg = u.g.Define("lifecycle", func(*graph.Scope) (lifecycle.Config, error) {
 		u.rec.add("build lifecycle")
@@ -129,13 +129,14 @@ func newUsesTree() *usesTree {
 			return u.runErr
 		}
 	}
-	get := &cli.Command{Name: "get", Args: cli.ExactArgs(1), Uses: []graph.Ref{u.store, u.db}, Run: leaf("get")}
+	// get declares store and db in two calls, so the second appends.
+	get := (&cli.Command{Name: "get", Args: cli.ExactArgs(1), Run: leaf("get")}).Use(u.store).Use(u.db)
 	get.Flags().String("key", "", "")
 	get.Flags().Bool("a", false, "")
 	get.Flags().Bool("b", false, "")
 	get.Require("key")
 	get.Exclusive("a", "b")
-	data := (&cli.Command{Name: "data", Uses: []graph.Ref{u.db}}).Add(
+	data := (&cli.Command{Name: "data"}).Use(u.db).Add(
 		get,
 		&cli.Command{Name: "put", Run: leaf("put")},
 	)
@@ -151,14 +152,14 @@ func newUsesTree() *usesTree {
 }
 
 // run dispatches args over the tree with its graph, under ctx.
-func (u *usesTree) run(ctx context.Context, args ...string) result {
+func (u *useTree) run(ctx context.Context, args ...string) result {
 	var stdout, stderr bytes.Buffer
 	code := cli.Run(ctx, u.root, args, &stdout, &stderr, cli.WithGraph(u.g, u.cfg))
 	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
 }
 
 // builds returns how many constructors ran.
-func (u *usesTree) builds() int {
+func (u *useTree) builds() int {
 	n := 0
 	for _, e := range u.rec.list() {
 		if strings.HasPrefix(e, "build ") {
@@ -168,8 +169,8 @@ func (u *usesTree) builds() int {
 	return n
 }
 
-func TestUses_BuildsAndRunsTheLeafUnderALifecycle(t *testing.T) {
-	u := newUsesTree()
+func TestUse_BuildsAndRunsTheLeafUnderALifecycle(t *testing.T) {
+	u := newUseTree()
 	r := u.run(context.Background(), "data", "get", "--key", "k", "x")
 	if r.code != process.ExitOK {
 		t.Fatalf("code = %d, want %d; stderr %q", r.code, process.ExitOK, r.stderr)
@@ -193,8 +194,8 @@ func TestUses_BuildsAndRunsTheLeafUnderALifecycle(t *testing.T) {
 	}
 }
 
-func TestUses_InheritedFromTheParent(t *testing.T) {
-	u := newUsesTree()
+func TestUse_InheritedFromTheParent(t *testing.T) {
+	u := newUseTree()
 	r := u.run(context.Background(), "data", "put")
 	if r.code != process.ExitOK {
 		t.Fatalf("code = %d, want %d; stderr %q", r.code, process.ExitOK, r.stderr)
@@ -211,8 +212,8 @@ func TestUses_InheritedFromTheParent(t *testing.T) {
 	}
 }
 
-func TestUses_NodeNamedTwiceIsBuiltOnce(t *testing.T) {
-	u := newUsesTree()
+func TestUse_NodeNamedTwiceIsBuiltOnce(t *testing.T) {
+	u := newUseTree()
 	u.run(context.Background(), "data", "get", "--key", "k", "x")
 	if n := u.rec.count("build db"); n != 1 {
 		t.Errorf("db built %d times, want 1", n)
@@ -222,8 +223,8 @@ func TestUses_NodeNamedTwiceIsBuiltOnce(t *testing.T) {
 	}
 }
 
-func TestUses_NoneRunsWithoutABuild(t *testing.T) {
-	u := newUsesTree()
+func TestUse_NoneRunsWithoutABuild(t *testing.T) {
+	u := newUseTree()
 	r := u.run(context.Background(), "plain")
 	if r.code != process.ExitOK {
 		t.Fatalf("code = %d, want %d; stderr %q", r.code, process.ExitOK, r.stderr)
@@ -232,11 +233,11 @@ func TestUses_NoneRunsWithoutABuild(t *testing.T) {
 		t.Errorf("events = %q, want %q", got, want)
 	}
 	if u.inv.System != nil {
-		t.Error("Invocation.System is set for a leaf with no Uses")
+		t.Error("Invocation.System is set for a leaf whose path declares no nodes")
 	}
 }
 
-func TestUses_BuildsNothingWhenTheDispatchEndsEarly(t *testing.T) {
+func TestUse_BuildsNothingWhenTheDispatchEndsEarly(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    []string
@@ -256,7 +257,7 @@ func TestUses_BuildsNothingWhenTheDispatchEndsEarly(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			u := newUsesTree()
+			u := newUseTree()
 			u.hookErr = tt.hookErr
 			r := u.run(context.Background(), tt.args...)
 			if r.code != tt.code {
@@ -269,41 +270,41 @@ func TestUses_BuildsNothingWhenTheDispatchEndsEarly(t *testing.T) {
 	}
 }
 
-func TestUses_FailuresReportedOnce(t *testing.T) {
+func TestUse_FailuresReportedOnce(t *testing.T) {
 	tests := []struct {
 		name   string
-		set    func(u *usesTree)
+		set    func(u *useTree)
 		err    string // the reported error
 		events []string
 	}{
 		{
 			"build error",
-			func(u *usesTree) { u.buildErr = errors.New("no store") },
+			func(u *useTree) { u.buildErr = errors.New("no store") },
 			"store: no store",
 			[]string{"prerun", "build db", "build store"},
 		},
 		{
 			"start error",
-			func(u *usesTree) { u.startErr = errors.New("store down") },
+			func(u *useTree) { u.startErr = errors.New("store down") },
 			"store: store down",
 			[]string{"prerun", "build db", "build store", "build lifecycle", "start db", "start store", "stop store", "stop db"},
 		},
 		{
 			"body error",
-			func(u *usesTree) { u.runErr = errors.New("get failed") },
+			func(u *useTree) { u.runErr = errors.New("get failed") },
 			"get failed",
 			[]string{"prerun", "build db", "build store", "build lifecycle", "start db", "start store", "run get", "stop store", "stop db"},
 		},
 		{
 			"shutdown error",
-			func(u *usesTree) { u.stopErr = errors.New("store stuck") },
+			func(u *useTree) { u.stopErr = errors.New("store stuck") },
 			"shutdown: store: store stuck",
 			[]string{"prerun", "build db", "build store", "build lifecycle", "start db", "start store", "run get", "stop store", "stop db"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			u := newUsesTree()
+			u := newUseTree()
 			tt.set(u)
 			r := u.run(context.Background(), "data", "get", "--key", "k", "x")
 			if r.code != process.ExitFailure {
@@ -319,8 +320,8 @@ func TestUses_FailuresReportedOnce(t *testing.T) {
 	}
 }
 
-func TestUses_ShutsDownWhenTheContextEndsMidBody(t *testing.T) {
-	u := newUsesTree()
+func TestUse_ShutsDownWhenTheContextEndsMidBody(t *testing.T) {
+	u := newUseTree()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	u.body = func(ctx context.Context) error {
@@ -342,8 +343,8 @@ func TestUses_ShutsDownWhenTheContextEndsMidBody(t *testing.T) {
 	}
 }
 
-func TestUses_ShutdownTimeoutComesFromTheConfigNode(t *testing.T) {
-	u := newUsesTree()
+func TestUse_ShutdownTimeoutComesFromTheConfigNode(t *testing.T) {
+	u := newUseTree()
 	u.timeout = 20 * time.Millisecond
 	u.block = make(chan struct{})
 	t.Cleanup(func() { close(u.block) })
@@ -361,21 +362,21 @@ func TestUses_ShutdownTimeoutComesFromTheConfigNode(t *testing.T) {
 	}
 }
 
-func TestUses_PanicsWithoutWithGraph(t *testing.T) {
+func TestUse_PanicsWithoutWithGraph(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
 	}{
-		{"leaf with Uses", []string{"data", "get", "--key", "k", "x"}},
-		{"leaf without Uses", []string{"plain"}},
+		{"leaf that declares nodes", []string{"data", "get", "--key", "k", "x"}},
+		{"leaf that declares none", []string{"plain"}},
 		{"help", []string{"--help"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			u := newUsesTree()
+			u := newUseTree()
 			defer func() {
 				r := recover()
-				want := "cli: prog data: Uses set but Run has no WithGraph option"
+				want := "cli: prog data: Use declared but Run has no WithGraph option"
 				if r != want {
 					t.Errorf("panic = %v, want %q", r, want)
 				}
@@ -389,7 +390,7 @@ func TestUses_PanicsWithoutWithGraph(t *testing.T) {
 }
 
 func TestWithGraph_PanicsOnNil(t *testing.T) {
-	u := newUsesTree()
+	u := newUseTree()
 	for name, call := range map[string]func(){
 		"nil graph":  func() { cli.WithGraph(nil, u.cfg) },
 		"nil config": func() { cli.WithGraph(u.g, nil) },
@@ -401,6 +402,47 @@ func TestWithGraph_PanicsOnNil(t *testing.T) {
 				}
 			}()
 			call()
+		})
+	}
+}
+
+func TestUse_ReturnsTheCommand(t *testing.T) {
+	u := newUseTree()
+	c := &cli.Command{Name: "c"}
+	if got := c.Use(u.db); got != c {
+		t.Errorf("Use returned %p, want the command %p", got, c)
+	}
+}
+
+func TestUse_NoRefsDeclaresNothing(t *testing.T) {
+	// A Use with no refs is accepted, as Require with no names is, and
+	// declares nothing: the tree dispatches without WithGraph.
+	root := (&cli.Command{Name: "prog"}).Add(
+		(&cli.Command{Name: "leaf", Run: func(context.Context, *cli.Invocation) error { return nil }}).Use(),
+	)
+	if r := dispatch(t, root, "leaf"); r.code != process.ExitOK {
+		t.Errorf("code = %d, want %d; stderr %q", r.code, process.ExitOK, r.stderr)
+	}
+}
+
+func TestUse_PanicsOnANilRef(t *testing.T) {
+	u := newUseTree()
+	var typed *graph.Node[*fake]
+	for name, refs := range map[string][]graph.Ref{
+		"untyped nil":         {nil},
+		"nil node":            {typed},
+		"nil after a non-nil": {u.db, typed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			leaf := &cli.Command{Name: "leaf"}
+			(&cli.Command{Name: "prog"}).Add(leaf)
+			defer func() {
+				want := "cli: prog leaf: Use of a nil node"
+				if r := recover(); r != want {
+					t.Errorf("panic = %v, want %q", r, want)
+				}
+			}()
+			leaf.Use(refs...)
 		})
 	}
 }

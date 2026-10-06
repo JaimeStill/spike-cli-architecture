@@ -13,7 +13,7 @@
 //
 // The group's boundary with the composition root is one graph node: the
 // root defines the node that constructs the Client over its database and
-// passes it to [Commands]. The group names that node in its Uses, so the
+// passes it to [Commands]. The group declares that node with Use, so the
 // dispatcher builds and starts the database before a verb's body runs and
 // shuts it down after, and each body reads the Client from the
 // Invocation's System. This package never reads configuration, names a

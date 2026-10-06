@@ -16,8 +16,8 @@ import (
 // mistake panics on the first run whatever path the user takes: a command
 // that defines a flag with a root flag's name, a parent with an Args
 // validator it would never call, a PreRun below the root, a flag
-// requirement or group the command cannot honour, or Uses on any command
-// when Run has no graph, which hasGraph reports. Sharing is idempotent,
+// requirement or group the command cannot honour, or a [Command.Use] on any
+// command when Run has no graph, which hasGraph reports. Sharing is idempotent,
 // so a tree can be dispatched more than once.
 func prepareTree(root *Command, hasGraph bool) {
 	var walk func(c *Command)
@@ -28,8 +28,8 @@ func prepareTree(root *Command, hasGraph bool) {
 		if c.PreRun != nil && c != root {
 			panic(fmt.Sprintf("cli: %s: PreRun set below the root", c.path()))
 		}
-		if len(c.Uses) > 0 && !hasGraph {
-			panic(fmt.Sprintf("cli: %s: Uses set but Run has no WithGraph option", c.path()))
+		if len(c.uses) > 0 && !hasGraph {
+			panic(fmt.Sprintf("cli: %s: Use declared but Run has no WithGraph option", c.path()))
 		}
 		c.checkWiring()
 		for _, sub := range c.children {

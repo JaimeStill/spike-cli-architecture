@@ -12,7 +12,8 @@ import (
 
 // The probe hook: tests reach an App's graph and its nodes, to Replace a
 // node's constructor with a recorder before the App runs, and its root, to
-// add a test-only command that Uses nodes no production command combines.
+// add a test-only command that declares, with Use, nodes no production
+// command combines.
 
 // Nodes is an App's graph nodes.
 type Nodes struct {
