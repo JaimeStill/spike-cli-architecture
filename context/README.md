@@ -62,13 +62,15 @@ staged composition?
   the database, the object store, and the schema migrator. It has no initializer: each command
   names its nodes in `Uses`, and the dispatcher builds and runs them.
 - **Infrastructure**: Postgres through go-database with sqlate migrations, the object store
-  through go-storage/azureblob, and the compose stack of Postgres on 5436 and Azurite on 10010.
+  through go-storage/azureblob, and the compose stack of Postgres and Azurite: the development
+  project on 5436 and 10010 (`mise run up`), and the integration project on 5437 and 10011.
 - **Domain and admin commands**: schema (package `admin/schema`, with status, up, down, and
   reset); files and bookmarks are planned.
 - **Output and scenarios**: package `output` renders a command's result as a line or a table;
   scenarios are planned.
-- **Tests**: buffer-driven app tests, fakes, and integration tests over the compose stack;
-  black-box tests over the built binary are planned.
+- **Tests**: buffer-driven app tests, fakes, and integration tests that `mise run integration`
+  runs over an isolated compose project it boots and tears down; black-box tests over the built
+  binary are planned.
 
 ## References
 
