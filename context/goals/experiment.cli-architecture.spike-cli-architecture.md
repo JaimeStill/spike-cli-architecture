@@ -1,6 +1,6 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** brief ready
+- **State:** building
 - **Task:** composition
 - **Branch:** composition
 
@@ -333,6 +333,11 @@ redirected at the session brief; slices 4/4 of the new brief · standards ✓ ·
 
 - composition: `mise run check` also lints with `--build-tags integration`, so the integration
   suite always compiles, as go-web-service's check does (architect).
+
+- composition: a command declares its dependencies with the variadic, chainable method
+  `cmd.Use(refs...) *Command` (architect, at the brief), in the style of Require, Exclusive,
+  and Add and with Scope.Use's verb; the exported `Uses` field goes and the list is unexported.
+  Inheritance along the path and the dispatch order are unchanged.
 
 ## Pending edits
 
