@@ -5,8 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unicode"
+
+	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
 // Command is one node of a command tree. A command with subcommands is a
@@ -15,7 +18,8 @@ import (
 // leaf: it parses its flags and runs.
 //
 // Set the exported fields in a composite literal, then attach subcommands
-// with [Command.Add] and define flags on [Command.Flags].
+// with [Command.Add], declare graph dependencies with [Command.Use], and
+// define flags on [Command.Flags].
 type Command struct {
 	// Name is the word that selects the command under its parent. For the
 	// root it is the program name shown in usage lines.
@@ -54,8 +58,9 @@ type Command struct {
 	inherited map[string]bool // names of the root flags shared into flags
 	parent    *Command
 	children  []*Command
-	required  []string   // flag names from Require, in order
-	exclusive [][]string // flag groups from Exclusive, in order
+	required  []string    // flag names from Require, in order
+	exclusive [][]string  // flag groups from Exclusive, in order
+	uses      []graph.Ref // graph nodes from Use, in order
 }
 
 // Invocation is what a running command receives: its positional arguments
@@ -67,6 +72,12 @@ type Invocation struct {
 	// Stdout and Stderr are the writers passed to [Run].
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// System is the System built for the nodes the leaf's path declares
+	// with [Command.Use], set when the path declares any; it is nil for a
+	// leaf whose path declares none, and while the root's PreRun runs,
+	// since PreRun runs before the Build.
+	System *graph.System
 
 	changed map[string]bool
 }
@@ -118,6 +129,29 @@ func (c *Command) Add(subs ...*Command) *Command {
 		sub.parent = c
 		c.children = append(c.children, sub)
 	}
+	return c
+}
+
+// Use declares the graph nodes the command needs, appended to any already
+// declared; it returns the command, so it chains like Add. A leaf needs the
+// union of the nodes declared along its path, from the root to itself, so a
+// parent's nodes are inherited by every leaf below it, and a node declared
+// at several levels counts once. [Run] builds that union and runs the leaf
+// under it, with [Invocation].System set.
+//
+// Use with no refs declares nothing, as Require with no names requires
+// nothing. An untyped nil ref panics here, as Add's wiring mistakes do,
+// since nothing declared later can make it valid. A nil *graph.Node is not
+// caught here: it reaches [graph.Graph.Build], which panics on it when a
+// dispatch runs a leaf at or below c, after PreRun and before any node is
+// constructed. Use anywhere in a tree requires
+// Run's [WithGraph] option, which is checked when the tree is dispatched
+// and panics then, whichever command is selected.
+func (c *Command) Use(refs ...graph.Ref) *Command {
+	if slices.Contains(refs, nil) {
+		panic(fmt.Sprintf("cli: %s: Use of a nil node", c.path()))
+	}
+	c.uses = append(c.uses, refs...)
 	return c
 }
 

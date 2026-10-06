@@ -23,7 +23,8 @@ func versionCommand() *cli.Command {
 }
 
 // moduleVersion returns the main module's version from the build info, or
-// "(devel)" when the binary carries none, as with go run or go test.
+// "(devel)" when the binary carries none, as under go test; go run reports
+// "(devel)" itself.
 func moduleVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok || info.Main.Version == "" {

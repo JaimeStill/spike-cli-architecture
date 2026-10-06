@@ -1,0 +1,98 @@
+package graph
+
+import "fmt"
+
+// Graph describes a set of nodes and their constructors. Describing is
+// inert: [Graph.Define] and [Graph.Replace] record constructors and run
+// none, and only [Graph.Build] constructs anything. A Graph is not safe for
+// concurrent use.
+type Graph struct {
+	nodes []*node
+	names map[string]bool
+	built bool
+}
+
+// New returns an empty Graph.
+func New() *Graph {
+	return &Graph{names: make(map[string]bool)}
+}
+
+// node is the untyped core of a [Node]: what a Build needs to construct it
+// without knowing its type.
+type node struct {
+	graph *Graph
+	name  string
+	// index is the node's position in definition order, the order of the
+	// nodes within one layer.
+	index int
+	// ctor is the typed constructor, wrapped to return its value as any.
+	ctor func(*Scope) (any, error)
+}
+
+// Node is one node of a [Graph], defined by [Graph.Define]: a name and a
+// constructor of a T. It is a handle, not a value; a constructor reaches
+// the value through [Scope.Use], and a program through [System.Get].
+type Node[T any] struct {
+	core *node
+}
+
+// Ref is any [Node], whatever its type: what [Graph.Build] takes as roots
+// and [Scope.After] as an ordering target. It is sealed; only *Node[T]
+// implements it.
+type Ref interface {
+	ref() *node
+}
+
+func (n *Node[T]) ref() *node {
+	if n == nil {
+		return nil
+	}
+	return n.core
+}
+
+// Name returns the name the node was defined with.
+func (n *Node[T]) Name() string { return n.core.name }
+
+// erase wraps a typed constructor to return its value as any.
+func erase[T any](ctor func(*Scope) (T, error)) func(*Scope) (any, error) {
+	return func(s *Scope) (any, error) {
+		v, err := ctor(s)
+		return v, err
+	}
+}
+
+// Define adds a node named name, constructed by ctor, and returns its
+// handle. It runs nothing: ctor runs only when a [Graph.Build] reaches the
+// node. Define panics when name is empty or already defined on g, or when
+// ctor is nil.
+func (g *Graph) Define[T any](name string, ctor func(*Scope) (T, error)) *Node[T] {
+	if name == "" {
+		panic("graph: Define with an empty name")
+	}
+	if g.names[name] {
+		panic(fmt.Sprintf("graph: Define of duplicate name %q", name))
+	}
+	if ctor == nil {
+		panic(fmt.Sprintf("graph: Define %q with a nil constructor", name))
+	}
+	g.names[name] = true
+	core := &node{graph: g, name: name, index: len(g.nodes), ctor: erase(ctor)}
+	g.nodes = append(g.nodes, core)
+	return &Node[T]{core: core}
+}
+
+// Replace swaps n's constructor for ctor, which every later Build runs in
+// its place exactly as it would a defined one. Replace panics once g has
+// run a Build, when n was defined on another Graph, or when ctor is nil.
+func (g *Graph) Replace[T any](n *Node[T], ctor func(*Scope) (T, error)) {
+	if g.built {
+		panic(fmt.Sprintf("graph: Replace of %q after Build", n.core.name))
+	}
+	if n.core.graph != g {
+		panic(fmt.Sprintf("graph: Replace of %q, a node defined on another Graph", n.core.name))
+	}
+	if ctor == nil {
+		panic(fmt.Sprintf("graph: Replace of %q with a nil constructor", n.core.name))
+	}
+	n.core.ctor = erase(ctor)
+}

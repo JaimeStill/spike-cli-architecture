@@ -6,6 +6,21 @@ jq = "1.8.2"
 [env]
 # The repository's Go modules, as directories; tasks run in each one.
 GO_MODULES = "."
+# The development stack's Postgres (`mise run up`), under blobfs's environment prefix.
+# `mise run integration` overrides the port for its isolated stack.
+# The hermetic check reads none of these: its tests clear them where an empty environment matters.
+BLOBFS_DATABASE_HOST = "127.0.0.1"
+BLOBFS_DATABASE_PORT = "5436"
+BLOBFS_DATABASE_NAME = "app"
+BLOBFS_DATABASE_USER = "app"
+BLOBFS_DATABASE_PASSWORD = "app"
+# The development stack's Azurite, path-style, with the emulator's published development account and
+# key; `mise run integration` overrides the endpoint for its isolated stack. The store's Start
+# creates the container when it is missing, so neither stack needs setup.
+BLOBFS_STORAGE_ENDPOINT = "http://127.0.0.1:10010/devstoreaccount1"
+BLOBFS_STORAGE_ACCOUNT = "devstoreaccount1"
+BLOBFS_STORAGE_KEY = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+BLOBFS_STORAGE_CONTAINER = "cliarch"
 
 [tasks.check]
 description = "Build, vet, format, fix, tidy, test, and lint every module; writes nothing"
@@ -23,12 +38,42 @@ for mod in $GO_MODULES; do
   go mod tidy -diff
   go test -race ./...
   golangci-lint run ./...
+  golangci-lint run --build-tags integration ./...
 done
 '''
 
+# The integration tier runs the same compose definition as its own project on its own ports, so
+# the development stack and its data are never touched, and tears it down with its volumes when
+# the suite ends, pass or fail. The test environment overrides the [env] defaults above, which
+# point at the development stack.
 [tasks.integration]
-description = "Run the integration tests against the compose Postgres and Azurite stack"
-run = "echo 'integration: no tests yet; the composition task adds the stack'"
+description = "Start an isolated compose stack, run the integration tests against it, and tear it down"
+run = '''
+set -eu
+export GOWORK=off
+export COMPOSE_PROJECT_NAME=spike-cli-architecture-integration POSTGRES_PORT=5437 AZURITE_BLOB_PORT=10011
+export BLOBFS_DATABASE_PORT="$POSTGRES_PORT"
+export BLOBFS_STORAGE_ENDPOINT="http://127.0.0.1:$AZURITE_BLOB_PORT/devstoreaccount1"
+trap 'cd "$MISE_PROJECT_ROOT" && docker compose down -v' EXIT
+docker compose up -d --wait
+for mod in $GO_MODULES; do
+  echo "integration: $mod"
+  cd "$MISE_PROJECT_ROOT/$mod"
+  go test -race -tags integration -count=1 ./...
+done
+'''
+
+[tasks.up]
+description = "Start the development Postgres and Azurite and wait for them to be healthy"
+run = "docker compose up -d --wait"
+
+[tasks.down]
+description = "Stop the development services (keep their data)"
+run = "docker compose down"
+
+[tasks.reset]
+description = "Stop the development services and drop their data"
+run = "docker compose down -v"
 
 [tasks.currency]
 description = "Report every requirement, Go version, tool, and action pin behind its latest; writes nothing"
