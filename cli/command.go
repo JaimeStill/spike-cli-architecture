@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"unicode"
+
+	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
 // Command is one node of a command tree. A command with subcommands is a
@@ -50,6 +52,17 @@ type Command struct {
 	// dispatched.
 	PreRun func(ctx context.Context, inv *Invocation) error
 
+	// Uses names the graph nodes the command needs. A leaf needs the union
+	// of the Uses along its path, from the root to itself, so a parent's
+	// Uses is inherited by every leaf below it, and a node named at several
+	// levels counts once. When that union is not empty, a dispatch to the
+	// leaf builds it, with the lifecycle configuration node, from the graph
+	// [WithGraph] gave Run, starts what it built, runs the leaf with
+	// [Invocation].System set, and shuts it down. A tree with any Uses
+	// dispatched by a Run without WithGraph panics at the start of the
+	// dispatch.
+	Uses []graph.Ref
+
 	flags     *flag.FlagSet
 	inherited map[string]bool // names of the root flags shared into flags
 	parent    *Command
@@ -67,6 +80,11 @@ type Invocation struct {
 	// Stdout and Stderr are the writers passed to [Run].
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// System is the System built for the leaf's Uses, set when the leaf's
+	// path has any; it is nil for a leaf whose path has none, and while
+	// the root's PreRun runs, since PreRun runs before the Build.
+	System *graph.System
 
 	changed map[string]bool
 }
