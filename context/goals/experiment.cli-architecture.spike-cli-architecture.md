@@ -151,7 +151,9 @@ redirected at the session brief; slices 4/4 of the new brief · standards ✓ ·
 
 ## Decisions
 
-- setup: evidence is the eight items in `context/README.md`, "The evidence".
+- setup: evidence is the eight items in `context/README.md`, "The evidence". *Composition adds a
+  ninth (architect): the graph expresses go-web-service's stage table, and the CLI and a
+  service run on one Coordinator.*
 - setup: kind code; vision and six-area capability map as in `context/README.md`.
 - setup: `mise run check` is hermetic, copied from go-core; the dispatcher task adds the import
   check holding the dispatcher to the standard library and go-core. Postgres and Azurite tests
@@ -328,6 +330,9 @@ redirected at the session brief; slices 4/4 of the new brief · standards ✓ ·
   go-web-service's does and tests-and-docs.md states; the brief had followed spike-blobfs and
   run against the `mise run up` stack. Project spike-cli-architecture-integration on 5437 and
   10011; compose files drop container_name so the project scopes names.
+
+- composition: `mise run check` also lints with `--build-tags integration`, so the integration
+  suite always compiles, as go-web-service's check does (architect).
 
 ## Pending edits
 

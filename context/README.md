@@ -43,6 +43,8 @@ staged composition?
    over buffers, and domain tests run over go-storage's `storagetest.Fake` with no network.
 8. A scenario package with `list` mounts beside the direct commands and declares its
    dependencies like any other command.
+9. The dependency graph expresses go-web-service's stage table, and the CLI and a service run
+   on one Coordinator.
 
 ## Capabilities
 
