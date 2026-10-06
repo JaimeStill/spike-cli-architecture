@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/standards-lab/blobfs"
+	"github.com/standards-lab/go-core/process/processtest"
 
 	"github.com/JaimeStill/spike-cli-architecture/internal/livetest"
 )
@@ -76,15 +77,25 @@ func run(t *testing.T, tg target, args ...string) (stdout, stderr string, code i
 	return runIn(t, tg, "", args...)
 }
 
-// runIn is run with stdin piped to the binary's standard input.
+// runIn is run with stdin piped to the binary's standard input. A run that
+// has not exited within processtest.Failsafe is a stall: it is
+// interrupted, killed if it has not exited within Failsafe more, and fails
+// the test with its output.
 func runIn(t *testing.T, tg target, stdin string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	cmd := exec.Command(binary, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), processtest.Failsafe)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = processtest.Failsafe
 	cmd.Env = append(append(os.Environ(), "BLOBFS_DATABASE_NAME="+tg.database, "BLOBFS_STORAGE_CONTAINER="+tg.container), tg.env...)
 	cmd.Stdin = strings.NewReader(stdin)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		t.Fatalf("blobfs %s did not exit within %s:\nstdout: %s\nstderr: %s", strings.Join(args, " "), processtest.Failsafe, out.String(), errOut.String())
+	}
 	var exit *exec.ExitError
 	switch {
 	case err == nil:
