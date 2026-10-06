@@ -9,7 +9,6 @@ import (
 
 	"github.com/standards-lab/go-core/process"
 	godatabase "github.com/standards-lab/go-database"
-	"github.com/standards-lab/go-storage"
 
 	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
@@ -31,19 +30,30 @@ func TestSchema_VerbsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
 	for _, args := range schemaVerbs {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			clearEnv(t)
+			t.Setenv(godatabase.NewEnv("BLOBFS").Name, "app")
 			r := &recorder{}
 			var out, errOut bytes.Buffer
 			a := recordingApp(r, &out, &errOut)
-			// The real migrator and database constructors run, each recorded,
-			// and the database configuration's recorder stops the Build: the
-			// events show every node the verb reaches.
-			a.Graph().Replace(a.Nodes().Migrator, func(s *graph.Scope) (*schema.Client, error) {
+			// The real migrator, database, and database configuration
+			// constructors run, each recorded; none does I/O. The lifecycle
+			// configuration, the Build's last root, keeps its failing
+			// recorder, so the Build runs every constructor the verb's Uses
+			// reach and stops before anything starts: a store or storage
+			// configuration the Uses reached would be recorded.
+			g, n := a.Graph(), a.Nodes()
+			g.Replace(n.Migrator, func(s *graph.Scope) (*schema.Client, error) {
 				r.record("migrator")
 				return a.NewMigrator(s)
 			})
-			a.Graph().Replace(a.Nodes().Database, func(s *graph.Scope) (*godatabase.DB, error) {
+			g.Replace(n.Database, func(s *graph.Scope) (*godatabase.DB, error) {
 				r.record("database")
 				return a.NewDatabase(s)
+			})
+			g.Replace(n.DatabaseConfig, func(*graph.Scope) (godatabase.Config, error) {
+				r.record("database config")
+				var cfg godatabase.Config
+				err := cfg.Finalize("BLOBFS")
+				return cfg, err
 			})
 
 			code := a.Run(context.Background(), args)
@@ -51,50 +61,38 @@ func TestSchema_VerbsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
 			if code != process.ExitFailure {
 				t.Errorf("code = %d, want %d", code, process.ExitFailure)
 			}
-			want := "blobfs " + strings.Join(args[:2], " ") + ": database config: recorded\n"
+			want := "blobfs " + strings.Join(args[:2], " ") + ": lifecycle config: recorded\n"
 			if errOut.String() != want {
 				t.Errorf("stderr = %q, want %q", errOut.String(), want)
 			}
-			if got, want := r.log(), []string{"migrator", "database", "database config"}; !slices.Equal(got, want) {
-				t.Errorf("constructors run = %q, want %q", got, want)
+			wantRun := []string{"migrator", "database", "database config", "lifecycle config"}
+			if got := r.log(); !slices.Equal(got, wantRun) {
+				t.Errorf("constructors run = %q, want %q", got, wantRun)
 			}
 		})
 	}
 }
 
-func TestSchema_FailsOnlyOnTheDatabaseConfig(t *testing.T) {
-	// An empty environment leaves the database name unset. A storage value
-	// its Finalize rejects changes nothing: no schema verb reads it.
-	tests := []struct {
-		name string
-		env  map[string]string
-	}{
-		{"empty environment", nil},
-		{"invalid storage value", map[string]string{storage.NewEnv("BLOBFS").MaxObjectSize: "not-a-size"}},
-	}
-	for _, tt := range tests {
-		for _, args := range schemaVerbs {
-			t.Run(tt.name+"/"+strings.Join(args, " "), func(t *testing.T) {
-				clearEnv(t)
-				for k, v := range tt.env {
-					t.Setenv(k, v)
-				}
+func TestSchema_FailsOnTheDatabaseConfig(t *testing.T) {
+	// An empty environment leaves the database name unset.
+	for _, args := range schemaVerbs {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			clearEnv(t)
 
-				code, stdout, stderr := run(t, args...)
+			code, stdout, stderr := run(t, args...)
 
-				if code != process.ExitFailure {
-					t.Errorf("code = %d, want %d", code, process.ExitFailure)
-				}
-				// One report, under the verb's path.
-				want := "blobfs " + strings.Join(args[:2], " ") + ": database config: database name required\n"
-				if stderr != want {
-					t.Errorf("stderr = %q, want %q", stderr, want)
-				}
-				if stdout != "" {
-					t.Errorf("stdout = %q, want empty", stdout)
-				}
-			})
-		}
+			if code != process.ExitFailure {
+				t.Errorf("code = %d, want %d", code, process.ExitFailure)
+			}
+			// One report, under the verb's path.
+			want := "blobfs " + strings.Join(args[:2], " ") + ": database config: database name required\n"
+			if stderr != want {
+				t.Errorf("stderr = %q, want %q", stderr, want)
+			}
+			if stdout != "" {
+				t.Errorf("stdout = %q, want empty", stdout)
+			}
+		})
 	}
 }
 
