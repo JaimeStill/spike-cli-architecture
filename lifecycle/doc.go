@@ -1,64 +1,100 @@
-// Package lifecycle brings dependencies up in phases and unwinds them in
-// reverse. A one-shot CLI run brings up only what its command needs, on
-// demand, and unwinds it when the command returns; a long-running service
-// does the same in stages, and unwinds them when it drains.
+// Package lifecycle runs a built [graph.System]. A [Coordinator] starts the
+// System's subsystems layer by layer, runs a function or serves until its
+// context ends, and shuts them down in reverse. Nothing is registered: the
+// subsystems are inferred from the System's dependencies, and the layers come
+// from the graph.
 //
 // The package exports:
 //
-//   - [Step], one participant: a name for its errors, and optional Start and
-//     Stop
-//   - [Stack], which records the phases that started and unwinds them; the
-//     zero value is ready to use
-//   - [Stack.Start], which runs one phase of steps concurrently and pushes
-//     the steps that started
-//   - [Stack.Unwind], which stops every pushed phase, the last first, under
-//     one bounded context
+//   - [Subsystem], the interface a dependency's value implements to take
+//     part in the lifecycle
+//   - [Config], the Coordinator's configuration, and [Config.Finalize],
+//     which applies its default and environment override
+//   - [Coordinator], which runs one System once, and [New], which returns
+//     one
+//   - [Coordinator.Exec], which starts the System, runs a function, and
+//     shuts down: the one-shot form a CLI command uses
+//   - [Coordinator.Run], which starts the System, serves until its context
+//     ends, and shuts down: the long-running form a service uses
+//   - [Step] and [Stack], the phase-by-phase engine internal/app still uses;
+//     they are not part of the proposed API and go once it moves onto the
+//     Coordinator
 //
-// # Phases
+// # Participation
 //
-// Each [Stack.Start] call is one phase. Its steps start concurrently under a
-// child of the caller's context that the first failure cancels, so the
-// phase's siblings can stop early; the cancellations they return in
-// consequence are dropped. Only the steps that started are pushed, so a Stop
-// never has to tolerate a dependency that never came up. A failed Start
-// leaves the earlier phases and the phase's started steps on the stack for
-// the caller to unwind.
+// A [graph.Dependency] takes part when its Value implements [Subsystem], or
+// when its constructor recorded a hook. An OnStart or OnShutdown hook
+// overrides the matching method, and a hook with no method makes the
+// dependency a start-only or stop-only participant. A dependency with
+// neither takes no part.
+//
+// # Startup
+//
+// The layers start lowest first, as [graph.System.Layers] orders them. A
+// layer's participants start concurrently under a child of the caller's
+// context, and the next layer starts only once the whole layer has. The
+// first start failure cancels the rest of its layer; the context.Canceled
+// errors its siblings return in consequence are dropped, and no higher layer
+// starts. Start errors are labelled with the dependency's name, as in
+// "database: <err>".
+//
+// A context that ends before or during startup stops it: no further layer
+// starts. Run treats that as the clean stop it treats the context's end
+// after startup as. Exec returns the cancellation, since its function never
+// ran.
+//
+// # Shutdown
+//
+// Shutdown runs on every path: after Exec's function returns, whatever its
+// error, after Run's context ends, and after a startup failure or
+// cancellation. It shuts down every participant of every layer that began
+// to start, the last layer first, each layer concurrently. That includes a
+// participant whose Start failed, so a dependency constructed but not
+// started leaks nothing; the start error stays the error reported.
+//
+// Shutdown runs under one context derived from context.Background, so it
+// keeps its budget whatever became of the caller's, bounded by
+// [Config].ShutdownTimeout. A layer that outlives the deadline adds one
+// error wrapping context.DeadlineExceeded; its unfinished shutdowns continue
+// on the expired context and their late errors are dropped, and the
+// remaining layers are still attempted. Shutdown errors are labelled with the
+// name, joined, prefixed "shutdown: ", and joined with Exec's or Run's
+// result, so a failed shutdown fails an otherwise clean run.
 //
 // # Mapping go-core's Coordinator
 //
-// The Stack is a candidate for go-core, where lifecycle.Coordinator would be
-// rebuilt on it phase by phase:
+// The package is a candidate to replace go-core's lifecycle.Coordinator:
 //
-//   - OnShutdown hooks are pushed first, as one phase of stop-only steps, so
-//     they are the last phase Unwind runs, and they still run when startup
-//     fails
-//   - OnStartup hooks, then each numbered stage in ascending order, then
-//     StageRoot, become one Start call each, with start-only steps for hooks
-//     and a step per service carrying its Start and Shutdown
-//   - the drain becomes Unwind(drainTimeout), under the existing "shutdown:"
-//     wrap
-//   - the Coordinator keeps the "startup:" wrap and its signal-during-startup
-//     check, applied to the errors Start returns unwrapped
-//   - the state machine, Ready and Checks, OnReady, Monitor, and the
-//     registration panics stay in the Coordinator
+//   - Add(Service{Stage}) and the numbered stages give way to the System's
+//     computed layers
+//   - the Service struct gives way to the [Subsystem] interface and the
+//     graph's hooks
+//   - Service.Check gives way to readiness inferred, at promotion, from a
+//     value implementing go-core's ReadinessChecker
+//   - Run keeps its serve-until-signal and its shutdown
+//   - OnReady, Monitor, and Ready and Checks stay on the Coordinator at
+//     promotion; the spike does not build them
+//   - Run's drain timeout becomes [Config].ShutdownTimeout
+//   - Exec is new
 //
-// The one point needing care: Start cancels only its own child context, so
-// the Coordinator must still cancel the run context before it drains, as
-// go-core's Coordinator does, so no drain runs with the run context live. Only go-core's black-box lifecycle tests can prove the rebuild keeps
-// it.
+// The break at promotion: Add, Service, the stages, and Run's timeout
+// parameter go, and shutdown now also runs for a subsystem whose Start
+// failed, which loosens go-core's contract that Shutdown is called only on a
+// subsystem that started.
 //
 // # Promotion
 //
-// The Stack is promoted to go-core when:
+// The package is promoted to go-core when:
 //
-//   - its API stays standard-library-only and unchanged through the spike's
+//   - its API, Step and Stack aside, stays unchanged through the spike's
 //     files and validate tasks
-//   - the spike's CLI composition root uses it for every dependency
-//   - go-core's Coordinator is rebuilt on it with its existing black-box
-//     tests passing unchanged
+//   - the spike's CLI and a graph shaped like go-web-service's both run on
+//     it
+//   - go-core's Coordinator, rebuilt on it, passes its black-box tests,
+//     adapted only for the break above
 //
 // Promotion follows the experiment's completion and precedes the build of
 // the cli goal.
 //
-// The package imports only the standard library.
+// The package imports the standard library, go-core, and graph.
 package lifecycle

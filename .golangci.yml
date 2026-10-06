@@ -35,14 +35,18 @@ linters:
             - github.com/standards-lab/go-core/
             - github.com/JaimeStill/spike-cli-architecture/cli$
         # Package lifecycle is shaped to be promoted into go-core, so it
-        # depends on the standard library alone; its tests add lifecycle
-        # itself, anchored like cli above.
+        # depends on the standard library, go-core, and graph, the package
+        # it runs; its tests add lifecycle itself. Each is anchored like cli
+        # above.
         lifecycle:
           list-mode: strict
           files:
             - "**/lifecycle/*.go"
           allow:
             - $gostd
+            - github.com/standards-lab/go-core$
+            - github.com/standards-lab/go-core/
+            - github.com/JaimeStill/spike-cli-architecture/graph$
             - github.com/JaimeStill/spike-cli-architecture/lifecycle$
         # Package graph is shaped to be promoted into go-core, like
         # lifecycle, so it depends on the standard library alone; its tests
