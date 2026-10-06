@@ -1,8 +1,6 @@
 package graph
 
-import (
-	"fmt"
-)
+import "fmt"
 
 // Graph describes a set of nodes and their constructors. Describing is
 // inert: [Graph.Define] and [Graph.Replace] record constructors and run

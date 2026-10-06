@@ -50,7 +50,6 @@ func New(sys *graph.System, cfg Config) *Coordinator {
 func (c *Coordinator) Exec(ctx context.Context, fn func(context.Context) error) error {
 	c.claim("Exec")
 	var e engine
-	e.unwindFailed = true
 	if errs := c.startup(ctx, &e); len(errs) > 0 {
 		return errors.Join(errors.Join(errs...), c.shutdown(&e))
 	}
@@ -66,7 +65,6 @@ func (c *Coordinator) Exec(ctx context.Context, fn func(context.Context) error) 
 func (c *Coordinator) Run(ctx context.Context) error {
 	c.claim("Run")
 	var e engine
-	e.unwindFailed = true
 	if errs := c.startup(ctx, &e); len(errs) > 0 {
 		if !cutShort(ctx, errs) {
 			return errors.Join(errors.Join(errs...), c.shutdown(&e))

@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -88,7 +89,7 @@ func (b *build) resolve(r Ref, op string) *node {
 func (b *build) construct(n *node) error {
 	if e, ok := b.entries[n]; ok {
 		if e.building {
-			panic("graph: dependency cycle: " + b.cycle(n))
+			panic("graph: dependency cycle: " + cyclePath(b.stack, n))
 		}
 		return nil
 	}
@@ -109,19 +110,12 @@ func (b *build) construct(n *node) error {
 	return nil
 }
 
-// cycle names the path from n's construction back to n.
-func (b *build) cycle(n *node) string {
-	start := 0
-	for i, m := range b.stack {
-		if m == n {
-			start = i
-			break
-		}
-	}
-	names := make([]string, 0, len(b.stack)-start+1)
-	for _, m := range b.stack[start:] {
+// cyclePath names the cycle that reaching n again closes, from n's place in
+// path, the chain of nodes being visited outermost first, back to n.
+func cyclePath(path []*node, n *node) string {
+	names := make([]string, 0, len(path)+1)
+	for _, m := range path[max(slices.Index(path, n), 0):] {
 		names = append(names, m.name)
 	}
-	names = append(names, n.name)
-	return strings.Join(names, " -> ")
+	return strings.Join(append(names, n.name), " -> ")
 }

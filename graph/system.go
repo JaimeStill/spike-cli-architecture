@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 )
 
 // System is what one [Graph.Build] constructed: every node the roots
@@ -27,10 +26,7 @@ type Dependency struct {
 // Get returns n's value in s. It panics when n is not in s: a node the
 // roots did not reach, or one defined on another Graph.
 func (s *System) Get[T any](n *Node[T]) T {
-	var core *node
-	if n != nil {
-		core = n.core
-	}
+	core := n.ref()
 	e, ok := s.entries[core]
 	if !ok {
 		name := "<nil>"
@@ -77,13 +73,7 @@ func (b *build) system() *System {
 			return l
 		}
 		if visiting[n] {
-			i := slices.Index(path, n)
-			names := make([]string, 0, len(path)-i+1)
-			for _, m := range path[i:] {
-				names = append(names, m.name)
-			}
-			names = append(names, n.name)
-			panic("graph: dependency cycle: " + strings.Join(names, " -> "))
+			panic("graph: dependency cycle: " + cyclePath(path, n))
 		}
 		visiting[n] = true
 		path = append(path, n)

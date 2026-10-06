@@ -58,10 +58,8 @@ type finalizer[T any] interface {
 // alone, and validates them.
 func finalized[T any, P finalizer[T]](*graph.Scope) (T, error) {
 	var cfg T
-	if err := P(&cfg).Finalize(envPrefix); err != nil {
-		return cfg, err
-	}
-	return cfg, nil
+	err := P(&cfg).Finalize(envPrefix)
+	return cfg, err
 }
 
 // newDatabase constructs the Postgres pool from the database configuration,
