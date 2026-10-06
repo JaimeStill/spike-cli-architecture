@@ -89,6 +89,9 @@
 //     [Objects.RemoveTree]
 //   - the shapes they take and return, and [ParseRef], [ParseFilter], and
 //     [ParseSort], which read the command line's arguments and terms
+//   - [WriteContents], [WriteFileRecord], and [WriteDirectoryRecord], which
+//     write a listing and a row as ls and stat print them, so the demo's
+//     tours show a result as the command does
 //   - [ErrVerify], [ErrMoveAcrossScopes], [ErrNotAvailable], [ErrUnitDepth],
 //     [ErrNotOwned], [ErrNoCursorAtRoot], [ErrBookmarked],
 //     [ErrAlreadyBookmarked], [ErrActiveBookmark], and [ErrNoBookmark], and

@@ -127,18 +127,7 @@ func (g group) list() *cli.Command {
 			if err != nil {
 				return err
 			}
-			entries := make([]output.Entry, 0, len(c.Directories.Rows)+len(c.Files.Rows))
-			for _, d := range c.Directories.Rows {
-				entries = append(entries, output.Entry{Kind: "dir", Name: d.Name, ID: d.ID, Updated: d.UpdatedAt})
-			}
-			for _, file := range c.Files.Rows {
-				entries = append(entries, output.Entry{Kind: "file", Name: file.Name, ID: file.ID, Size: file.Size, Status: string(file.Status), Updated: file.UpdatedAt})
-			}
-			dirs, files := pageOf(l, l.After.Directories, c.Directories), pageOf(l, l.After.Files, c.Files)
-			if !f.cursors {
-				dirs.Next, files.Next = "", ""
-			}
-			return output.Listing(inv.Stdout, entries, dirs, files)
+			return WriteContents(inv.Stdout, l, c, f.cursors)
 		},
 	}
 	f.bind(cmd)
@@ -170,13 +159,13 @@ func (g group) stat() *cli.Command {
 					return err
 				}
 				if e.Kind == EntryFile {
-					return output.Record(inv.Stdout, fileRecord("", e.File))
+					return WriteFileRecord(inv.Stdout, "", e.File)
 				}
-				return output.Record(inv.Stdout, directoryRecord("", e.Directory))
+				return WriteDirectoryRecord(inv.Stdout, "", e.Directory)
 			}
 			f, err := s.Stat(ctx, ref.Path)
 			if err == nil {
-				return output.Record(inv.Stdout, fileRecord(ref.Path, f))
+				return WriteFileRecord(inv.Stdout, ref.Path, f)
 			}
 			if !errors.Is(err, blobfs.ErrNotFound) && !errors.Is(err, blobfs.ErrRootDirectory) {
 				return err
@@ -188,7 +177,7 @@ func (g group) stat() *cli.Command {
 			if dirErr != nil {
 				return dirErr
 			}
-			return output.Record(inv.Stdout, directoryRecord(ref.Path, dir))
+			return WriteDirectoryRecord(inv.Stdout, ref.Path, dir)
 		},
 	}
 }
@@ -620,8 +609,39 @@ func etagOf(f blobfs.File) string {
 	return *f.ETag
 }
 
+// WriteContents writes c, the contents l listed, as ls prints it: an entry
+// line per directory and then per file, and each half's page; with
+// cursors, the cursor that continues each half too.
+func WriteContents(w io.Writer, l Listing, c Contents, cursors bool) error {
+	entries := make([]output.Entry, 0, len(c.Directories.Rows)+len(c.Files.Rows))
+	for _, d := range c.Directories.Rows {
+		entries = append(entries, output.Entry{Kind: "dir", Name: d.Name, ID: d.ID, Updated: d.UpdatedAt})
+	}
+	for _, f := range c.Files.Rows {
+		entries = append(entries, output.Entry{Kind: "file", Name: f.Name, ID: f.ID, Size: f.Size, Status: string(f.Status), Updated: f.UpdatedAt})
+	}
+	dirs, files := pageOf(l, l.After.Directories, c.Directories), pageOf(l, l.After.Files, c.Files)
+	if !cursors {
+		dirs.Next, files.Next = "", ""
+	}
+	return output.Listing(w, entries, dirs, files)
+}
+
+// WriteFileRecord writes a file's row as stat prints it, one field per
+// line. The path line is left out when path is empty, as it is for a stat
+// by id.
+func WriteFileRecord(w io.Writer, path string, f blobfs.File) error {
+	return output.Record(w, fileRecord(path, f))
+}
+
+// WriteDirectoryRecord writes a directory's row as stat prints it, one
+// field per line. The path line is left out when path is empty.
+func WriteDirectoryRecord(w io.Writer, path string, d blobfs.Directory) error {
+	return output.Record(w, directoryRecord(path, d))
+}
+
 // fileRecord lays a file row out as the fields stat prints, in order. The
-// path line is left out when path is empty, as it is for a stat by id.
+// path line is left out when path is empty.
 func fileRecord(path string, f blobfs.File) []output.Field {
 	size, etag := "-", "-"
 	if f.Size != nil {
