@@ -2,7 +2,7 @@ package app
 
 import (
 	"github.com/standards-lab/sqlate"
-	sqlatepostgres "github.com/standards-lab/sqlate/postgres"
+	"github.com/standards-lab/sqlate/postgres"
 
 	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
@@ -29,5 +29,5 @@ func defineAdmin(g *graph.Graph, in *infrastructure) *admin {
 // client itself opens nothing.
 func (a *admin) newMigrator(s *graph.Scope) (*schema.Client, error) {
 	db := s.Use(a.in.database)
-	return schema.NewClient(sqlate.Wrap(db.Conn(), sqlatepostgres.Dialect{}), nil)
+	return schema.NewClient(sqlate.Wrap(db.Conn(), postgres.Dialect{}), nil)
 }

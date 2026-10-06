@@ -27,7 +27,7 @@ func versionCommand() *cli.Command {
 func moduleVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok || info.Main.Version == "" {
-		return "(devel)"
+		return "v0.0.0"
 	}
 	return info.Main.Version
 }

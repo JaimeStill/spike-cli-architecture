@@ -1,7 +1,7 @@
 package app
 
 import (
-	godatabase "github.com/standards-lab/go-database"
+	"github.com/standards-lab/go-database"
 	"github.com/standards-lab/go-database/postgres"
 	"github.com/standards-lab/go-storage"
 	"github.com/standards-lab/go-storage/azureblob"
@@ -21,14 +21,14 @@ const envPrefix = "BLOBFS"
 // reaches the node, so configuration is read only for a built System, never
 // in [New] and never for a run that builds nothing.
 //
-// *godatabase.DB and *storage.Store each implement lifecycle.Subsystem, a
+// *database.DB and *storage.Store each implement lifecycle.Subsystem, a
 // Start (a ping, a probe) and a Shutdown, so the lifecycle starts and shuts
 // them down with no hooks recorded here.
 type infrastructure struct {
-	databaseConfig  *graph.Node[godatabase.Config]
+	databaseConfig  *graph.Node[database.Config]
 	storageConfig   *graph.Node[storage.Config]
 	lifecycleConfig *graph.Node[lifecycle.Config]
-	database        *graph.Node[*godatabase.DB]
+	database        *graph.Node[*database.DB]
 	store           *graph.Node[*storage.Store]
 }
 
@@ -36,7 +36,7 @@ type infrastructure struct {
 // nothing.
 func defineInfrastructure(g *graph.Graph) *infrastructure {
 	in := &infrastructure{
-		databaseConfig:  g.Define("database config", finalized[godatabase.Config]),
+		databaseConfig:  g.Define("database config", finalized[database.Config]),
 		storageConfig:   g.Define("storage config", finalized[storage.Config]),
 		lifecycleConfig: g.Define("lifecycle config", finalized[lifecycle.Config]),
 	}
@@ -66,7 +66,7 @@ func finalized[T any, P finalizer[T]](*graph.Scope) (T, error) {
 // BLOBFS_DATABASE_HOST, _PORT, _NAME, _USER, _PASSWORD, and the pool and
 // timeout settings go-database names. It does no I/O: the pool first
 // connects in Start, the ping bounded by the configuration's conn_timeout.
-func (in *infrastructure) newDatabase(s *graph.Scope) (*godatabase.DB, error) {
+func (in *infrastructure) newDatabase(s *graph.Scope) (*database.DB, error) {
 	return postgres.New(s.Use(in.databaseConfig))
 }
 
