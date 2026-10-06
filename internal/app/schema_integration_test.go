@@ -16,9 +16,10 @@ import (
 )
 
 // The schema group against the compose stack's Postgres, through App.Run
-// with the production graph: `mise run up`, then `mise run integration`.
-// The test resets the schema when it starts and when it ends, so it runs
-// the same against a fresh stack and a reused one.
+// with the production graph, run by `mise run integration`, which starts its
+// own isolated project and tears it down when the suite ends. The test
+// resets the schema when it starts and when it ends, so it runs the same
+// against a fresh stack and a reused one.
 
 // schemaRun runs blobfs schema with args and fails the test unless it
 // exits 0 with nothing on stderr. It returns stdout.
@@ -27,7 +28,7 @@ func schemaRun(t *testing.T, args ...string) string {
 	var out, errOut bytes.Buffer
 	code := app.New(&out, &errOut).Run(context.Background(), append([]string{"schema"}, args...))
 	if code != process.ExitOK || errOut.Len() != 0 {
-		t.Fatalf("schema %s: code = %d, stderr = %q (is the stack up? mise run up)", strings.Join(args, " "), code, errOut.String())
+		t.Fatalf("schema %s: code = %d, stderr = %q", strings.Join(args, " "), code, errOut.String())
 	}
 	return out.String()
 }

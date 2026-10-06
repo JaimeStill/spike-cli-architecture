@@ -21,10 +21,11 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/internal/app"
 )
 
-// The real database and store against the compose stack: `mise run up`,
-// then `mise run integration`, which sets BLOBFS_DATABASE_* and
-// BLOBFS_STORAGE_* to the stack's services and leaves
-// BLOBFS_SHUTDOWN_TIMEOUT at its default.
+// The real database and store against the compose stack: `mise run
+// integration` starts its own isolated project, sets BLOBFS_DATABASE_* and
+// BLOBFS_STORAGE_* to that project's services, leaves
+// BLOBFS_SHUTDOWN_TIMEOUT at its default, and tears the project down when
+// the suite ends.
 
 // probeApp returns blobfs with a test-only command, "probe", that Uses the
 // database and the store, which no production command combines yet. The
@@ -110,7 +111,7 @@ func TestInfrastructureIntegration_StartsBothAndShutsDownInReverse(t *testing.T)
 	code := probeApp(r, &out, &errOut).Run(context.Background(), []string{"probe"})
 
 	if code != process.ExitOK {
-		t.Fatalf("code = %d, want %d; stderr = %q (is the stack up? mise run up)", code, process.ExitOK, errOut.String())
+		t.Fatalf("code = %d, want %d; stderr = %q", code, process.ExitOK, errOut.String())
 	}
 	if errOut.Len() != 0 {
 		t.Errorf("stderr = %q, want empty", errOut.String())

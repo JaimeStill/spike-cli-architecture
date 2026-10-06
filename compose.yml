@@ -1,6 +1,8 @@
-# The local stack the integration tier runs against: `mise run up`, then `mise run integration`.
-# The project, container, and volume names, and the host ports, keep it apart from spike-blobfs's
-# blobfs-* stack, so both can run at once.
+# The local stack. `mise run up` runs it as the development project, spike-cli-architecture, on
+# the default ports; `mise run integration` runs it as its own project,
+# spike-cli-architecture-integration, on 5437 and 10011, and tears it down with its volumes when
+# the suite ends. The project name scopes the containers and volumes, and the host ports keep the
+# two projects, and spike-blobfs's stack, apart, so all can run at once.
 name: spike-cli-architecture
 
 include:
