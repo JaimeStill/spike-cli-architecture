@@ -1,0 +1,127 @@
+package graph
+
+import (
+	"context"
+	"fmt"
+	"strings"
+)
+
+// entry is one node in one Build: its state, its value once built, the
+// edges its constructor recorded, and its hooks.
+type entry struct {
+	node     *node
+	building bool
+	value    any
+	// uses are the nodes the constructor reached through Use, deduplicated,
+	// in the order it first reached them.
+	uses []*node
+	// after are the order-only targets the constructor named; the ones not
+	// in the System are dropped when the layers are computed.
+	after      []*node
+	onStart    func(context.Context) error
+	onShutdown func(context.Context) error
+}
+
+// build is the state of one [Graph.Build].
+type build struct {
+	graph   *Graph
+	entries map[*node]*entry
+	// stack is the chain of nodes under construction, outermost first,
+	// which names the path of a cycle.
+	stack []*node
+}
+
+// abort carries a constructor's labelled error out of the dependents whose
+// Use reached it, up to Build, which recovers it and returns the error.
+type abort struct {
+	err error
+}
+
+// Build constructs every node the roots reach through [Scope.Use], each at
+// most once, depth-first, and returns them as a [System] in computed
+// layers. Each Build is independent and constructs fresh values. A
+// constructor's error fails the Build, labelled with its node's name and
+// wrapping the error, whether the node is a root or a dependency some Use
+// reached. Build panics on a nil root, a root defined on another Graph, or a
+// dependency cycle, among the nodes Use reaches or the ordering edges After
+// adds among them.
+func (g *Graph) Build(roots ...Ref) (sys *System, err error) {
+	g.built = true
+	b := &build{graph: g, entries: make(map[*node]*entry)}
+	defer func() {
+		if r := recover(); r != nil {
+			a, ok := r.(abort)
+			if !ok {
+				panic(r)
+			}
+			sys, err = nil, a.err
+		}
+	}()
+	for _, r := range roots {
+		n := b.resolve(r, "Build")
+		if err := b.construct(n); err != nil {
+			return nil, err
+		}
+	}
+	return b.system(), nil
+}
+
+// resolve returns r's node, panicking when r is nil or defined on another
+// Graph. op names the call for the message.
+func (b *build) resolve(r Ref, op string) *node {
+	var n *node
+	if r != nil {
+		n = r.ref()
+	}
+	if n == nil {
+		panic(fmt.Sprintf("graph: %s of a nil node", op))
+	}
+	if n.graph != b.graph {
+		panic(fmt.Sprintf("graph: %s of %q, a node defined on another Graph", op, n.name))
+	}
+	return n
+}
+
+// construct builds n unless it is built already, and returns its
+// constructor's labelled error. Reaching a node under construction is a
+// cycle, and panics with its path.
+func (b *build) construct(n *node) error {
+	if e, ok := b.entries[n]; ok {
+		if e.building {
+			panic("graph: dependency cycle: " + b.cycle(n))
+		}
+		return nil
+	}
+	e := &entry{node: n, building: true}
+	b.entries[n] = e
+	b.stack = append(b.stack, n)
+	s := &Scope{build: b, entry: e}
+	defer func() {
+		s.done = true
+		b.stack = b.stack[:len(b.stack)-1]
+	}()
+	v, err := n.ctor(s)
+	if err != nil {
+		return fmt.Errorf("%s: %w", n.name, err)
+	}
+	e.value = v
+	e.building = false
+	return nil
+}
+
+// cycle names the path from n's construction back to n.
+func (b *build) cycle(n *node) string {
+	start := 0
+	for i, m := range b.stack {
+		if m == n {
+			start = i
+			break
+		}
+	}
+	names := make([]string, 0, len(b.stack)-start+1)
+	for _, m := range b.stack[start:] {
+		names = append(names, m.name)
+	}
+	names = append(names, n.name)
+	return strings.Join(names, " -> ")
+}

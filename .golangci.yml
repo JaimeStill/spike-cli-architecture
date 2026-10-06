@@ -3,7 +3,7 @@ version: "2"
 
 linters:
   # The standard set (errcheck, govet, ineffassign, staticcheck, unused),
-  # plus depguard, which holds packages cli and lifecycle to their
+  # plus depguard, which holds packages cli, lifecycle, and graph to their
   # allowed imports, and testpackage, which keeps tests black-box. Its
   # skip regexp is narrowed to export_test.go: tests live in <pkg>_test
   # and drive the exported API, and the one white-box file allowed is
@@ -44,3 +44,13 @@ linters:
           allow:
             - $gostd
             - github.com/JaimeStill/spike-cli-architecture/lifecycle$
+        # Package graph is shaped to be promoted into go-core, like
+        # lifecycle, so it depends on the standard library alone; its tests
+        # add graph itself, anchored like cli above.
+        graph:
+          list-mode: strict
+          files:
+            - "**/graph/*.go"
+          allow:
+            - $gostd
+            - github.com/JaimeStill/spike-cli-architecture/graph$

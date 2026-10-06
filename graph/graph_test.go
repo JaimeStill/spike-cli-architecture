@@ -1,0 +1,538 @@
+package graph_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/JaimeStill/spike-cli-architecture/graph"
+)
+
+// names returns the names in each of sys's layers, layer 0 first.
+func names(sys *graph.System) [][]string {
+	var out [][]string
+	for _, layer := range sys.Layers() {
+		var ns []string
+		for _, d := range layer {
+			ns = append(ns, d.Name)
+		}
+		out = append(out, ns)
+	}
+	return out
+}
+
+// contains reports whether a node named name is in sys.
+func contains(sys *graph.System, name string) bool {
+	for _, layer := range sys.Layers() {
+		for _, d := range layer {
+			if d.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// dependency returns the Dependency named name in sys, failing the test
+// when there is none.
+func dependency(t *testing.T, sys *graph.System, name string) graph.Dependency {
+	t.Helper()
+	for _, layer := range sys.Layers() {
+		for _, d := range layer {
+			if d.Name == name {
+				return d
+			}
+		}
+	}
+	t.Fatalf("no dependency %q in %v", name, names(sys))
+	return graph.Dependency{}
+}
+
+// mustPanic fails the test unless fn panics with a message starting
+// "graph: " and containing want.
+func mustPanic(t *testing.T, want string, fn func()) {
+	t.Helper()
+	defer func() {
+		t.Helper()
+		r := recover()
+		if r == nil {
+			t.Fatalf("no panic; want one containing %q", want)
+		}
+		msg := fmt.Sprint(r)
+		if !strings.HasPrefix(msg, "graph: ") || !strings.Contains(msg, want) {
+			t.Fatalf("panic %q; want a \"graph: \" message containing %q", msg, want)
+		}
+	}()
+	fn()
+}
+
+// mustBuild builds roots, failing the test on an error.
+func mustBuild(t *testing.T, g *graph.Graph, roots ...graph.Ref) *graph.System {
+	t.Helper()
+	sys, err := g.Build(roots...)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	return sys
+}
+
+// counter counts constructor runs by node name.
+type counter map[string]int
+
+// constant returns a constructor that counts its run and returns v.
+func constant[T any](c counter, name string, v T) func(*graph.Scope) (T, error) {
+	return func(*graph.Scope) (T, error) {
+		c[name]++
+		return v, nil
+	}
+}
+
+func TestDefineConstructsNothing(t *testing.T) {
+	c := counter{}
+	g := graph.New()
+	a := g.Define("a", constant(c, "a", 1))
+	g.Define("b", func(s *graph.Scope) (int, error) {
+		c["b"]++
+		return s.Use(a) + 1, nil
+	})
+	if len(c) != 0 {
+		t.Fatalf("constructors ran before Build: %v", c)
+	}
+	if a.Name() != "a" {
+		t.Fatalf("Name = %q, want a", a.Name())
+	}
+}
+
+func TestBuildMemoizesSharedNodes(t *testing.T) {
+	c := counter{}
+	g := graph.New()
+	type conn struct{ id int }
+	shared := g.Define("shared", func(*graph.Scope) (*conn, error) {
+		c["shared"]++
+		return &conn{id: c["shared"]}, nil
+	})
+	left := g.Define("left", func(s *graph.Scope) (*conn, error) {
+		c["left"]++
+		return s.Use(shared), nil
+	})
+	right := g.Define("right", func(s *graph.Scope) (*conn, error) {
+		c["right"]++
+		// A second Use of the same node returns the memoized value.
+		s.Use(shared)
+		return s.Use(shared), nil
+	})
+	top := g.Define("top", func(s *graph.Scope) ([2]*conn, error) {
+		c["top"]++
+		return [2]*conn{s.Use(left), s.Use(right)}, nil
+	})
+
+	sys := mustBuild(t, g, top, left)
+	if want := (counter{"shared": 1, "left": 1, "right": 1, "top": 1}); !maps.Equal(c, want) {
+		t.Fatalf("constructor runs = %v, want %v", c, want)
+	}
+	pair := sys.Get(top)
+	if pair[0] != pair[1] || pair[0] != sys.Get(shared) {
+		t.Fatalf("dependents got different values: %p %p %p", pair[0], pair[1], sys.Get(shared))
+	}
+
+	// A second Build constructs fresh values.
+	again := mustBuild(t, g, top)
+	if c["shared"] != 2 {
+		t.Fatalf("shared ran %d times over two Builds, want 2", c["shared"])
+	}
+	if again.Get(shared) == sys.Get(shared) {
+		t.Fatal("second Build reused the first Build's value")
+	}
+}
+
+func TestBuildConstructsDepthFirst(t *testing.T) {
+	var order []string
+	g := graph.New()
+	rec := func(name string, deps ...*graph.Node[string]) *graph.Node[string] {
+		return g.Define(name, func(s *graph.Scope) (string, error) {
+			order = append(order, "enter "+name)
+			for _, d := range deps {
+				s.Use(d)
+			}
+			order = append(order, "leave "+name)
+			return name, nil
+		})
+	}
+	leaf := rec("leaf")
+	mid := rec("mid", leaf)
+	top := rec("top", mid, leaf)
+	mustBuild(t, g, top)
+	want := []string{"enter top", "enter mid", "enter leaf", "leave leaf", "leave mid", "leave top"}
+	if !slices.Equal(order, want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+}
+
+func TestBuildConstructsOnlyWhatRootsReach(t *testing.T) {
+	c := counter{}
+	g := graph.New()
+	a := g.Define("a", constant(c, "a", 1))
+	b := g.Define("b", constant(c, "b", 2))
+	g.Define("c", func(s *graph.Scope) (int, error) {
+		c["c"]++
+		return s.Use(b), nil
+	})
+	sys := mustBuild(t, g, a)
+	if want := (counter{"a": 1}); !maps.Equal(c, want) {
+		t.Fatalf("constructor runs = %v, want %v", c, want)
+	}
+	if got := names(sys); !slices.EqualFunc(got, [][]string{{"a"}}, slices.Equal) {
+		t.Fatalf("layers = %v, want [[a]]", got)
+	}
+}
+
+func TestLayersAreLongestPath(t *testing.T) {
+	g := graph.New()
+	// Defined out of dependency order, so the within-layer order is
+	// definition order and not construction order.
+	var a, b, c, d, e *graph.Node[int]
+	// e uses d before a, so a layer taken from its last Use, not its
+	// highest, would put it too low.
+	e = g.Define("e", func(s *graph.Scope) (int, error) { return s.Use(d) + s.Use(a), nil })
+	b = g.Define("b", func(*graph.Scope) (int, error) { return 2, nil })
+	d = g.Define("d", func(s *graph.Scope) (int, error) { return s.Use(c), nil })
+	a = g.Define("a", func(*graph.Scope) (int, error) { return 1, nil })
+	c = g.Define("c", func(s *graph.Scope) (int, error) { return s.Use(a) + s.Use(b), nil })
+
+	sys := mustBuild(t, g, e)
+	// e uses a (layer 0) and d (layer 2): its longest path puts it at 3.
+	want := [][]string{{"b", "a"}, {"c"}, {"d"}, {"e"}}
+	if got := names(sys); !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("layers = %v, want %v", got, want)
+	}
+}
+
+func TestAfterOrdersOnlyWithinTheSystem(t *testing.T) {
+	c := counter{}
+	g := graph.New()
+	base := g.Define("base", constant(c, "base", 0))
+	gate := g.Define("gate", func(s *graph.Scope) (int, error) {
+		c["gate"]++
+		return s.Use(base), nil
+	})
+	// worker has no Use, so its layer comes from After alone.
+	worker := g.Define("worker", func(s *graph.Scope) (int, error) {
+		c["worker"]++
+		s.After(gate)
+		return 0, nil
+	})
+
+	// gate is in the System through the root list, so worker sits above it.
+	sys := mustBuild(t, g, worker, gate)
+	want := [][]string{{"base"}, {"gate"}, {"worker"}}
+	if got := names(sys); !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("layers = %v, want %v", got, want)
+	}
+
+	// Without gate in the System, After neither builds it nor orders on it.
+	clear(c)
+	sys = mustBuild(t, g, worker)
+	if c["gate"] != 0 || contains(sys, "gate") {
+		t.Fatalf("After pulled gate in: runs %v, layers %v", c, names(sys))
+	}
+	want = [][]string{{"worker"}}
+	if got := names(sys); !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("layers = %v, want %v", got, want)
+	}
+}
+
+func TestAfterTargetBuiltLaterStillOrders(t *testing.T) {
+	g := graph.New()
+	late := g.Define("late", func(*graph.Scope) (int, error) { return 0, nil })
+	early := g.Define("early", func(s *graph.Scope) (int, error) {
+		// late is not built yet when After names it.
+		s.After(late)
+		return 0, nil
+	})
+	sys := mustBuild(t, g, early, late)
+	want := [][]string{{"late"}, {"early"}}
+	if got := names(sys); !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("layers = %v, want %v", got, want)
+	}
+}
+
+func TestConstructorErrorIsLabelled(t *testing.T) {
+	errDown := errors.New("connection refused")
+	g := graph.New()
+	db := g.Define("database", func(*graph.Scope) (int, error) { return 0, errDown })
+	sys, err := g.Build(db)
+	if sys != nil {
+		t.Fatal("Build returned a System with its error")
+	}
+	if err == nil || err.Error() != "database: connection refused" {
+		t.Fatalf("err = %v, want database: connection refused", err)
+	}
+	if !errors.Is(err, errDown) {
+		t.Fatalf("errors.Is(%v, errDown) = false", err)
+	}
+}
+
+// codeError is an error type for errors.As.
+type codeError struct{ code int }
+
+func (e *codeError) Error() string { return fmt.Sprintf("code %d", e.code) }
+
+func TestDependencyErrorAbortsDependents(t *testing.T) {
+	g := graph.New()
+	cfg := g.Define("config", func(*graph.Scope) (int, error) { return 0, &codeError{code: 7} })
+	resumed := false
+	db := g.Define("database", func(s *graph.Scope) (int, error) {
+		v := s.Use(cfg)
+		resumed = true
+		return v, nil
+	})
+	server := g.Define("server", func(s *graph.Scope) (int, error) {
+		v := s.Use(db)
+		resumed = true
+		return v, nil
+	})
+	_, err := g.Build(server)
+	if resumed {
+		t.Fatal("a dependent's constructor resumed after its dependency failed")
+	}
+	if err == nil || err.Error() != "config: code 7" {
+		t.Fatalf("err = %v, want config: code 7", err)
+	}
+	var ce *codeError
+	if !errors.As(err, &ce) || ce.code != 7 {
+		t.Fatalf("errors.As(%v) = %v", err, ce)
+	}
+}
+
+func TestForeignPanicsPassThrough(t *testing.T) {
+	g := graph.New()
+	boom := g.Define("boom", func(*graph.Scope) (int, error) { panic("not ours") })
+	top := g.Define("top", func(s *graph.Scope) (int, error) { return s.Use(boom), nil })
+	defer func() {
+		if r := recover(); r != "not ours" {
+			t.Fatalf("recovered %v, want the constructor's own panic", r)
+		}
+	}()
+	_, _ = g.Build(top)
+	t.Fatal("Build returned")
+}
+
+func TestHooksAndValueOnDependency(t *testing.T) {
+	var calls []string
+	g := graph.New()
+	db := g.Define("database", func(s *graph.Scope) (string, error) {
+		s.OnStart(func(context.Context) error { calls = append(calls, "start"); return nil })
+		s.OnShutdown(func(context.Context) error { calls = append(calls, "shutdown"); return nil })
+		return "pool", nil
+	})
+	plain := g.Define("plain", func(s *graph.Scope) (string, error) { return s.Use(db), nil })
+	sys := mustBuild(t, g, plain)
+
+	d := dependency(t, sys, "database")
+	if d.Value != "pool" {
+		t.Fatalf("Value = %v, want pool", d.Value)
+	}
+	if d.OnStart == nil || d.OnShutdown == nil {
+		t.Fatal("database's hooks are missing from its Dependency")
+	}
+	_ = d.OnStart(context.Background())
+	_ = d.OnShutdown(context.Background())
+	if want := []string{"start", "shutdown"}; !slices.Equal(calls, want) {
+		t.Fatalf("hook calls = %v, want %v", calls, want)
+	}
+	if p := dependency(t, sys, "plain"); p.OnStart != nil || p.OnShutdown != nil {
+		t.Fatal("plain recorded no hooks but its Dependency carries some")
+	}
+	if got := sys.Get(db); got != "pool" {
+		t.Fatalf("Get = %q, want pool", got)
+	}
+}
+
+func TestReplaceSubstitutesTheConstructor(t *testing.T) {
+	var started string
+	g := graph.New()
+	cfg := g.Define("config", func(*graph.Scope) (string, error) { return "dsn", nil })
+	store := g.Define("store", func(s *graph.Scope) (string, error) {
+		return "real:" + s.Use(cfg), nil
+	})
+	top := g.Define("top", func(s *graph.Scope) (string, error) { return s.Use(store), nil })
+	other := g.Define("other", func(s *graph.Scope) (string, error) { return s.Use(store), nil })
+
+	runs := 0
+	g.Replace(store, func(s *graph.Scope) (string, error) {
+		runs++
+		s.OnStart(func(context.Context) error { started = "fake"; return nil })
+		return "fake:" + s.Use(cfg), nil
+	})
+	sys := mustBuild(t, g, top, other)
+
+	if got := sys.Get(top); got != "fake:dsn" {
+		t.Fatalf("top = %q, want fake:dsn", got)
+	}
+	if runs != 1 {
+		t.Fatalf("substitute ran %d times, want 1", runs)
+	}
+	want := [][]string{{"config"}, {"store"}, {"top", "other"}}
+	if got := names(sys); !slices.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("layers = %v, want %v", got, want)
+	}
+	if err := dependency(t, sys, "store").OnStart(context.Background()); err != nil || started != "fake" {
+		t.Fatalf("substitute's hook: err %v, started %q", err, started)
+	}
+}
+
+func TestNilInterfaceValue(t *testing.T) {
+	g := graph.New()
+	none := g.Define("none", func(*graph.Scope) (error, error) { return nil, nil })
+	top := g.Define("top", func(s *graph.Scope) (bool, error) { return s.Use(none) == nil, nil })
+	sys := mustBuild(t, g, top)
+	if !sys.Get(top) || sys.Get(none) != nil {
+		t.Fatal("a nil interface value did not pass through Use and Get")
+	}
+}
+
+func TestWiringPanics(t *testing.T) {
+	t.Run("cycle", func(t *testing.T) {
+		g := graph.New()
+		var a, b, c *graph.Node[int]
+		a = g.Define("a", func(s *graph.Scope) (int, error) { return s.Use(b), nil })
+		b = g.Define("b", func(s *graph.Scope) (int, error) { return s.Use(c), nil })
+		resumed := false
+		c = g.Define("c", func(s *graph.Scope) (int, error) {
+			v := s.Use(b)
+			resumed = true
+			return v, nil
+		})
+		mustPanic(t, "dependency cycle: b -> c -> b", func() { _, _ = g.Build(a) })
+		if resumed {
+			t.Fatal("the Use that closed the cycle returned")
+		}
+	})
+	t.Run("self cycle", func(t *testing.T) {
+		g := graph.New()
+		var a *graph.Node[int]
+		a = g.Define("a", func(s *graph.Scope) (int, error) { return s.Use(a), nil })
+		mustPanic(t, "dependency cycle: a -> a", func() { _, _ = g.Build(a) })
+	})
+	t.Run("after cycle", func(t *testing.T) {
+		g := graph.New()
+		var a, b *graph.Node[int]
+		a = g.Define("a", func(s *graph.Scope) (int, error) { return s.Use(b), nil })
+		b = g.Define("b", func(s *graph.Scope) (int, error) { s.After(a); return 0, nil })
+		mustPanic(t, "dependency cycle: a -> b -> a", func() { _, _ = g.Build(a) })
+	})
+	t.Run("use of a foreign node", func(t *testing.T) {
+		g, h := graph.New(), graph.New()
+		foreign := h.Define("foreign", func(*graph.Scope) (int, error) { return 0, nil })
+		top := g.Define("top", func(s *graph.Scope) (int, error) { return s.Use(foreign), nil })
+		mustPanic(t, `Use of "foreign", a node defined on another Graph`, func() { _, _ = g.Build(top) })
+	})
+	t.Run("after of a foreign node", func(t *testing.T) {
+		g, h := graph.New(), graph.New()
+		foreign := h.Define("foreign", func(*graph.Scope) (int, error) { return 0, nil })
+		top := g.Define("top", func(s *graph.Scope) (int, error) { s.After(foreign); return 0, nil })
+		mustPanic(t, `After of "foreign", a node defined on another Graph`, func() { _, _ = g.Build(top) })
+	})
+	t.Run("build of a foreign root", func(t *testing.T) {
+		g, h := graph.New(), graph.New()
+		foreign := h.Define("foreign", func(*graph.Scope) (int, error) { return 0, nil })
+		mustPanic(t, `Build of "foreign", a node defined on another Graph`, func() { _, _ = g.Build(foreign) })
+	})
+	t.Run("nil root", func(t *testing.T) {
+		g := graph.New()
+		var n *graph.Node[int]
+		mustPanic(t, "Build of a nil node", func() { _, _ = g.Build(n) })
+	})
+
+	escaped := func(t *testing.T) (*graph.Scope, *graph.Node[int]) {
+		t.Helper()
+		g := graph.New()
+		var kept *graph.Scope
+		dep := g.Define("dep", func(*graph.Scope) (int, error) { return 0, nil })
+		top := g.Define("top", func(s *graph.Scope) (int, error) { kept = s; return 0, nil })
+		mustBuild(t, g, top, dep)
+		return kept, dep
+	}
+	t.Run("escaped Use", func(t *testing.T) {
+		s, dep := escaped(t)
+		mustPanic(t, `Use called after the constructor of "top" returned`, func() { s.Use(dep) })
+	})
+	t.Run("escaped After", func(t *testing.T) {
+		s, dep := escaped(t)
+		mustPanic(t, `After called after the constructor of "top" returned`, func() { s.After(dep) })
+	})
+	t.Run("escaped OnStart", func(t *testing.T) {
+		s, _ := escaped(t)
+		mustPanic(t, `OnStart called after the constructor of "top" returned`, func() {
+			s.OnStart(func(context.Context) error { return nil })
+		})
+	})
+	t.Run("escaped OnShutdown", func(t *testing.T) {
+		s, _ := escaped(t)
+		mustPanic(t, `OnShutdown called after the constructor of "top" returned`, func() {
+			s.OnShutdown(func(context.Context) error { return nil })
+		})
+	})
+	t.Run("hook recorded twice", func(t *testing.T) {
+		g := graph.New()
+		top := g.Define("top", func(s *graph.Scope) (int, error) {
+			s.OnStart(func(context.Context) error { return nil })
+			s.OnStart(func(context.Context) error { return nil })
+			return 0, nil
+		})
+		mustPanic(t, `OnStart called twice for "top"`, func() { _, _ = g.Build(top) })
+	})
+
+	t.Run("replace after build", func(t *testing.T) {
+		g := graph.New()
+		n := g.Define("n", func(*graph.Scope) (int, error) { return 0, errors.New("fails") })
+		_, _ = g.Build(n)
+		mustPanic(t, `Replace of "n" after Build`, func() {
+			g.Replace(n, func(*graph.Scope) (int, error) { return 1, nil })
+		})
+	})
+	t.Run("replace of a foreign node", func(t *testing.T) {
+		g, h := graph.New(), graph.New()
+		foreign := h.Define("foreign", func(*graph.Scope) (int, error) { return 0, nil })
+		mustPanic(t, `Replace of "foreign", a node defined on another Graph`, func() {
+			g.Replace(foreign, func(*graph.Scope) (int, error) { return 1, nil })
+		})
+	})
+	t.Run("get of a node not in the system", func(t *testing.T) {
+		g := graph.New()
+		in := g.Define("in", func(*graph.Scope) (int, error) { return 0, nil })
+		out := g.Define("out", func(*graph.Scope) (int, error) { return 0, nil })
+		sys := mustBuild(t, g, in)
+		mustPanic(t, `Get of "out", a node not in the System`, func() { sys.Get(out) })
+	})
+	t.Run("get of a node from another build", func(t *testing.T) {
+		g, h := graph.New(), graph.New()
+		in := g.Define("in", func(*graph.Scope) (int, error) { return 0, nil })
+		foreign := h.Define("in", func(*graph.Scope) (int, error) { return 0, nil })
+		sys := mustBuild(t, g, in)
+		mustPanic(t, `Get of "in", a node not in the System`, func() { sys.Get(foreign) })
+	})
+	t.Run("empty name", func(t *testing.T) {
+		g := graph.New()
+		mustPanic(t, "Define with an empty name", func() {
+			g.Define("", func(*graph.Scope) (int, error) { return 0, nil })
+		})
+	})
+	t.Run("duplicate name", func(t *testing.T) {
+		g := graph.New()
+		g.Define("db", func(*graph.Scope) (int, error) { return 0, nil })
+		mustPanic(t, `Define of duplicate name "db"`, func() {
+			g.Define("db", func(*graph.Scope) (string, error) { return "", nil })
+		})
+	})
+	t.Run("nil constructor", func(t *testing.T) {
+		g := graph.New()
+		mustPanic(t, `Define "db" with a nil constructor`, func() {
+			g.Define[int]("db", nil)
+		})
+	})
+}
