@@ -6,6 +6,7 @@ import (
 	"github.com/standards-lab/sqlate"
 	"github.com/standards-lab/sqlate/postgres"
 
+	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/domain/files"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
@@ -27,6 +28,13 @@ func defineDomain(g *graph.Graph, in *infrastructure) *domain {
 	d.files = g.Define("files", d.newFiles)
 	d.objects = g.Define("objects", d.newObjects)
 	return d
+}
+
+// mountDomain builds the domain's commands at the root: the directory and
+// bookmark commands over the files node, and the object commands over the
+// objects node.
+func mountDomain(d *domain) []*cli.Command {
+	return append(files.Commands(d.files), files.ObjectCommands(d.objects)...)
 }
 
 // newFiles constructs the files Store over the database's pool, wrapped in

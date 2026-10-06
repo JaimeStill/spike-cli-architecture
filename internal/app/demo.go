@@ -8,11 +8,12 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/scenario"
 )
 
-// mountDemo builds the demo parent over the domain's files and objects
-// nodes: each scenario's leaf declares the nodes its tour reads, so the
-// dispatcher builds only those when it runs.
-func mountDemo(d *domain) *cli.Command {
-	return demo.Commands(d.files, d.objects)
+// mountDemo builds the scenarios' commands at the root over the domain's
+// files and objects nodes: list, and the demo parent, in which each
+// scenario's leaf declares the nodes its tour reads, so the dispatcher
+// builds only those when it runs.
+func mountDemo(d *domain) []*cli.Command {
+	return []*cli.Command{listCommand(d), demo.Commands(d.files, d.objects)}
 }
 
 // listCommand builds list, which prints each scenario, its summary, and the
