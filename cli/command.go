@@ -5,7 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"reflect"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -140,28 +140,19 @@ func (c *Command) Add(subs ...*Command) *Command {
 // under it, with [Invocation].System set.
 //
 // Use with no refs declares nothing, as Require with no names requires
-// nothing. A nil ref panics here, as Add's wiring mistakes do, since nothing
-// declared later can make it valid. Use anywhere in a tree requires Run's
-// [WithGraph] option, which is checked when the tree is dispatched and
-// panics then, whichever command is selected.
+// nothing. An untyped nil ref panics here, as Add's wiring mistakes do,
+// since nothing declared later can make it valid. A nil *graph.Node is not
+// caught here: it reaches [graph.Graph.Build], which panics on it when a
+// dispatch runs a leaf at or below c, after PreRun and after constructing
+// any node the path declared before it. Use anywhere in a tree requires
+// Run's [WithGraph] option, which is checked when the tree is dispatched
+// and panics then, whichever command is selected.
 func (c *Command) Use(refs ...graph.Ref) *Command {
-	for _, r := range refs {
-		if isNilRef(r) {
-			panic(fmt.Sprintf("cli: %s: Use of a nil node", c.path()))
-		}
+	if slices.Contains(refs, nil) {
+		panic(fmt.Sprintf("cli: %s: Use of a nil node", c.path()))
 	}
 	c.uses = append(c.uses, refs...)
 	return c
-}
-
-// isNilRef reports whether r is nil, either an untyped nil or a nil
-// *graph.Node, the only type that implements graph.Ref.
-func isNilRef(r graph.Ref) bool {
-	if r == nil {
-		return true
-	}
-	v := reflect.ValueOf(r)
-	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 // child returns the subcommand of c named name, or nil.

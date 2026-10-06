@@ -425,13 +425,11 @@ func TestUse_NoRefsDeclaresNothing(t *testing.T) {
 	}
 }
 
-func TestUse_PanicsOnANilRef(t *testing.T) {
+func TestUse_PanicsOnAnUntypedNilRef(t *testing.T) {
 	u := newUseTree()
-	var typed *graph.Node[*fake]
 	for name, refs := range map[string][]graph.Ref{
-		"untyped nil":         {nil},
-		"nil node":            {typed},
-		"nil after a non-nil": {u.db, typed},
+		"nil":                 {nil},
+		"nil after a non-nil": {u.db, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			leaf := &cli.Command{Name: "leaf"}
@@ -443,6 +441,38 @@ func TestUse_PanicsOnANilRef(t *testing.T) {
 				}
 			}()
 			leaf.Use(refs...)
+		})
+	}
+}
+
+func TestUse_NilNodePanicsAtDispatch(t *testing.T) {
+	// A nil *graph.Node passes Use and reaches graph.Build, which panics on
+	// it when a dispatch runs a leaf whose path declares it.
+	var nilNode *graph.Node[*fake]
+	for name, refs := range map[string]func(u *useTree) []graph.Ref{
+		"alone":           func(*useTree) []graph.Ref { return []graph.Ref{nilNode} },
+		"after a non-nil": func(u *useTree) []graph.Ref { return []graph.Ref{u.db, nilNode} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			u := newUseTree()
+			broken := &cli.Command{Name: "broken", Run: func(context.Context, *cli.Invocation) error {
+				u.rec.add("run broken")
+				return nil
+			}}
+			u.root.Add(broken.Use(refs(u)...))
+			defer func() {
+				want := "graph: Build of a nil node"
+				if r := recover(); r != want {
+					t.Errorf("panic = %v, want %q", r, want)
+				}
+				if u.rec.count("run broken") != 0 {
+					t.Error("the leaf ran")
+				}
+				if name == "alone" && u.builds() != 0 {
+					t.Errorf("events = %q, want no constructor to run", u.rec.list())
+				}
+			}()
+			u.run(context.Background(), "broken")
 		})
 	}
 }
