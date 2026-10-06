@@ -1,10 +1,11 @@
-// Package cli is a command dispatcher on the standard library's flag package.
-// A program builds a tree of [Command] values, each owning a *flag.FlagSet,
-// and hands the root to [Run] with the process arguments and its standard
-// input, output, and error streams; Run walks the tree to the selected
-// command, parses its flags, runs it, and returns the exit code the program
-// passes to os.Exit, following go-core's process convention. Wiring mistakes in the tree panic when it is built or when it
-// is dispatched, as each symbol's documentation states.
+// Package cli is a command dispatcher on the standard library's flag
+// package. A program builds a tree of [Command] values, each owning a
+// *flag.FlagSet, and hands the root to [Run] with the process arguments and
+// its standard input, output, and error streams; Run walks the tree to the
+// selected command, parses its flags, runs it, and returns the exit code the
+// program passes to os.Exit, following go-core's process convention. Wiring
+// mistakes in the tree panic when it is built or when it is dispatched, as
+// each symbol's documentation states.
 //
 // The package exports:
 //

@@ -724,9 +724,10 @@ func parseRefArg(arg string) (Ref, error) {
 	return ref, nil
 }
 
-// parsePair reads the two arguments of mv, which takes two paths or two
-// ids and not one of each, since the id form takes a source id and a
-// destination directory id together. Every refusal is a usage error.
+// parsePair reads the two arguments of mv or cp, the command named, which
+// takes two paths or two ids and not one of each, since the id form takes
+// a source id and a destination directory id together. Every refusal is a
+// usage error.
 func parsePair(command, first, second string) (Ref, Ref, error) {
 	src, err := parseRefArg(first)
 	if err != nil {

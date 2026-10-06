@@ -11,13 +11,13 @@ import (
 	"github.com/standards-lab/sqlate"
 )
 
-// This file composes the directory operations from blobfs's methods and
-// the domain's owner statements. Ids
-// are the primary handle: ListDirectory, StatFile, StatDirectory, Find, and
-// MoveEntry take ids, and the path forms List, Stat, Resolve, and Move
-// resolve their paths and then run the same steps, so a caller that holds
-// an id from a listing acts without a resolution. Mkdir and
-// RemoveDirectory take paths. The object store is never consulted.
+// This file composes the directory operations from blobfs's methods and the
+// domain's owner statements. Ids are the primary handle: ListDirectory,
+// StatFile, StatDirectory, Find, and MoveEntry take ids, and the path forms
+// List, Stat, Resolve, and Move resolve their paths and then run the same
+// steps, so a caller that holds an id from a listing acts without a
+// resolution. Mkdir and RemoveDirectory take paths. The object store is
+// never consulted.
 
 // List returns the contents of the directory at path under l: the
 // directories under it and the files in it, each one page of l's size

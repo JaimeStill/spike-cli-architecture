@@ -42,18 +42,18 @@ func WithGraph(g *graph.Graph, lifecycleConfig *graph.Node[lifecycle.Config]) Op
 // Run dispatches args, the program arguments without the program name, over
 // the tree rooted at root, and returns the process exit code. stdin, stdout,
 // and stderr are the process's streams, or a test's buffers: a running
-// command reads stdin and writes stdout and stderr through its
-// [Invocation], and the dispatcher prints to stdout and stderr itself but
-// never reads stdin. A dispatch to
-// a leaf goes in this order, stopping at the first failure: parse each
-// level's flags, select the leaf, validate its arguments with
-// [Command.Args], check its required flags and then its exclusive groups,
-// run the root's [Command.PreRun], run the leaf. When the leaf's path has
-// nodes declared with [Command.Use], running the leaf means building their
-// union and the lifecycle configuration node from the [WithGraph] graph,
-// starting the System with a [lifecycle.Coordinator], running the leaf
-// under it with [Invocation].System set, and shutting the System down;
-// nothing is built when the dispatch ends before the leaf would run.
+// command reads stdin and writes stdout and stderr through its [Invocation],
+// and the dispatcher prints to stdout and stderr itself but never reads
+// stdin. A dispatch to a leaf goes in this order, stopping at the first
+// failure: parse each level's flags, select the leaf, validate its arguments
+// with [Command.Args], check its required flags and then its exclusive
+// groups, run the root's [Command.PreRun], run the leaf. When the leaf's
+// path has nodes declared with [Command.Use], running the leaf means
+// building their union and the lifecycle configuration node from the
+// [WithGraph] graph, starting the System with a [lifecycle.Coordinator],
+// running the leaf under it with [Invocation].System set, and shutting the
+// System down; nothing is built when the dispatch ends before the leaf would
+// run.
 //
 // Run owns every line the dispatcher prints, and returns go-core's process
 // exit codes:
