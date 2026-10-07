@@ -866,6 +866,9 @@ input checks in `Validate`, and success lines.
 
 ## Deliberate differences from spike-blobfs
 
+[context/cobra-conventions.md](context/cobra-conventions.md) records each cobra convention and
+feature spike-blobfs relied on, and what replaced it here.
+
 - No `--dsn`, `--variant`, or `--fail-after`. Configuration comes from `BLOBFS_*` variables, the
   composition root fixes blobfs's Postgres engine, and integration states arise through SIGKILL
   and the fault relay instead.
