@@ -112,7 +112,7 @@ type proc struct {
 // start starts the binary with args against tg, stdin as its standard
 // input, and returns the running process; line is the shell line the
 // transcript logs for it. A process still running when the test ends is
-// killed.
+// killed, and logged with its output.
 func start(t *testing.T, tg target, stdin io.Reader, line string, args ...string) *proc {
 	t.Helper()
 	cmd := exec.Command(binary, args...)
@@ -134,6 +134,7 @@ func start(t *testing.T, tg target, stdin io.Reader, line string, args ...string
 		default:
 			_ = cmd.Process.Kill()
 			<-p.done
+			t.Logf("%s killed at the test's end:\nstdout: %s\nstderr: %s", line, p.out.String(), p.errOut.String())
 		}
 	})
 	return p
@@ -180,6 +181,18 @@ func (p *proc) crash(t *testing.T) {
 		t.Fatalf("%s ended by %v before the kill:\nstdout: %s\nstderr: %s", p.line, p.err, p.out.String(), p.errOut.String())
 	}
 	t.Logf("$ kill -KILL %d  # %s", p.cmd.Process.Pid, strings.TrimPrefix(p.line, "$ "))
+}
+
+// ended reports whether the process has exited, so a wait on a condition
+// its run should bring about ends, and the wait or crash that follows
+// reports the run with its output, when the run ends without it.
+func (p *proc) ended() bool {
+	select {
+	case <-p.done:
+		return true
+	default:
+		return false
+	}
 }
 
 // exited reports whether the process exits within d.
@@ -358,6 +371,9 @@ func pending(t *testing.T, tg target, path string) string {
 	}
 	var id string
 	processtest.WaitFor(t, path+" pending", func() bool {
+		if p.ended() {
+			return true
+		}
 		out, _, code := run(t, tg, "stat", path)
 		id = field(out, "id")
 		return code == 0 && field(out, "status") == "pending"
@@ -393,6 +409,9 @@ func interrupt(t *testing.T, tg target, f *processtest.Forwarder, path, first st
 	t.Helper()
 	p := start(t, tg, strings.NewReader(""), "$ blobfs rm --recursive "+path+" &", "rm", "--recursive", path)
 	processtest.WaitFor(t, "the sweep of "+path+" past its first file", func() bool {
+		if p.ended() {
+			return true
+		}
 		_, errOut, code := run(t, tg, "stat", "id:"+first)
 		return code == 1 && strings.Contains(errOut, "not found")
 	})
