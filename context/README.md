@@ -111,7 +111,9 @@ other example), and `spike-blobfs` (the CLI being rebuilt).
 **Question:** Do a stdlib-`flag` dispatcher with the planned feature set and a per-command
 dependency initializer hold up in a real CLI over the `blobfs` library, go-storage, and Postgres?
 
-**Answer:** Yes; a dispatcher on the standard library's `flag` carries spike-blobfs's whole command surface, each command brings up only the graph nodes it declares, and the same Coordinator runs go-web-service's staged graph.
+**Answer:** Yes; a dispatcher on the standard library's `flag` carries spike-blobfs's whole
+command surface, each command brings up only the graph nodes it declares, and the same
+Coordinator runs go-web-service's staged graph.
 
 1. The planned feature set: proven by the running binary. Root flags, PreRun, and Exclusive
    have no user in blobfs, so only `cli`'s tests prove them.
@@ -129,11 +131,11 @@ dependency initializer hold up in a real CLI over the `blobfs` library, go-stora
    `TestTheStoreUnreachable`.
 6. The cobra record, [cobra-conventions.md](cobra-conventions.md): checked against both
    binaries' help and exit codes.
-7. The test conventions without cobra: Proven only by tests, `internal/app`'s over buffers and
+7. The test conventions without cobra: proven only by tests, `internal/app`'s over buffers and
    `domain/files`'s over `storagetest.Fake`.
 8. A scenario package that declares its nodes: both scenarios run twice against the development
    stack, and the integration test `TestScenarios`.
-9. The stage table and one Coordinator: Proven only by tests, `TestWebServiceStageOrder` and
+9. The stage table and one Coordinator: proven only by tests, `TestWebServiceStageOrder` and
    `TestWebServiceSubsetBuild` (graph) and `TestRunServesAGraphShapedLikeTheWebService`
    (lifecycle).
 
