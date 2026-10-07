@@ -81,7 +81,7 @@ Door          two-way: the spike repository and goal-record edits only; no
 
 ## Progress
 
-slices 2/3 committed · standards — · spec — · editor —
+slices 3/3 committed · standards — · spec — · editor —
 
 ## Decisions
 
