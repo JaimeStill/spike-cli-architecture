@@ -16,7 +16,7 @@ import (
 // and the name its source exports, and then the app's set, named app,
 // under sqlate's default table. It performs no I/O: the migrator validates
 // the sets and opens nothing. Its Up, Reset, and Status are the schema
-// operations as they stand; [Down] is the revert the migrator does not
+// operations as they stand; revert is the revert the migrator does not
 // offer.
 func NewMigrator(db *sqlate.DB) (*migrate.Migrator, error) {
 	blobfsSet, err := blobfspostgres.Migrations()
@@ -30,12 +30,12 @@ func NewMigrator(db *sqlate.DB) (*migrate.Migrator, error) {
 	return migrate.New(db, []migrate.Set{blobfsSet, {Name: "app", Migrations: appSet}}, migrate.Options{})
 }
 
-// Down reverts every applied migration of m's sets, the app's set first,
+// revert reverts every applied migration of m's sets, the app's set first,
 // so its foreign keys into blobfs's tables never block the revert. The
 // history tables stay, where m's Reset drops them. Each set reverts in its
 // own locked run, so a failure in blobfs's set leaves the app's set
 // reverted.
-func Down(ctx context.Context, m *migrate.Migrator) error {
+func revert(ctx context.Context, m *migrate.Migrator) error {
 	for _, l := range slices.Backward(m.Layers()) {
 		if err := l.Down(ctx, len(l.Migrations())); err != nil {
 			return err

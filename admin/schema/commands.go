@@ -67,14 +67,14 @@ func up(migrator *graph.Node[*migrate.Migrator]) *cli.Command {
 }
 
 // down is the down subcommand: every applied migration reverted by
-// [Down], the app's set first, with the history tables kept.
+// revert, the app's set first, with the history tables kept.
 func down(migrator *graph.Node[*migrate.Migrator]) *cli.Command {
 	return &cli.Command{
 		Name:    "down",
 		Summary: "Revert every applied migration, the app's set first and then blobfs's; the history tables stay",
 		Args:    cli.NoArgs,
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			if err := Down(ctx, inv.Get(migrator)); err != nil {
+			if err := revert(ctx, inv.Get(migrator)); err != nil {
 				return err
 			}
 			_, err := fmt.Fprintln(inv.Stdout, "schema down: both sets reverted")
