@@ -138,8 +138,8 @@ func TestCommands_RefuseMalformedInputBeforeAnythingIsBuilt(t *testing.T) {
 		{"a unit that is not a UUID", []string{"mkdir", "/x", "--unit", "nope"}, `--unit "nope" is not a UUID`},
 		{"an id that is not a UUID", []string{"stat", "id:nope"}, "must be a UUID"},
 		{"the root's id", []string{"stat", "id:" + blobfs.RootID}, blobfs.ErrInvalidID.Error()},
-		{"mkdir by id", []string{"mkdir", "id:" + dirID}, "a directory is created by path, not by id"},
-		{"put - into a directory by id", []string{"put", "-", "id:" + dirID}, "stdin has no name to store under"},
+		{"mkdir by id", []string{"mkdir", "id:" + dirID}, "blobfs mkdir: a directory is created by path, not by id\n"},
+		{"put - into a directory by id", []string{"put", "-", "id:" + dirID}, "blobfs put: stdin has no name to store under"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

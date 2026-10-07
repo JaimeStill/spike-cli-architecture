@@ -31,9 +31,9 @@ import (
 // naming the store's node, before anything is read or written.
 //
 // Each command counts its arguments in Args and checks them and its flags
-// in Validate, the domain's form rules included, so a malformed
-// path-or-id, an id where no id can name the target, a unit, a filter, a sort term,
-// or a total mode is a usage error before anything is built; each bookmark
+// in Validate, the domain's form rules included, so a malformed path-or-id,
+// an id where no id can name the target, a unit, a filter, a sort term, or
+// a total mode is a usage error before anything is built; each bookmark
 // subcommand requires --unit, so a run without it is a usage error too.
 func Commands(svc *graph.Node[*Service], st *graph.Node[*Storage]) []*cli.Command {
 	return []*cli.Command{
@@ -346,7 +346,7 @@ func put(st *graph.Node[*Storage]) *cli.Command {
 				return err
 			}
 			if dst.ID != "" && inv.Args[0] == "-" {
-				return fmt.Errorf("put - %s: stdin has no name to store under; give the destination as a path", inv.Args[1])
+				return errors.New("stdin has no name to store under; give the destination of - as a path")
 			}
 			return nil
 		},
@@ -639,9 +639,9 @@ func (f *listingFlags) listing() (Listing, error) {
 
 // parseUnit reads a --unit value: empty when the flag was not given, and
 // otherwise a UUID, returned in canonical form; it runs in Validate, so a
-// value that is not one is a usage error. A required --unit that is missing is reported by the
-// dispatcher's Require, before Validate, so the empty value passes here
-// only for an optional --unit.
+// value that is not one is a usage error. A required --unit that is missing
+// is reported by the dispatcher's Require, before Validate, so the empty
+// value passes here only for an optional --unit.
 func parseUnit(unit string) (string, error) {
 	if unit == "" {
 		return "", nil
