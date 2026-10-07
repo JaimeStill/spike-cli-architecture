@@ -8,16 +8,13 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 	"uuid"
 
 	"github.com/standards-lab/blobfs"
 
 	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
-	"github.com/JaimeStill/spike-cli-architecture/output"
 )
 
 // Commands builds the directory commands, mkdir, ls, stat, mv, and rmdir,
@@ -70,9 +67,11 @@ func (g group) mkdir() *cli.Command {
 				return err
 			}
 			if unit != "" {
-				return output.Line(inv.Stdout, fmt.Sprintf("mkdir: %s (id %s, unit %s)", inv.Args[0], dir.ID, unit))
+				_, err := fmt.Fprintf(inv.Stdout, "mkdir: %s (id %s, unit %s)\n", inv.Args[0], dir.ID, unit)
+				return err
 			}
-			return output.Line(inv.Stdout, fmt.Sprintf("mkdir: %s (id %s)", inv.Args[0], dir.ID))
+			_, err = fmt.Fprintf(inv.Stdout, "mkdir: %s (id %s)\n", inv.Args[0], dir.ID)
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&unit, "unit", "", "the id of the unit that owns the directory, a UUID; top-level paths only")
@@ -203,7 +202,8 @@ func (g group) move() *cli.Command {
 			if err != nil {
 				return err
 			}
-			return output.Line(inv.Stdout, fmt.Sprintf("mv: %s -> %s (id %s)", res.From, res.To, res.ID))
+			_, err = fmt.Fprintf(inv.Stdout, "mv: %s -> %s (id %s)\n", res.From, res.To, res.ID)
+			return err
 		},
 	}
 }
@@ -221,7 +221,8 @@ func (g group) removeDirectory() *cli.Command {
 			if err != nil {
 				return err
 			}
-			return output.Line(inv.Stdout, fmt.Sprintf("rmdir: %s (id %s)", inv.Args[0], dir.ID))
+			_, err = fmt.Fprintf(inv.Stdout, "rmdir: %s (id %s)\n", inv.Args[0], dir.ID)
+			return err
 		},
 	}
 }
@@ -260,7 +261,8 @@ func (g group) bookmarkAdd() *cli.Command {
 			if active {
 				state = "active"
 			}
-			return output.Line(inv.Stdout, fmt.Sprintf("bookmark add: %s (file %s, unit %s, %s)", inv.Args[0], f.ID, unit, state))
+			_, err = fmt.Fprintf(inv.Stdout, "bookmark add: %s (file %s, unit %s, %s)\n", inv.Args[0], f.ID, unit, state)
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&unit, "unit", "", "the id of the unit that bookmarks the file, a UUID")
@@ -293,11 +295,7 @@ func (g group) bookmarkList() *cli.Command {
 			if err != nil {
 				return err
 			}
-			entries := make([]output.BookmarkEntry, 0, len(p.Rows))
-			for _, b := range p.Rows {
-				entries = append(entries, output.BookmarkEntry{Path: b.Path, Size: b.Size, Status: string(b.Status), Active: b.Active, Updated: b.UpdatedAt})
-			}
-			return output.Bookmarks(inv.Stdout, entries, pageOf(l, "", p))
+			return WriteBookmarks(inv.Stdout, l, p)
 		},
 	}
 	f.bind(cmd)
@@ -325,7 +323,8 @@ func (g group) bookmarkRemove() *cli.Command {
 			if err != nil {
 				return err
 			}
-			return output.Line(inv.Stdout, fmt.Sprintf("bookmark rm: %s (file %s, unit %s)", inv.Args[0], f.ID, unit))
+			_, err = fmt.Fprintf(inv.Stdout, "bookmark rm: %s (file %s, unit %s)\n", inv.Args[0], f.ID, unit)
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&unit, "unit", "", "the id of the unit whose bookmark to remove, a UUID")
@@ -405,7 +404,8 @@ func (g objectGroup) put() *cli.Command {
 				resumed = ", resumed the pending row"
 			}
 			f := res.File
-			return output.Line(inv.Stdout, fmt.Sprintf("put: %s (id %s, %d bytes, etag %s%s)", label, f.ID, sizeOf(f), etagOf(f), resumed))
+			_, err = fmt.Fprintf(inv.Stdout, "put: %s (id %s, %d bytes, etag %s%s)\n", label, f.ID, sizeOf(f), etagOf(f), resumed)
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&contentType, "content-type", "", "the media type to store with the object; the default comes from the local file's extension, else application/octet-stream")
@@ -476,7 +476,8 @@ func (g objectGroup) copy() *cli.Command {
 				return err
 			}
 			f := res.File
-			return output.Line(inv.Stdout, fmt.Sprintf("cp: %s -> %s (id %s, %d bytes, etag %s)", res.From, res.To, f.ID, sizeOf(f), etagOf(f)))
+			_, err = fmt.Fprintf(inv.Stdout, "cp: %s -> %s (id %s, %d bytes, etag %s)\n", res.From, res.To, f.ID, sizeOf(f), etagOf(f))
+			return err
 		},
 	}
 }
@@ -509,7 +510,8 @@ func (g objectGroup) remove() *cli.Command {
 				if err != nil {
 					return err
 				}
-				return output.Line(inv.Stdout, fmt.Sprintf("rm --recursive: %s (%d files, %d directories)", ref.Path, res.Files, res.Directories))
+				_, err = fmt.Fprintf(inv.Stdout, "rm --recursive: %s (%d files, %d directories)\n", ref.Path, res.Files, res.Directories)
+				return err
 			}
 			var f blobfs.File
 			var err error
@@ -521,7 +523,8 @@ func (g objectGroup) remove() *cli.Command {
 			if err != nil {
 				return err
 			}
-			return output.Line(inv.Stdout, fmt.Sprintf("rm: %s (id %s)", inv.Args[0], f.ID))
+			_, err = fmt.Fprintf(inv.Stdout, "rm: %s (id %s)\n", inv.Args[0], f.ID)
+			return err
 		},
 	}
 	cmd.Flags().BoolVar(&recursive, "recursive", false, "delete the directory at the path and everything beneath it")
@@ -578,87 +581,6 @@ func etagOf(f blobfs.File) string {
 	return *f.ETag
 }
 
-// WriteContents writes c, the contents l listed, as ls prints it: an entry
-// line per directory and then per file, and each half's page; with
-// cursors, the cursor that continues each half too.
-func WriteContents(w io.Writer, l Listing, c Contents, cursors bool) error {
-	entries := make([]output.Entry, 0, len(c.Directories.Rows)+len(c.Files.Rows))
-	for _, d := range c.Directories.Rows {
-		entries = append(entries, output.Entry{Kind: "dir", Name: d.Name, ID: d.ID, Updated: d.UpdatedAt})
-	}
-	for _, f := range c.Files.Rows {
-		entries = append(entries, output.Entry{Kind: "file", Name: f.Name, ID: f.ID, Size: f.Size, Status: string(f.Status), Updated: f.UpdatedAt})
-	}
-	dirs, files := pageOf(l, l.After.Directories, c.Directories), pageOf(l, l.After.Files, c.Files)
-	if !cursors {
-		dirs.Next, files.Next = "", ""
-	}
-	return output.Listing(w, entries, dirs, files)
-}
-
-// WriteFileRecord writes a file's row as stat prints it, one field per
-// line. The path line is left out when path is empty, as it is for a stat
-// by id.
-func WriteFileRecord(w io.Writer, path string, f blobfs.File) error {
-	return output.Record(w, fileRecord(path, f))
-}
-
-// WriteDirectoryRecord writes a directory's row as stat prints it, one
-// field per line. The path line is left out when path is empty.
-func WriteDirectoryRecord(w io.Writer, path string, d blobfs.Directory) error {
-	return output.Record(w, directoryRecord(path, d))
-}
-
-// fileRecord lays a file row out as the fields stat prints, in order. The
-// path line is left out when path is empty.
-func fileRecord(path string, f blobfs.File) []output.Field {
-	size, etag := "-", "-"
-	if f.Size != nil {
-		size = strconv.FormatInt(*f.Size, 10)
-	}
-	if f.ETag != nil {
-		etag = *f.ETag
-	}
-	fields := []output.Field{
-		{Name: "id", Value: f.ID},
-		{Name: "name", Value: f.Name},
-		{Name: "status", Value: string(f.Status)},
-		{Name: "size", Value: size},
-		{Name: "content-type", Value: f.ContentType},
-		{Name: "etag", Value: etag},
-		{Name: "key", Value: f.Key},
-		{Name: "version", Value: strconv.FormatInt(f.Version, 10)},
-		{Name: "created", Value: f.CreatedAt.UTC().Format(time.RFC3339)},
-		{Name: "updated", Value: f.UpdatedAt.UTC().Format(time.RFC3339)},
-	}
-	if path != "" {
-		fields = append([]output.Field{{Name: "path", Value: path}}, fields...)
-	}
-	return fields
-}
-
-// directoryRecord lays a directory row out as the fields stat prints, in
-// the file record's order for the fields the two share; the parent is -
-// for the root. The path line is left out when path is empty.
-func directoryRecord(path string, d blobfs.Directory) []output.Field {
-	parent := "-"
-	if d.ParentID != nil {
-		parent = *d.ParentID
-	}
-	fields := []output.Field{
-		{Name: "id", Value: d.ID},
-		{Name: "parent", Value: parent},
-		{Name: "name", Value: d.Name},
-		{Name: "version", Value: strconv.FormatInt(d.Version, 10)},
-		{Name: "created", Value: d.CreatedAt.UTC().Format(time.RFC3339)},
-		{Name: "updated", Value: d.UpdatedAt.UTC().Format(time.RFC3339)},
-	}
-	if path != "" {
-		fields = append([]output.Field{{Name: "path", Value: path}}, fields...)
-	}
-	return fields
-}
-
 // Ref is one argument that names an entry: an absolute path, or a row's id
 // written as id:<uuid>. Exactly one of Path and ID is set. A path starts
 // with /, so the two forms never collide.
@@ -710,22 +632,6 @@ func parsePair(command, first, second string) (Ref, Ref, error) {
 		return Ref{}, Ref{}, cli.Usagef("%s %s %s: give two paths, or two ids as id:<uuid> for the source and the destination directory", command, first, second)
 	}
 	return src, dst, nil
-}
-
-// pageOf describes one half's page for the output: the request's page and
-// size, whether the half was read after a cursor (after not empty), the
-// rows listed, the total as the half reported it, marked counted when the
-// listing asked for one and the half was read by number, whether rows
-// remain, and the cursor of the next page.
-func pageOf[T any](l Listing, after string, p Page[T]) output.Page {
-	out := output.Page{
-		Number: l.Page, Size: l.Size, Listed: len(p.Rows), Total: p.Total,
-		Counted: l.Total == TotalExact && after == "", Cursor: after != "", More: p.More, Next: p.Next,
-	}
-	if p.Total == NoTotal {
-		out.Total = output.NoTotal
-	}
-	return out
 }
 
 // pageFlags is the flag set every paged listing takes: the page and its

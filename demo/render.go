@@ -1,20 +1,13 @@
 package demo
 
 import (
-	"fmt"
 	"io"
 
 	"github.com/standards-lab/blobfs"
 
 	"github.com/JaimeStill/spike-cli-architecture/domain/files"
-	"github.com/JaimeStill/spike-cli-architecture/output"
 	"github.com/JaimeStill/spike-cli-architecture/scenario"
 )
-
-// showLine shows one result line, as a direct command prints its success.
-func showLine(r *scenario.Reporter, format string, args ...any) error {
-	return r.Show(func(w io.Writer) error { return output.Line(w, fmt.Sprintf(format, args...)) })
-}
 
 // showListing shows c as ls prints it under l, cursor lines included, so a
 // later step can continue after a cursor the reader has seen.

@@ -5,8 +5,8 @@ import (
 
 	"github.com/standards-lab/go-database"
 	"github.com/standards-lab/go-storage"
+	"github.com/standards-lab/sqlate/migrate"
 
-	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
 	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/domain/files"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
@@ -67,14 +67,14 @@ func (a *App) Run(ctx context.Context, args []string) int {
 // migrator, and the files domain's two nodes. Each field's node is named
 // as the dispatcher labels its errors.
 type Nodes struct {
-	DatabaseConfig  *graph.Node[database.Config]  // "database config"
-	StorageConfig   *graph.Node[storage.Config]   // "storage config"
-	LifecycleConfig *graph.Node[lifecycle.Config] // "lifecycle config"
-	Database        *graph.Node[*database.DB]     // "database"
-	Store           *graph.Node[*storage.Store]   // "store"
-	Migrator        *graph.Node[*schema.Client]   // "migrator"
-	Files           *graph.Node[*files.Store]     // "files"
-	Objects         *graph.Node[*files.Objects]   // "objects"
+	DatabaseConfig  *graph.Node[database.Config]   // "database config"
+	StorageConfig   *graph.Node[storage.Config]    // "storage config"
+	LifecycleConfig *graph.Node[lifecycle.Config]  // "lifecycle config"
+	Database        *graph.Node[*database.DB]      // "database"
+	Store           *graph.Node[*storage.Store]    // "store"
+	Migrator        *graph.Node[*migrate.Migrator] // "migrator"
+	Files           *graph.Node[*files.Store]      // "files"
+	Objects         *graph.Node[*files.Objects]    // "objects"
 }
 
 // Graph returns the graph a's commands are built from, as [New] described

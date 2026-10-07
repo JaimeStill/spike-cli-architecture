@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/standards-lab/sqlate"
+	"github.com/standards-lab/sqlate/migrate"
 	"github.com/standards-lab/sqlate/postgres"
 
 	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
@@ -13,7 +14,7 @@ import (
 // uses, over the infrastructure's database.
 type admin struct {
 	in       *infrastructure
-	migrator *graph.Node[*schema.Client]
+	migrator *graph.Node[*migrate.Migrator]
 }
 
 // defineAdmin defines the administration nodes on g over in. It constructs
@@ -30,11 +31,11 @@ func mountAdmin(a *admin) []*cli.Command {
 	return []*cli.Command{schema.Commands(a.migrator)}
 }
 
-// newMigrator constructs the schema client over the database's pool,
+// newMigrator constructs the schema migrator over the database's pool,
 // wrapped in sqlate's Postgres dialect. It does no I/O: the pool first
 // connects when the lifecycle starts the database, after the Build, and the
-// client itself opens nothing.
-func (a *admin) newMigrator(s *graph.Scope) (*schema.Client, error) {
+// migrator itself opens nothing.
+func (a *admin) newMigrator(s *graph.Scope) (*migrate.Migrator, error) {
 	db := s.Use(a.in.database)
-	return schema.NewClient(sqlate.Wrap(db.Conn(), postgres.Dialect{}), nil)
+	return schema.NewMigrator(sqlate.Wrap(db.Conn(), postgres.Dialect{}))
 }

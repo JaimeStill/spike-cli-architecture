@@ -7,12 +7,6 @@ import (
 	"text/tabwriter"
 )
 
-// Line writes line and a newline to w.
-func Line(w io.Writer, line string) error {
-	_, err := fmt.Fprintln(w, line)
-	return err
-}
-
 // Table writes header and then each row to w as aligned columns, cells
 // separated by two spaces at least. A table with no rows still writes its
 // header, so an empty result is visible as one.

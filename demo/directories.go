@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/standards-lab/blobfs"
 
@@ -82,7 +83,10 @@ func (d directories) mkdirArea(ctx context.Context, inv *cli.Invocation, r *scen
 	if err != nil {
 		return err
 	}
-	return showLine(r, "mkdir: %s (id %s, unit %s)", DirectoriesArea, dir.ID, Unit)
+	return r.Show(func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "mkdir: %s (id %s, unit %s)\n", DirectoriesArea, dir.ID, Unit)
+		return err
+	})
 }
 
 func (d directories) listUnit(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
@@ -103,7 +107,10 @@ func (d directories) mkdirChildren(ctx context.Context, inv *cli.Invocation, r *
 		if err != nil {
 			return err
 		}
-		if err := showLine(r, "mkdir: %s (id %s)", path, dir.ID); err != nil {
+		if err := r.Show(func(w io.Writer) error {
+			_, err := fmt.Fprintf(w, "mkdir: %s (id %s)\n", path, dir.ID)
+			return err
+		}); err != nil {
 			return err
 		}
 	}
@@ -188,7 +195,10 @@ func (d directories) move(ctx context.Context, inv *cli.Invocation, r *scenario.
 		if err != nil {
 			return err
 		}
-		if err := showLine(r, "mv: %s -> %s (id %s)", res.From, res.To, res.ID); err != nil {
+		if err := r.Show(func(w io.Writer) error {
+			_, err := fmt.Fprintf(w, "mv: %s -> %s (id %s)\n", res.From, res.To, res.ID)
+			return err
+		}); err != nil {
 			return err
 		}
 	}
@@ -240,5 +250,8 @@ func removeDirectories(ctx context.Context, s *files.Store, r *scenario.Reporter
 	if err != nil {
 		return err
 	}
-	return showLine(r, "rmdir: %s (id %s)", path, dir.ID)
+	return r.Show(func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "rmdir: %s (id %s)\n", path, dir.ID)
+		return err
+	})
 }

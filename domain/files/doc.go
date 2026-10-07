@@ -51,11 +51,14 @@
 //     each directory's owner row with it. It holds the adapter that is
 //     blobfs's ObjectStore over go-storage's Store.
 //   - commands.go builds the commands over the Store's and the Objects'
-//     graph nodes and renders each result through package output. ls,
-//     stat, mv, put's destination, cat, cp, and rm take an argument written
-//     as id:<uuid> in place of a path; rm --recursive, mkdir, ls --unit,
-//     and the bookmark subcommands take a path alone. Each bookmark
+//     graph nodes; a command that changes state prints its one-line
+//     success there. ls, stat, mv, put's destination, cat, cp, and rm take
+//     an argument written as id:<uuid> in place of a path; rm --recursive,
+//     mkdir, ls --unit, and the bookmark subcommands take a path alone. Each bookmark
 //     subcommand requires --unit.
+//   - output.go renders the listings and the rows, over package output's
+//     Table and Record: ls's listing and each half's page, bookmark ls's
+//     listing, and stat's file and directory records.
 //
 // The Store holds the database alone, never the object store, so the
 // directory and bookmark commands declare only the Store's node and run with
@@ -91,9 +94,10 @@
 //     [Objects.RemoveTree]
 //   - the shapes they take and return, and [ParseRef], [ParseFilter], and
 //     [ParseSort], which read the command line's arguments and terms
-//   - [WriteContents], [WriteFileRecord], and [WriteDirectoryRecord], which
-//     write a listing and a row as ls and stat print them, so the demo's
-//     tours show a result as the command does
+//   - [WriteContents], [WriteBookmarks], [WriteFileRecord], and
+//     [WriteDirectoryRecord], which write a listing and a row as ls,
+//     bookmark ls, and stat print them, so the demo's tours show a result
+//     as the command does
 //   - [ErrVerify], [ErrMoveAcrossScopes], [ErrNotAvailable], [ErrUnitDepth],
 //     [ErrNotOwned], [ErrNoCursorAtRoot], [ErrBookmarked],
 //     [ErrAlreadyBookmarked], [ErrActiveBookmark], and [ErrNoBookmark], and

@@ -7,21 +7,6 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/output"
 )
 
-func TestLine_WritesOneLine(t *testing.T) {
-	var b bytes.Buffer
-
-	if err := output.Line(&b, "schema up: applied"); err != nil {
-		t.Fatal(err)
-	}
-	if err := output.Line(&b, "second"); err != nil {
-		t.Fatal(err)
-	}
-
-	if want := "schema up: applied\nsecond\n"; b.String() != want {
-		t.Errorf("output = %q, want %q", b.String(), want)
-	}
-}
-
 func TestTable_AlignsColumns(t *testing.T) {
 	var b bytes.Buffer
 

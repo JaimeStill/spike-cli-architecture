@@ -2,8 +2,7 @@ package schema
 
 import (
 	"context"
-	"strconv"
-	"strings"
+	"fmt"
 
 	"github.com/standards-lab/sqlate/migrate"
 
@@ -13,43 +12,45 @@ import (
 )
 
 // Commands builds the schema command with its status, up, down, and reset
-// subcommands over client, the composition root's node for the [Client].
-// The group declares client with Use, and every subcommand inherits it, so
-// the dispatcher builds and starts the client's dependencies before a
-// verb's body runs and shuts them down after; the body reads the client
-// with the Invocation's Get. Every subcommand takes no arguments.
-func Commands(client *graph.Node[*Client]) *cli.Command {
-	g := group{client: client}
+// subcommands over migrator, the composition root's node for the migrator
+// [NewMigrator] builds. The group declares migrator with Use, and every
+// subcommand inherits it, so the dispatcher builds and starts the
+// migrator's dependencies before a verb's body runs and shuts them down
+// after; the body reads the migrator with the Invocation's Get. Every
+// subcommand takes no arguments.
+func Commands(migrator *graph.Node[*migrate.Migrator]) *cli.Command {
+	g := group{migrator: migrator}
 	return (&cli.Command{
 		Name:    "schema",
 		Summary: "Report, apply, revert, and reset the two migration sets",
-	}).Use(client).Add(
+	}).Use(migrator).Add(
 		g.status(),
 		g.leaf("up", "Apply every pending migration, blobfs's set first and then the app's",
-			(*Client).Up, "schema up: both sets at head"),
+			(*migrate.Migrator).Up, "schema up: both sets at head"),
 		g.leaf("down", "Revert every applied migration, the app's set first and then blobfs's; the history tables stay",
-			(*Client).Down, "schema down: both sets reverted"),
+			func(m *migrate.Migrator, ctx context.Context) error { return Down(ctx, m) }, "schema down: both sets reverted"),
 		g.reset(),
 	)
 }
 
-// group is the schema group's handle on its Client node.
+// group is the schema group's handle on its migrator node.
 type group struct {
-	client *graph.Node[*Client]
+	migrator *graph.Node[*migrate.Migrator]
 }
 
-// leaf builds one subcommand over a Client method that takes no input: it
-// runs op on the built client and prints result on success.
-func (g group) leaf(name, summary string, op func(*Client, context.Context) error, result string) *cli.Command {
+// leaf builds one subcommand over an operation that takes no input: it
+// runs op on the built migrator and prints result on success.
+func (g group) leaf(name, summary string, op func(*migrate.Migrator, context.Context) error, result string) *cli.Command {
 	return &cli.Command{
 		Name:    name,
 		Summary: summary,
 		Args:    cli.NoArgs,
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			if err := op(inv.Get(g.client), ctx); err != nil {
+			if err := op(inv.Get(g.migrator), ctx); err != nil {
 				return err
 			}
-			return output.Line(inv.Stdout, result)
+			_, err := fmt.Fprintln(inv.Stdout, result)
+			return err
 		},
 	}
 }
@@ -63,7 +64,7 @@ func (g group) status() *cli.Command {
 		Summary: "Show each set's head, latest version, pending migrations, and dirty mark",
 		Args:    cli.NoArgs,
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			sets, err := inv.Get(g.client).Status(ctx)
+			sets, err := inv.Get(g.migrator).Status(ctx)
 			if err != nil {
 				return err
 			}
@@ -92,35 +93,14 @@ func (g group) reset() *cli.Command {
 			return nil
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			if err := inv.Get(g.client).Reset(ctx); err != nil {
+			if err := inv.Get(g.migrator).Reset(ctx); err != nil {
 				return err
 			}
-			return output.Line(inv.Stdout, "schema reset: both sets reverted and their history tables dropped")
+			_, err := fmt.Fprintln(inv.Stdout, "schema reset: both sets reverted and their history tables dropped")
+			return err
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the reset: every set is reverted and the history tables are dropped")
 	cmd.Require("yes")
 	return cmd
-}
-
-var statusHeader = []string{"set", "table", "version", "latest", "pending", "dirty"}
-
-// statusRows renders each set's status as one row under statusHeader. The
-// pending column lists the pending migrations as "N name", or none.
-func statusRows(sets []migrate.SetStatus) [][]string {
-	rows := make([][]string, 0, len(sets))
-	for _, s := range sets {
-		pending := "none"
-		if len(s.Pending) > 0 {
-			names := make([]string, 0, len(s.Pending))
-			for _, m := range s.Pending {
-				names = append(names, strconv.Itoa(m.Version)+" "+m.Name)
-			}
-			pending = strings.Join(names, ", ")
-		}
-		rows = append(rows, []string{
-			s.Name, s.Table, strconv.Itoa(s.Version), strconv.Itoa(s.Latest), pending, strconv.FormatBool(s.Dirty),
-		})
-	}
-	return rows
 }

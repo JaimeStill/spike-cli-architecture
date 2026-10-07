@@ -86,7 +86,10 @@ func (o objects) mkdir(ctx context.Context, inv *cli.Invocation, r *scenario.Rep
 		if err != nil {
 			return err
 		}
-		if err := showLine(r, "mkdir: %s (id %s)", path, dir.ID); err != nil {
+		if err := r.Show(func(w io.Writer) error {
+			_, err := fmt.Fprintf(w, "mkdir: %s (id %s)\n", path, dir.ID)
+			return err
+		}); err != nil {
 			return err
 		}
 	}
@@ -104,7 +107,10 @@ func (o objects) put(ctx context.Context, inv *cli.Invocation, r *scenario.Repor
 	if f.ETag != nil {
 		etag = *f.ETag
 	}
-	return showLine(r, "put: %s (id %s, %d bytes, etag %s)", path, f.ID, sizeOf(f), etag)
+	return r.Show(func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "put: %s (id %s, %d bytes, etag %s)\n", path, f.ID, sizeOf(f), etag)
+		return err
+	})
 }
 
 func (o objects) putStream(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
@@ -151,7 +157,10 @@ func (o objects) copy(ctx context.Context, inv *cli.Invocation, r *scenario.Repo
 	if err != nil {
 		return err
 	}
-	if err := showLine(r, "cp: %s -> %s (id %s, %d bytes)", res.From, res.To, res.File.ID, sizeOf(res.File)); err != nil {
+	if err := r.Show(func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "cp: %s -> %s (id %s, %d bytes)\n", res.From, res.To, res.File.ID, sizeOf(res.File))
+		return err
+	}); err != nil {
 		return err
 	}
 	return o.catFile(ctx, inv, r, res.To, hello)
@@ -179,7 +188,10 @@ func (o objects) remove(ctx context.Context, inv *cli.Invocation, r *scenario.Re
 	if err != nil {
 		return err
 	}
-	return showLine(r, "rm: %s (id %s)", path, f.ID)
+	return r.Show(func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "rm: %s (id %s)\n", path, f.ID)
+		return err
+	})
 }
 
 func (o objects) removeTree(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
@@ -194,5 +206,8 @@ func (o objects) removeArea(ctx context.Context, inv *cli.Invocation, r *scenari
 	if err != nil {
 		return err
 	}
-	return showLine(r, "rm --recursive: %s (%d files, %d directories)", FilesArea, res.Files, res.Directories)
+	return r.Show(func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, "rm --recursive: %s (%d files, %d directories)\n", FilesArea, res.Files, res.Directories)
+		return err
+	})
 }
