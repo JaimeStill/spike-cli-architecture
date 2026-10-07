@@ -1,15 +1,15 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** brief ready
-- **Task:** validate
-- **Branch:** validate
+- **State:** idle
+- **Task:** none
+- **Branch:** none
 
 ## Tasks
 
 1. [x] dispatcher
 2. [x] composition
 3. [x] files
-4. [ ] validate
+4. [x] validate
 
 ## Task brief · validate
 
@@ -78,10 +78,6 @@ Out of scope  promoting graph, lifecycle, or cli; changing any exported API;
 Door          two-way: the spike repository and goal-record edits only; no
               release. The sync lands its coordinator edits through a pull request.
 ```
-
-## Progress
-
-slices 3/3 committed · standards ✓ · spec ✓ · editor ✓
 
 ## Decisions
 
