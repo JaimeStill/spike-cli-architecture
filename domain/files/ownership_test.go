@@ -160,7 +160,7 @@ func TestList_TheRootAsAUnitTakesNoCursor(t *testing.T) {
 func TestRemoveDirectory_RemovesTheOwnerRowWithTheDirectory(t *testing.T) {
 	s, rec := open(t, resolved(dirID, blobfs.RootID, "reports", 1), sqltest.Response{Affected: 1}, purged())
 
-	d, err := s.RemoveDirectory(context.Background(), "/reports")
+	d, err := s.RemoveDirectory(context.Background(), files.Ref{Path: "/reports"})
 
 	if err != nil || d.ID != dirID {
 		t.Fatalf("RemoveDirectory() = %+v, %v", d, err)
@@ -184,7 +184,7 @@ func TestRemoveDirectory_ARefusalKeepsTheOwnerRow(t *testing.T) {
 		Err:        errors.New("update or delete violates foreign key constraint"),
 	}})
 
-	_, err := s.RemoveDirectory(context.Background(), "/reports")
+	_, err := s.RemoveDirectory(context.Background(), files.Ref{Path: "/reports"})
 
 	if !errors.Is(err, blobfs.ErrNotEmpty) {
 		t.Fatalf("RemoveDirectory() = %v, want ErrNotEmpty", err)

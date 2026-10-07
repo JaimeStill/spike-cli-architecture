@@ -76,10 +76,7 @@ func mkdirFilesArea(svc *graph.Node[*files.Service]) action {
 			if err != nil {
 				return err
 			}
-			if err := r.Show(func(w io.Writer) error {
-				_, err := fmt.Fprintf(w, "mkdir: %s (id %s)\n", path, dir.ID)
-				return err
-			}); err != nil {
+			if err := r.showf("mkdir: %s (id %s)\n", path, dir.ID); err != nil {
 				return err
 			}
 		}
@@ -94,14 +91,7 @@ func put(ctx context.Context, st *files.Storage, r *Reporter, path string, c fil
 		return err
 	}
 	f := res.File
-	etag := "-"
-	if f.ETag != nil {
-		etag = *f.ETag
-	}
-	return r.Show(func(w io.Writer) error {
-		_, err := fmt.Fprintf(w, "put: %s (id %s, %d bytes, etag %s)\n", path, f.ID, sizeOf(f), etag)
-		return err
-	})
+	return r.showf("put: %s (id %s, %d bytes, etag %s)\n", path, f.ID, sizeOf(f), etagOf(f))
 }
 
 func putStream(st *graph.Node[*files.Storage]) action {
@@ -156,10 +146,7 @@ func copyHello(st *graph.Node[*files.Storage]) action {
 		if err != nil {
 			return err
 		}
-		if err := r.Show(func(w io.Writer) error {
-			_, err := fmt.Fprintf(w, "cp: %s -> %s (id %s, %d bytes)\n", res.From, res.To, res.File.ID, sizeOf(res.File))
-			return err
-		}); err != nil {
+		if err := r.showf("cp: %s -> %s (id %s, %d bytes, etag %s)\n", res.From, res.To, res.File.ID, sizeOf(res.File), etagOf(res.File)); err != nil {
 			return err
 		}
 		return catFile(ctx, s, r, res.To, hello)
@@ -191,10 +178,7 @@ func removeCopy(st *graph.Node[*files.Storage]) action {
 		if err != nil {
 			return err
 		}
-		return r.Show(func(w io.Writer) error {
-			_, err := fmt.Fprintf(w, "rm: %s (id %s)\n", path, f.ID)
-			return err
-		})
+		return r.showf("rm: %s (id %s)\n", path, f.ID)
 	}
 }
 
@@ -212,8 +196,5 @@ func removeFilesArea(ctx context.Context, st *files.Storage, r *Reporter) error 
 	if err != nil {
 		return err
 	}
-	return r.Show(func(w io.Writer) error {
-		_, err := fmt.Fprintf(w, "rm --recursive: %s (%d files, %d directories)\n", filesArea, res.Files, res.Directories)
-		return err
-	})
+	return r.showf("rm --recursive: %s (%d files, %d directories)\n", filesArea, res.Files, res.Directories)
 }

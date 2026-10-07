@@ -25,7 +25,7 @@ type Scenario struct {
 // happen, and the action that does it. The action closes over the nodes it
 // reads and reads their values with inv.Get, from the System the
 // dispatcher built and started for the scenario's command, and reports
-// what it observed through r. A step with a nil action is narrated only.
+// what it observed through r.
 type Step struct {
 	Intent string
 	Action func(ctx context.Context, inv *cli.Invocation, r *Reporter) error
@@ -42,26 +42,22 @@ func command(s Scenario) *cli.Command {
 		Summary: s.Summary,
 		Args:    cli.NoArgs,
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			return run(ctx, s, inv, newReporter(inv.Stdout))
+			return run(ctx, s, inv)
 		},
 	}).Use(s.Nodes...)
 }
 
 // run runs s's steps in order with inv, the scenario command's Invocation,
-// narrating each intent through r before its action. It stops at the first
-// action that returns an error, which it returns naming the step by its
-// number and its intent, so a failed run's report says which beat failed;
-// the dispatcher labels it with the command's path, which names the
-// scenario.
-func run(ctx context.Context, s Scenario, inv *cli.Invocation, r *Reporter) error {
+// narrating each intent through a Reporter over inv.Stdout before its
+// action. It stops at the first action that returns an error, which it
+// returns naming the step by its number and its intent, so a failed run's
+// report says which beat failed; the dispatcher labels it with the
+// command's path, which names the scenario. Every action works through
+// ctx, so a ctx that ends fails the step under way, which names it.
+func run(ctx context.Context, s Scenario, inv *cli.Invocation) error {
+	r := &Reporter{w: inv.Stdout}
 	for i, step := range s.Steps {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		r.Intent(i+1, len(s.Steps), step.Intent)
-		if step.Action == nil {
-			continue
-		}
 		if err := step.Action(ctx, inv, r); err != nil {
 			return fmt.Errorf("step %d (%s): %w", i+1, step.Intent, err)
 		}

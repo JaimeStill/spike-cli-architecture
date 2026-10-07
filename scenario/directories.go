@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 
 	"github.com/standards-lab/blobfs"
 
@@ -79,10 +78,7 @@ func mkdirArea(svc *graph.Node[*files.Service]) action {
 		if err != nil {
 			return err
 		}
-		return r.Show(func(w io.Writer) error {
-			_, err := fmt.Fprintf(w, "mkdir: %s (id %s, unit %s)\n", directoriesArea, dir.ID, unit)
-			return err
-		})
+		return r.showf("mkdir: %s (id %s, unit %s)\n", directoriesArea, dir.ID, unit)
 	}
 }
 
@@ -107,10 +103,7 @@ func mkdirChildren(svc *graph.Node[*files.Service]) action {
 			if err != nil {
 				return err
 			}
-			if err := r.Show(func(w io.Writer) error {
-				_, err := fmt.Fprintf(w, "mkdir: %s (id %s)\n", path, dir.ID)
-				return err
-			}); err != nil {
+			if err := r.showf("mkdir: %s (id %s)\n", path, dir.ID); err != nil {
 				return err
 			}
 		}
@@ -193,10 +186,7 @@ func move(svc *graph.Node[*files.Service]) action {
 			if err != nil {
 				return err
 			}
-			if err := r.Show(func(w io.Writer) error {
-				_, err := fmt.Fprintf(w, "mv: %s -> %s (id %s)\n", res.From, res.To, res.ID)
-				return err
-			}); err != nil {
+			if err := r.showf("mv: %s -> %s (id %s)\n", res.From, res.To, res.ID); err != nil {
 				return err
 			}
 		}
@@ -249,12 +239,9 @@ func removeDirectories(ctx context.Context, s *files.Service, r *Reporter, path 
 			}
 		}
 	}
-	dir, err := s.RemoveDirectory(ctx, path)
+	dir, err := s.RemoveDirectory(ctx, files.Ref{Path: path})
 	if err != nil {
 		return err
 	}
-	return r.Show(func(w io.Writer) error {
-		_, err := fmt.Fprintf(w, "rmdir: %s (id %s)\n", path, dir.ID)
-		return err
-	})
+	return r.showf("rmdir: %s (id %s)\n", path, dir.ID)
 }

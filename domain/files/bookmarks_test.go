@@ -37,7 +37,7 @@ func TestAddBookmark_ResolvesHoldsAndInsertsInOneTransaction(t *testing.T) {
 		sqltest.Response{Affected: 1},
 	)
 
-	f, err := s.AddBookmark(context.Background(), "/reports/a.txt", unitID, true)
+	f, err := s.AddBookmark(context.Background(), files.Ref{Path: "/reports/a.txt"}, unitID, true)
 
 	if err != nil || f.ID != fileID {
 		t.Fatalf("AddBookmark() = %+v, %v", f, err)
@@ -71,7 +71,7 @@ func TestAddBookmark_MapsTheBookmarkTablesConstraints(t *testing.T) {
 				tt.violation,
 			)
 
-			_, err := s.AddBookmark(context.Background(), "/reports/a.txt", unitID, true)
+			_, err := s.AddBookmark(context.Background(), files.Ref{Path: "/reports/a.txt"}, unitID, true)
 
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("AddBookmark() = %v, want %v", err, tt.want)
@@ -89,7 +89,7 @@ func TestAddBookmark_MapsTheBookmarkTablesConstraints(t *testing.T) {
 func TestAddBookmark_TheRootIsRefusedBeforeAnyIO(t *testing.T) {
 	s, rec := open(t)
 
-	_, err := s.AddBookmark(context.Background(), "/", unitID, false)
+	_, err := s.AddBookmark(context.Background(), files.Ref{Path: "/"}, unitID, false)
 
 	if !errors.Is(err, blobfs.ErrRootDirectory) {
 		t.Errorf("AddBookmark(/) = %v, want ErrRootDirectory", err)
@@ -102,7 +102,7 @@ func TestAddBookmark_TheRootIsRefusedBeforeAnyIO(t *testing.T) {
 func TestRemoveBookmark_DeletesByTheUnitAndTheFile(t *testing.T) {
 	s, rec := open(t, resolved(dirID, blobfs.RootID, "reports", 1), fileRows(fileRow(fileID, dirID, "a.txt", 3)), sqltest.Response{Affected: 1})
 
-	f, err := s.RemoveBookmark(context.Background(), "/reports/a.txt", unitID)
+	f, err := s.RemoveBookmark(context.Background(), files.Ref{Path: "/reports/a.txt"}, unitID)
 
 	if err != nil || f.ID != fileID {
 		t.Fatalf("RemoveBookmark() = %+v, %v", f, err)
@@ -116,7 +116,7 @@ func TestRemoveBookmark_DeletesByTheUnitAndTheFile(t *testing.T) {
 func TestRemoveBookmark_AFileTheUnitHasNotBookmarkedIsErrNoBookmark(t *testing.T) {
 	s, _ := open(t, resolved(dirID, blobfs.RootID, "reports", 1), fileRows(fileRow(fileID, dirID, "a.txt", 3)), sqltest.Response{})
 
-	_, err := s.RemoveBookmark(context.Background(), "/reports/a.txt", unitID)
+	_, err := s.RemoveBookmark(context.Background(), files.Ref{Path: "/reports/a.txt"}, unitID)
 
 	if !errors.Is(err, files.ErrNoBookmark) {
 		t.Errorf("RemoveBookmark() = %v, want ErrNoBookmark", err)
@@ -126,7 +126,7 @@ func TestRemoveBookmark_AFileTheUnitHasNotBookmarkedIsErrNoBookmark(t *testing.T
 func TestRemoveBookmark_AMissingFileIsLabelledOnceAsTheRemoval(t *testing.T) {
 	s, _ := open(t, resolved(dirID, blobfs.RootID, "reports", 1), fileRows())
 
-	_, err := s.RemoveBookmark(context.Background(), "/reports/a.txt", unitID)
+	_, err := s.RemoveBookmark(context.Background(), files.Ref{Path: "/reports/a.txt"}, unitID)
 
 	if !errors.Is(err, blobfs.ErrNotFound) {
 		t.Fatalf("RemoveBookmark() = %v, want ErrNotFound", err)

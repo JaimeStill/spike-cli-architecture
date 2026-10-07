@@ -26,3 +26,11 @@ func sizeOf(f blobfs.File) int64 {
 	}
 	return *f.Size
 }
+
+// etagOf returns a file's etag, or - when the row records none.
+func etagOf(f blobfs.File) string {
+	if f.ETag == nil {
+		return "-"
+	}
+	return *f.ETag
+}

@@ -3,7 +3,6 @@ package files_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -58,29 +57,22 @@ func runCommand(t *testing.T, responses []sqltest.Response, args ...string) resu
 	return result{code: code, stdout: out.String(), stderr: errOut.String(), rec: rec}
 }
 
-func TestParseRef(t *testing.T) {
-	tests := []struct {
-		arg     string
-		want    files.Ref
-		wantErr error
-	}{
-		{"/reports", files.Ref{Path: "/reports"}, nil},
-		{"reports", files.Ref{Path: "reports"}, nil},
-		{"id:00000000-0000-7000-8000-00000000000A", files.Ref{ID: "00000000-0000-7000-8000-00000000000a"}, nil},
-		{"id:nope", files.Ref{}, blobfs.ErrInvalidID},
-		{"id:" + blobfs.RootID, files.Ref{}, blobfs.ErrInvalidID},
-	}
-	for _, tt := range tests {
-		t.Run(tt.arg, func(t *testing.T) {
-			got, err := files.ParseRef(tt.arg)
+func TestStat_ReadsAnIDArgumentInCanonicalForm(t *testing.T) {
+	// The id is upper case on the command line; the statement binds it in
+	// blobfs's canonical form. The read itself is unscripted and fails.
+	r := runCommand(t, nil, "stat", "id:00000000-0000-7000-8000-00000000000A")
 
-			if !errors.Is(err, tt.wantErr) || (tt.wantErr == nil && err != nil) {
-				t.Fatalf("ParseRef(%q) error = %v, want %v", tt.arg, err, tt.wantErr)
-			}
-			if got != tt.want {
-				t.Errorf("ParseRef(%q) = %+v, want %+v", tt.arg, got, tt.want)
-			}
-		})
+	if r.code != process.ExitFailure {
+		t.Errorf("code = %d, want %d; stderr = %q", r.code, process.ExitFailure, r.stderr)
+	}
+	var bound []any
+	for _, c := range r.rec.Calls() {
+		if c.Op == sqltest.OpQuery {
+			bound = append(bound, c.Args...)
+		}
+	}
+	if !slices.Contains(bound, any("00000000-0000-7000-8000-00000000000a")) {
+		t.Errorf("queries bound %v, want the canonical id", bound)
 	}
 }
 
@@ -145,6 +137,10 @@ func TestCommands_RefuseMalformedInputBeforeAnythingIsBuilt(t *testing.T) {
 		{"an unknown total mode", []string{"ls", "/", "--total", "some"}, `--total "some": the mode is exact or none`},
 		{"a unit that is not a UUID", []string{"mkdir", "/x", "--unit", "nope"}, `--unit "nope" is not a UUID`},
 		{"an id that is not a UUID", []string{"stat", "id:nope"}, "must be a UUID"},
+		{"the root's id", []string{"stat", "id:" + blobfs.RootID}, blobfs.ErrInvalidID.Error()},
+		{"rmdir by id", []string{"rmdir", "id:" + dirID}, "a directory is removed by path, not by id"},
+		{"bookmark add by id", []string{"bookmark", "add", "id:" + fileID, "--unit", unitID}, "a bookmark names its file by path, not by id"},
+		{"bookmark rm by id", []string{"bookmark", "rm", "id:" + fileID, "--unit", unitID}, "a bookmark names its file by path, not by id"},
 		{"mkdir by id", []string{"mkdir", "id:" + dirID}, "a directory is created by path, not by id"},
 		{"a unit's listing by id", []string{"ls", "id:" + dirID, "--unit", unitID}, "a listing by id has no path to derive the unit's scope from"},
 		{"mv from a path to an id", []string{"mv", "/a", "id:" + dirID}, "two paths, or two ids"},

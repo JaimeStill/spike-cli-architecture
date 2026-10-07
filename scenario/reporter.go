@@ -17,11 +17,6 @@ type Reporter struct {
 	started bool // whether anything has been written
 }
 
-// newReporter returns a Reporter writing to w.
-func newReporter(w io.Writer) *Reporter {
-	return &Reporter{w: w}
-}
-
 const indent = "  "
 
 // columns is the width Note wraps prose to, the indent included.
@@ -63,6 +58,16 @@ func (r *Reporter) Show(render func(io.Writer) error) error {
 		r.printf("%s%s%s\n", indent, indent, line)
 	}
 	return nil
+}
+
+// showf shows one line formatted as fmt.Printf formats it, as Show
+// shows what a render writes: a step's one-line result, written as the
+// command it stands for prints it.
+func (r *Reporter) showf(format string, args ...any) error {
+	return r.Show(func(w io.Writer) error {
+		_, err := fmt.Fprintf(w, format, args...)
+		return err
+	})
 }
 
 // printf is the one write every channel goes through; a reporter has no

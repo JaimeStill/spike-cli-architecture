@@ -64,7 +64,7 @@ func mkdir(svc *graph.Node[*Service]) *cli.Command {
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if ref, err = ParseRef(inv.Args[0]); err != nil {
+			if ref, err = parseRef(inv.Args[0]); err != nil {
 				return err
 			}
 			if err := checkMkdir(ref); err != nil {
@@ -82,10 +82,10 @@ func mkdir(svc *graph.Node[*Service]) *cli.Command {
 				return err
 			}
 			if unit != "" {
-				_, err := fmt.Fprintf(inv.Stdout, "mkdir: %s (id %s, unit %s)\n", inv.Args[0], dir.ID, unit)
+				_, err := fmt.Fprintf(inv.Stdout, "mkdir: %s (id %s, unit %s)\n", ref.Path, dir.ID, unit)
 				return err
 			}
-			_, err = fmt.Fprintf(inv.Stdout, "mkdir: %s (id %s)\n", inv.Args[0], dir.ID)
+			_, err = fmt.Fprintf(inv.Stdout, "mkdir: %s (id %s)\n", ref.Path, dir.ID)
 			return err
 		},
 	}
@@ -109,7 +109,7 @@ func ls(svc *graph.Node[*Service]) *cli.Command {
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if ref, err = ParseRef(inv.Args[0]); err != nil {
+			if ref, err = parseRef(inv.Args[0]); err != nil {
 				return err
 			}
 			if l, err = f.listing(); err != nil {
@@ -144,7 +144,7 @@ func stat(svc *graph.Node[*Service]) *cli.Command {
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			ref, err = ParseRef(inv.Args[0])
+			ref, err = parseRef(inv.Args[0])
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
@@ -190,17 +190,25 @@ func mv(svc *graph.Node[*Service]) *cli.Command {
 // rmdir is rmdir <path>: an empty directory removed. A directory that
 // still has contents is refused, and so is the root.
 func rmdir(svc *graph.Node[*Service]) *cli.Command {
+	var ref Ref
 	return (&cli.Command{
 		Name:     "rmdir",
 		Summary:  "Remove an empty directory",
 		Synopsis: "<path>",
 		Args:     cli.ExactArgs(1),
+		Validate: func(inv *cli.Invocation) error {
+			var err error
+			if ref, err = parseRef(inv.Args[0]); err != nil {
+				return err
+			}
+			return checkRemoveDirectory(ref)
+		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			dir, err := inv.Get(svc).RemoveDirectory(ctx, inv.Args[0])
+			dir, err := inv.Get(svc).RemoveDirectory(ctx, ref)
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(inv.Stdout, "rmdir: %s (id %s)\n", inv.Args[0], dir.ID)
+			_, err = fmt.Fprintf(inv.Stdout, "rmdir: %s (id %s)\n", ref.Path, dir.ID)
 			return err
 		},
 	}).Use(svc)
@@ -221,18 +229,22 @@ func bookmark(svc *graph.Node[*Service]) *cli.Command {
 func bookmarkAdd(svc *graph.Node[*Service]) *cli.Command {
 	var unit string
 	var active bool
+	var ref Ref
 	cmd := &cli.Command{
 		Name:     "add",
 		Summary:  "Bookmark the file at a path for a unit; --active makes it the unit's one active bookmark",
 		Synopsis: "<path>",
 		Args:     cli.ExactArgs(1),
-		Validate: func(*cli.Invocation) error {
+		Validate: func(inv *cli.Invocation) error {
 			var err error
+			if ref, err = parseBookmarkRef(inv.Args[0]); err != nil {
+				return err
+			}
 			unit, err = parseUnit(unit)
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			f, err := inv.Get(svc).AddBookmark(ctx, inv.Args[0], unit, active)
+			f, err := inv.Get(svc).AddBookmark(ctx, ref, unit, active)
 			if err != nil {
 				return err
 			}
@@ -240,7 +252,7 @@ func bookmarkAdd(svc *graph.Node[*Service]) *cli.Command {
 			if active {
 				state = "active"
 			}
-			_, err = fmt.Fprintf(inv.Stdout, "bookmark add: %s (file %s, unit %s, %s)\n", inv.Args[0], f.ID, unit, state)
+			_, err = fmt.Fprintf(inv.Stdout, "bookmark add: %s (file %s, unit %s, %s)\n", ref.Path, f.ID, unit, state)
 			return err
 		},
 	}
@@ -287,22 +299,26 @@ func bookmarkLs(svc *graph.Node[*Service]) *cli.Command {
 // the file at the path removed, active or not.
 func bookmarkRm(svc *graph.Node[*Service]) *cli.Command {
 	var unit string
+	var ref Ref
 	cmd := &cli.Command{
 		Name:     "rm",
 		Summary:  "Remove a unit's bookmark of the file at a path, active or not",
 		Synopsis: "<path>",
 		Args:     cli.ExactArgs(1),
-		Validate: func(*cli.Invocation) error {
+		Validate: func(inv *cli.Invocation) error {
 			var err error
+			if ref, err = parseBookmarkRef(inv.Args[0]); err != nil {
+				return err
+			}
 			unit, err = parseUnit(unit)
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			f, err := inv.Get(svc).RemoveBookmark(ctx, inv.Args[0], unit)
+			f, err := inv.Get(svc).RemoveBookmark(ctx, ref, unit)
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(inv.Stdout, "bookmark rm: %s (file %s, unit %s)\n", inv.Args[0], f.ID, unit)
+			_, err = fmt.Fprintf(inv.Stdout, "bookmark rm: %s (file %s, unit %s)\n", ref.Path, f.ID, unit)
 			return err
 		},
 	}
@@ -325,7 +341,7 @@ func put(st *graph.Node[*Storage]) *cli.Command {
 		Args:     cli.ExactArgs(2),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if dst, err = ParseRef(inv.Args[1]); err != nil {
+			if dst, err = parseRef(inv.Args[1]); err != nil {
 				return err
 			}
 			if dst.ID != "" && inv.Args[0] == "-" {
@@ -374,7 +390,7 @@ func cat(st *graph.Node[*Storage]) *cli.Command {
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			ref, err = ParseRef(inv.Args[0])
+			ref, err = parseRef(inv.Args[0])
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
@@ -432,7 +448,7 @@ func rm(st *graph.Node[*Storage]) *cli.Command {
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if ref, err = ParseRef(inv.Args[0]); err != nil {
+			if ref, err = parseRef(inv.Args[0]); err != nil {
 				return err
 			}
 			if recursive {
@@ -526,7 +542,7 @@ func etagOf(f blobfs.File) string {
 // a UUID other than the root's, checked by blobfs.ParseID before any I/O,
 // and is returned in canonical form; anything else is taken as a path,
 // which the Service validates.
-func ParseRef(arg string) (Ref, error) {
+func parseRef(arg string) (Ref, error) {
 	rest, ok := strings.CutPrefix(arg, "id:")
 	if !ok {
 		return Ref{Path: arg}, nil
@@ -541,15 +557,25 @@ func ParseRef(arg string) (Ref, error) {
 // parsePair reads the two arguments of mv or cp, and runs the domain's
 // rule that the two are of one form.
 func parsePair(args []string) (Ref, Ref, error) {
-	src, err := ParseRef(args[0])
+	src, err := parseRef(args[0])
 	if err != nil {
 		return Ref{}, Ref{}, err
 	}
-	dst, err := ParseRef(args[1])
+	dst, err := parseRef(args[1])
 	if err != nil {
 		return Ref{}, Ref{}, err
 	}
 	return src, dst, checkPair(src, dst)
+}
+
+// parseBookmarkRef reads the file argument of bookmark add or rm, and runs
+// the domain's rule that a bookmark names its file by path.
+func parseBookmarkRef(arg string) (Ref, error) {
+	ref, err := parseRef(arg)
+	if err != nil {
+		return Ref{}, err
+	}
+	return ref, checkBookmark(ref)
 }
 
 // pageFlags is the flag set every paged listing takes: the page and its

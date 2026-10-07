@@ -98,12 +98,12 @@ func (o objectStore) open(ctx context.Context, key string) (io.ReadCloser, error
 // blobfs.DeletingError, both before the store is reached. A put or a
 // completion that fails abandons the write, so the name is free for a
 // retry.
-func (o *Storage) Put(ctx context.Context, dst Ref, c Content) (PutResult, error) {
+func (s *Storage) Put(ctx context.Context, dst Ref, c Content) (PutResult, error) {
 	at := dst.Path
 	if dst.ID != "" {
 		at = c.Name + " in directory " + dst.ID
 	}
-	res, err := o.put(ctx, dst, c)
+	res, err := s.put(ctx, dst, c)
 	if err != nil {
 		return PutResult{}, fmt.Errorf("files: put %s: %w", at, err)
 	}
@@ -111,32 +111,32 @@ func (o *Storage) Put(ctx context.Context, dst Ref, c Content) (PutResult, error
 }
 
 // put is Put's body, its errors unlabelled.
-func (o *Storage) put(ctx context.Context, dst Ref, c Content) (PutResult, error) {
+func (s *Storage) put(ctx context.Context, dst Ref, c Content) (PutResult, error) {
 	if dst.ID != "" {
 		if c.Name == "" {
 			return PutResult{}, &FormError{Reason: "a file put into a directory by id takes a name"}
 		}
-		return o.write(ctx, dst.ID, c.Name, c)
+		return s.write(ctx, dst.ID, c.Name, c)
 	}
 	parent, name, err := splitParent(dst.Path)
 	if err != nil {
 		return PutResult{}, err
 	}
-	dir, err := o.store.resolve(ctx, o.store.db, parent)
+	dir, err := s.store.resolve(ctx, s.store.db, parent)
 	if err != nil {
 		return PutResult{}, err
 	}
-	return o.write(ctx, dir.ID, name, c)
+	return s.write(ctx, dir.ID, name, c)
 }
 
 // write writes c as the file name in the directory with directoryID.
-func (o *Storage) write(ctx context.Context, directoryID, name string, c Content) (PutResult, error) {
-	fs, db := o.store.blobfs, o.store.db
+func (s *Storage) write(ctx context.Context, directoryID, name string, c Content) (PutResult, error) {
+	fs, db := s.store.blobfs, s.store.db
 	held, err := fs.Files.FindByName(ctx, db, directoryID, name)
 	switch {
 	case err == nil && held.Status == blobfs.StatusPending:
-		f, _, err := fs.EnsureFile(ctx, db, o.objects, held.ID, c.Body, c.Size, func(tx *sqlate.Tx) (blobfs.File, bfdata.WriteOutcome, error) {
-			return fs.Files.Ensure(ctx, tx, o.objects, directoryID, name, c.ContentType, bfdata.WithID(held.ID))
+		f, _, err := fs.EnsureFile(ctx, db, s.objects, held.ID, c.Body, c.Size, func(tx *sqlate.Tx) (blobfs.File, bfdata.WriteOutcome, error) {
+			return fs.Files.Ensure(ctx, tx, s.objects, directoryID, name, c.ContentType, bfdata.WithID(held.ID))
 		})
 		if err != nil {
 			return PutResult{}, err
@@ -145,8 +145,8 @@ func (o *Storage) write(ctx context.Context, directoryID, name string, c Content
 	case err != nil && !errors.Is(err, blobfs.ErrNotFound):
 		return PutResult{}, err
 	}
-	f, err := fs.WriteFile(ctx, db, o.objects, c.Body, c.Size, func(tx *sqlate.Tx) (blobfs.File, error) {
-		return fs.Files.Create(ctx, tx, o.objects, directoryID, name, c.ContentType)
+	f, err := fs.WriteFile(ctx, db, s.objects, c.Body, c.Size, func(tx *sqlate.Tx) (blobfs.File, error) {
+		return fs.Files.Create(ctx, tx, s.objects, directoryID, name, c.ContentType)
 	})
 	if err != nil {
 		return PutResult{}, err
@@ -158,24 +158,19 @@ func (o *Storage) write(ctx context.Context, directoryID, name string, c Content
 // the row with it; the caller closes the reader. Only an available file
 // has content: a pending or deleting one is ErrNotAvailable, before the
 // store is reached.
-func (o *Storage) Open(ctx context.Context, ref Ref) (io.ReadCloser, blobfs.File, error) {
-	f, err := o.store.file(ctx, o.store.db, ref)
+func (s *Storage) Open(ctx context.Context, ref Ref) (io.ReadCloser, blobfs.File, error) {
+	f, err := s.store.file(ctx, s.store.db, ref)
 	if err != nil {
 		return nil, blobfs.File{}, fmt.Errorf("files: cat %s: %w", label(ref, "file"), err)
 	}
-	body, err := o.open(ctx, f)
+	if err := available(f); err != nil {
+		return nil, blobfs.File{}, fmt.Errorf("files: cat %s: %w", label(ref, "file"), err)
+	}
+	body, err := s.objects.open(ctx, f.Key)
 	if err != nil {
 		return nil, blobfs.File{}, fmt.Errorf("files: cat %s: %w", label(ref, "file"), err)
 	}
 	return body, f, nil
-}
-
-// open checks that f is available and opens its object.
-func (o *Storage) open(ctx context.Context, f blobfs.File) (io.ReadCloser, error) {
-	if err := available(f); err != nil {
-		return nil, err
-	}
-	return o.objects.open(ctx, f.Key)
 }
 
 // available refuses a file that has no content to read or copy: a pending
@@ -210,7 +205,7 @@ func available(f blobfs.File) error {
 // exist, or a destination directory that does not, is blobfs.ErrNotFound,
 // before any row is written; a source that is not available is
 // ErrNotAvailable.
-func (o *Storage) Copy(ctx context.Context, src, dst Ref) (CopyResult, error) {
+func (s *Storage) Copy(ctx context.Context, src, dst Ref) (CopyResult, error) {
 	at := label(src, "file") + " " + label(dst, "directory")
 	if err := checkPair(src, dst); err != nil {
 		return CopyResult{}, fmt.Errorf("files: cp %s: %w", at, err)
@@ -218,7 +213,7 @@ func (o *Storage) Copy(ctx context.Context, src, dst Ref) (CopyResult, error) {
 	if src.ID == "" && !strings.HasPrefix(dst.Path, "/") {
 		return CopyResult{}, fmt.Errorf("files: cp %s: %w: %q does not start with /", at, blobfs.ErrInvalidPath, dst.Path)
 	}
-	res, err := o.copyRef(ctx, src, dst)
+	res, err := s.copyRef(ctx, src, dst)
 	if err != nil {
 		return CopyResult{}, fmt.Errorf("files: cp %s: %w", at, err)
 	}
@@ -228,9 +223,9 @@ func (o *Storage) Copy(ctx context.Context, src, dst Ref) (CopyResult, error) {
 // copyRef is Copy's body, its errors unlabelled: the source read and
 // checked available, the destination's directory, its path, and the
 // copy's name found, and the copy written.
-func (o *Storage) copyRef(ctx context.Context, src, dst Ref) (CopyResult, error) {
-	db := o.store.db
-	f, err := o.store.file(ctx, db, src)
+func (s *Storage) copyRef(ctx context.Context, src, dst Ref) (CopyResult, error) {
+	db := s.store.db
+	f, err := s.store.file(ctx, db, src)
 	if err != nil {
 		return CopyResult{}, err
 	}
@@ -239,22 +234,22 @@ func (o *Storage) copyRef(ctx context.Context, src, dst Ref) (CopyResult, error)
 	}
 	from, dirID, toDir, name := src.Path, dst.ID, "", f.Name
 	if src.ID != "" {
-		fromDir, err := o.store.blobfs.Directories.Path(ctx, db, f.DirectoryID)
+		fromDir, err := s.store.blobfs.Directories.Path(ctx, db, f.DirectoryID)
 		if err != nil {
 			return CopyResult{}, err
 		}
 		from = join(fromDir, f.Name)
-		if toDir, err = o.store.blobfs.Directories.Path(ctx, db, dst.ID); err != nil {
+		if toDir, err = s.store.blobfs.Directories.Path(ctx, db, dst.ID); err != nil {
 			return CopyResult{}, err
 		}
 	} else {
 		var parent blobfs.Directory
-		if parent, toDir, name, err = o.store.destination(ctx, db, dst.Path, f.Name); err != nil {
+		if parent, toDir, name, err = s.store.destination(ctx, db, dst.Path, f.Name); err != nil {
 			return CopyResult{}, err
 		}
 		dirID = parent.ID
 	}
-	made, err := o.copy(ctx, f, dirID, name)
+	made, err := s.copy(ctx, f, dirID, name)
 	if err != nil {
 		return CopyResult{}, err
 	}
@@ -265,16 +260,16 @@ func (o *Storage) copyRef(ctx context.Context, src, dst Ref) (CopyResult, error)
 // directoryID, through blobfs's WriteFile. The body opens src's object on
 // its first read, which WriteFile makes only after the pending row
 // commits, so a refused name never reaches the store.
-func (o *Storage) copy(ctx context.Context, src blobfs.File, directoryID, name string) (blobfs.File, error) {
-	body := &deferredBody{open: func() (io.ReadCloser, error) { return o.objects.open(ctx, src.Key) }}
+func (s *Storage) copy(ctx context.Context, src blobfs.File, directoryID, name string) (blobfs.File, error) {
+	body := &deferredBody{open: func() (io.ReadCloser, error) { return s.objects.open(ctx, src.Key) }}
 	defer body.close()
 	var size int64
 	if src.Size != nil {
 		size = *src.Size
 	}
-	fs := o.store.blobfs
-	return fs.WriteFile(ctx, o.store.db, o.objects, body, size, func(tx *sqlate.Tx) (blobfs.File, error) {
-		return fs.Files.Create(ctx, tx, o.objects, directoryID, name, src.ContentType)
+	fs := s.store.blobfs
+	return fs.WriteFile(ctx, s.store.db, s.objects, body, size, func(tx *sqlate.Tx) (blobfs.File, error) {
+		return fs.Files.Create(ctx, tx, s.objects, directoryID, name, src.ContentType)
 	})
 }
 
@@ -313,14 +308,14 @@ func (b *deferredBody) close() {
 // deleting, and a later Remove finishes it. The root is
 // blobfs.ErrRootDirectory before any I/O, and a file that does not exist
 // is blobfs.ErrNotFound.
-func (o *Storage) Remove(ctx context.Context, ref Ref) (blobfs.File, error) {
+func (s *Storage) Remove(ctx context.Context, ref Ref) (blobfs.File, error) {
 	if ref.ID == "" {
 		if _, _, err := splitParent(ref.Path); err != nil {
 			return blobfs.File{}, fmt.Errorf("files: rm %s: %w", ref.Path, err)
 		}
 	}
-	f, err := o.remove(ctx, func(tx *sqlate.Tx) (blobfs.File, error) {
-		return o.store.file(ctx, tx, ref)
+	f, err := s.remove(ctx, func(tx *sqlate.Tx) (blobfs.File, error) {
+		return s.store.file(ctx, tx, ref)
 	})
 	if err != nil {
 		return blobfs.File{}, fmt.Errorf("files: rm %s: %w", label(ref, "file"), err)
@@ -331,14 +326,14 @@ func (o *Storage) Remove(ctx context.Context, ref Ref) (blobfs.File, error) {
 // remove runs blobfs's RemoveFile of the file find reads in the delete's
 // transaction, after the domain's removable check, and returns the row
 // find read.
-func (o *Storage) remove(ctx context.Context, find func(*sqlate.Tx) (blobfs.File, error)) (blobfs.File, error) {
+func (s *Storage) remove(ctx context.Context, find func(*sqlate.Tx) (blobfs.File, error)) (blobfs.File, error) {
 	var f blobfs.File
-	err := o.store.blobfs.RemoveFile(ctx, o.store.db, o.objects, func(tx *sqlate.Tx) (string, error) {
+	err := s.store.blobfs.RemoveFile(ctx, s.store.db, s.objects, func(tx *sqlate.Tx) (string, error) {
 		var err error
 		if f, err = find(tx); err != nil {
 			return "", err
 		}
-		if err := o.removable(ctx, tx, f); err != nil {
+		if err := s.removable(ctx, tx, f); err != nil {
 			return "", err
 		}
 		return f.ID, nil
@@ -359,11 +354,11 @@ func (o *Storage) remove(ctx context.Context, find func(*sqlate.Tx) (blobfs.File
 // then refuses the deleting row. A row deleting already, which an earlier
 // rm left, cannot be held and needs no hold, since no add can reach it; its
 // bookmarks are counted all the same.
-func (o *Storage) removable(ctx context.Context, tx *sqlate.Tx, f blobfs.File) error {
-	if err := o.store.blobfs.Files.Hold(ctx, tx, f.ID); err != nil && !errors.Is(err, blobfs.ErrDeleting) {
+func (s *Storage) removable(ctx context.Context, tx *sqlate.Tx, f blobfs.File) error {
+	if err := s.store.blobfs.Files.Hold(ctx, tx, f.ID); err != nil && !errors.Is(err, blobfs.ErrDeleting) {
 		return err
 	}
-	n, err := o.store.bookmarksOfFile(ctx, tx, f.ID)
+	n, err := s.store.bookmarksOfFile(ctx, tx, f.ID)
 	if err != nil {
 		return err
 	}
@@ -399,7 +394,7 @@ func (o *Storage) removable(ctx context.Context, tx *sqlate.Tx, f blobfs.File) e
 // delete, leave their rows for a later run; the error of the last pass is
 // returned with the counts. The root is blobfs.ErrRootDirectory before any
 // I/O.
-func (o *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) {
+func (s *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) {
 	if err := checkRemoveTree(ref); err != nil {
 		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", label(ref, "directory"), err)
 	}
@@ -407,8 +402,8 @@ func (o *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) 
 	if _, _, err := splitParent(path); err != nil {
 		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", path, err)
 	}
-	fs, db := o.store.blobfs, o.store.db
-	dir, err := o.store.resolve(ctx, db, path)
+	fs, db := s.store.blobfs, s.store.db
+	dir, err := s.store.resolve(ctx, db, path)
 	if err != nil {
 		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", path, err)
 	}
@@ -417,7 +412,7 @@ func (o *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) 
 		if err != nil {
 			return bfdata.Marked{}, err
 		}
-		n, err := o.store.bookmarksInBranch(ctx, tx, dir.ID)
+		n, err := s.store.bookmarksInBranch(ctx, tx, dir.ID)
 		if err != nil {
 			return bfdata.Marked{}, err
 		}
@@ -430,13 +425,13 @@ func (o *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) 
 		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", path, err)
 	}
 	removeOwner := bfdata.OnRemoveDirectory(func(ctx context.Context, tx *sqlate.Tx, dir blobfs.Directory) error {
-		return o.store.deleteOwner(ctx, tx, dir.ID)
+		return s.store.deleteOwner(ctx, tx, dir.ID)
 	})
 	var removed TreeRemoval
 	var last error
 	err = bfdata.SweepUntilDone(ctx, nil,
 		func(ctx context.Context) (bfdata.SweepResult, error) {
-			return fs.Sweep(ctx, db, o.objects, removeOwner)
+			return fs.Sweep(ctx, db, s.objects, removeOwner)
 		},
 		func(res bfdata.SweepResult, err error) {
 			removed.Files += res.Files

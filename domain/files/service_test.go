@@ -87,23 +87,23 @@ func fileRows(rows ...[]driver.Value) sqltest.Response {
 	return sqltest.Response{Columns: fileColumns, Rows: rows}
 }
 
-func TestVerify_PreparesBlobfsTheEnginesAndTheDomainsStatements(t *testing.T) {
+func TestStart_PreparesBlobfsTheEnginesAndTheDomainsStatements(t *testing.T) {
 	s, rec := open(t)
 
-	if err := s.Verify(context.Background()); err != nil {
-		t.Fatalf("Verify() = %v", err)
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start() = %v", err)
 	}
 
 	prepared := rec.SQL(sqltest.OpPrepare)
 	if len(prepared) == 0 {
-		t.Fatal("Verify prepared nothing")
+		t.Fatal("Start prepared nothing")
 	}
 	if !slices.ContainsFunc(prepared, func(q string) bool { return strings.Contains(q, "pg_advisory_xact_lock") }) {
-		t.Errorf("Verify did not prepare the engine's tree lock; prepared:\n%s", strings.Join(prepared, "\n---\n"))
+		t.Errorf("Start did not prepare the engine's tree lock; prepared:\n%s", strings.Join(prepared, "\n---\n"))
 	}
 	for _, table := range []string{"INSERT INTO directory_owner", "JOIN directory_owner", "INSERT INTO bookmark", "FROM bookmark b"} {
 		if !slices.ContainsFunc(prepared, func(q string) bool { return strings.Contains(q, table) }) {
-			t.Errorf("Verify did not prepare a statement with %q", table)
+			t.Errorf("Start did not prepare a statement with %q", table)
 		}
 	}
 	if ops := rec.Ops(); slices.ContainsFunc(ops, func(op sqltest.Op) bool { return op != sqltest.OpPrepare }) {
@@ -111,17 +111,17 @@ func TestVerify_PreparesBlobfsTheEnginesAndTheDomainsStatements(t *testing.T) {
 	}
 }
 
-func TestVerify_AnUnappliedSchemaIsErrVerify(t *testing.T) {
+func TestStart_AnUnappliedSchemaIsErrVerify(t *testing.T) {
 	s, rec := open(t)
 	rec.FailPrepare = func(string) error { return errors.New(`relation "blobfs_directory" does not exist`) }
 
-	err := s.Verify(context.Background())
+	err := s.Start(context.Background())
 
 	if !errors.Is(err, files.ErrVerify) {
-		t.Fatalf("Verify() = %v, want ErrVerify", err)
+		t.Fatalf("Start() = %v, want ErrVerify", err)
 	}
 	if !strings.Contains(err.Error(), "run blobfs schema up") || !strings.Contains(err.Error(), "does not exist") {
-		t.Errorf("Verify() = %q, want the fix and the cause", err)
+		t.Errorf("Start() = %q, want the fix and the cause", err)
 	}
 }
 
@@ -411,7 +411,7 @@ func TestMkdir_AMissingParentIsNotFound(t *testing.T) {
 func TestRemoveDirectory_TheRootIsRefusedBeforeAnyIO(t *testing.T) {
 	s, rec := open(t)
 
-	_, err := s.RemoveDirectory(context.Background(), "/")
+	_, err := s.RemoveDirectory(context.Background(), files.Ref{Path: "/"})
 
 	if !errors.Is(err, blobfs.ErrRootDirectory) {
 		t.Errorf("RemoveDirectory(/) = %v, want ErrRootDirectory", err)
@@ -528,6 +528,18 @@ func TestFormRules_RefuseBeforeAnyIO(t *testing.T) {
 			_, err := s.Mkdir(context.Background(), byID, "")
 			return err
 		}, "a directory is created by path, not by id"},
+		{"rmdir by id", func(s *files.Service, _ *files.Storage) error {
+			_, err := s.RemoveDirectory(context.Background(), byID)
+			return err
+		}, "a directory is removed by path, not by id"},
+		{"a bookmark's add by id", func(s *files.Service, _ *files.Storage) error {
+			_, err := s.AddBookmark(context.Background(), files.Ref{ID: fileID}, unitID, false)
+			return err
+		}, "a bookmark names its file by path, not by id"},
+		{"a bookmark's removal by id", func(s *files.Service, _ *files.Storage) error {
+			_, err := s.RemoveBookmark(context.Background(), files.Ref{ID: fileID}, unitID)
+			return err
+		}, "a bookmark names its file by path, not by id"},
 		{"a unit's listing by id", func(s *files.Service, _ *files.Storage) error {
 			_, err := s.List(context.Background(), byID, files.Listing{Page: 1, Size: 20, Unit: unitID})
 			return err

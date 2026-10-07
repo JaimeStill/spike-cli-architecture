@@ -26,7 +26,7 @@ type Service struct {
 // then the domain's, compiled against it for db's dialect. opts reach
 // blobfs's store as they are: the composition root fixes blobfs's engine
 // with bfdata.WithEngine, and without one the store runs blobfs's baseline.
-// No I/O happens here; [Service.Verify] checks the statements against the
+// No I/O happens here; [Service.Start] checks the statements against the
 // database.
 func New(db *sqlate.DB, opts ...bfdata.Option) (*Service, error) {
 	st, err := newStore(db, opts...)
@@ -36,20 +36,14 @@ func New(db *sqlate.DB, opts ...bfdata.Option) (*Service, error) {
 	return &Service{store: st}, nil
 }
 
-// Start runs [Service.Verify], so the Service takes part in a lifecycle's
-// startup as a start-only participant: a schema that is not applied fails
-// the command at start, before its body runs. The Service holds nothing to
-// shut down.
-func (s *Service) Start(ctx context.Context) error {
-	return s.Verify(ctx)
-}
-
-// Verify prepares every statement of blobfs's, its engine's included, and
+// Start prepares every statement of blobfs's, its engine's included, and
 // of the domain's, and probes every listing's field contract against the
-// database, so a schema that is not applied, or no longer matches the
-// statements, fails before a command does any work. A failure wraps
-// ErrVerify and the causes.
-func (s *Service) Verify(ctx context.Context) error {
+// database, so the Service takes part in a lifecycle's startup as a
+// start-only participant: a schema that is not applied, or no longer
+// matches the statements, fails the command at start, before its body
+// runs. A failure wraps ErrVerify and the causes. The Service holds
+// nothing to shut down.
+func (s *Service) Start(ctx context.Context) error {
 	if err := s.store.verify(ctx); err != nil {
 		return fmt.Errorf("%w: %w", ErrVerify, err)
 	}
@@ -70,21 +64,35 @@ func checkList(ref Ref, l Listing) error {
 	return nil
 }
 
-// checkMkdir refuses a directory's create named by id: the directory does
-// not exist yet, so it has no id.
-func checkMkdir(ref Ref) error {
+// pathOnly refuses ref named by id, for an operation that takes a path
+// alone; reason says which form it takes, and why, in the domain's terms.
+func pathOnly(ref Ref, reason string) error {
 	if ref.ID != "" {
-		return &FormError{Reason: "a directory is created by path, not by id"}
+		return &FormError{Reason: reason}
 	}
 	return nil
 }
 
+// checkMkdir refuses a directory's create named by id: the directory does
+// not exist yet, so it has no id.
+func checkMkdir(ref Ref) error {
+	return pathOnly(ref, "a directory is created by path, not by id")
+}
+
+// checkRemoveDirectory refuses an empty directory's removal named by id.
+func checkRemoveDirectory(ref Ref) error {
+	return pathOnly(ref, "a directory is removed by path, not by id")
+}
+
 // checkRemoveTree refuses a branch's delete named by id.
 func checkRemoveTree(ref Ref) error {
-	if ref.ID != "" {
-		return &FormError{Reason: "a branch is removed by path, not by id"}
-	}
-	return nil
+	return pathOnly(ref, "a branch is removed by path, not by id")
+}
+
+// checkBookmark refuses a bookmark's add or removal whose file is named by
+// id.
+func checkBookmark(ref Ref) error {
+	return pathOnly(ref, "a bookmark names its file by path, not by id")
 }
 
 // checkPair refuses a move or a copy whose source and destination are not
@@ -232,7 +240,7 @@ func (s *Service) Stat(ctx context.Context, ref Ref) (Entry, error) {
 func (s *Service) Resolve(ctx context.Context, ref Ref) (blobfs.Directory, error) {
 	d, err := s.store.directory(ctx, s.store.db, ref)
 	if err != nil {
-		return blobfs.Directory{}, fmt.Errorf("files: stat %s: %w", label(ref, "directory"), err)
+		return blobfs.Directory{}, fmt.Errorf("files: resolve %s: %w", label(ref, "directory"), err)
 	}
 	return d, nil
 }
@@ -285,18 +293,23 @@ func (s *Service) Mkdir(ctx context.Context, ref Ref, unit string) (blobfs.Direc
 	return made, nil
 }
 
-// RemoveDirectory removes the empty directory at path, with its owner row
-// when it has one, in one transaction: the path is resolved, the owner row
-// removed, and the directory removed through blobfs, whose refusal rolls
-// the owner row back with it. A directory that still has directories or
-// files under it is blobfs.ErrNotEmpty, and the root is
+// RemoveDirectory removes the empty directory at ref's path, with its
+// owner row when it has one, in one transaction: the path is resolved, the
+// owner row removed, and the directory removed through blobfs, whose
+// refusal rolls the owner row back with it. A directory is removed by path
+// alone (a [FormError] for an id, before any I/O). A directory that still
+// has directories or files under it is blobfs.ErrNotEmpty, and the root is
 // blobfs.ErrRootDirectory before any I/O.
-func (s *Service) RemoveDirectory(ctx context.Context, path string) (blobfs.Directory, error) {
-	if _, _, err := splitParent(path); err != nil {
-		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", path, err)
+func (s *Service) RemoveDirectory(ctx context.Context, ref Ref) (blobfs.Directory, error) {
+	at := label(ref, "directory")
+	if err := checkRemoveDirectory(ref); err != nil {
+		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", at, err)
+	}
+	if _, _, err := splitParent(ref.Path); err != nil {
+		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", at, err)
 	}
 	dir, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (blobfs.Directory, error) {
-		dir, err := s.store.resolve(ctx, tx, path)
+		dir, err := s.store.resolve(ctx, tx, ref.Path)
 		if err != nil {
 			return blobfs.Directory{}, err
 		}
@@ -306,7 +319,7 @@ func (s *Service) RemoveDirectory(ctx context.Context, path string) (blobfs.Dire
 		return dir, s.store.blobfs.Directories.Delete(ctx, tx, dir.ID)
 	})
 	if err != nil {
-		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", path, err)
+		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", at, err)
 	}
 	return dir, nil
 }
@@ -457,12 +470,13 @@ func (s *Service) moveID(ctx context.Context, tx *sqlate.Tx, src, dst Ref) (Move
 	return res, nil
 }
 
-// AddBookmark records that the unit bookmarks the file at path and returns
-// the file's row. With active, the bookmark becomes the unit's one active
-// bookmark, and the add is refused with ErrActiveBookmark while another
-// bookmark of the unit is active; the other one is left as it is. The
-// parent's resolution, the file's lookup, the hold of the file, and the
-// insert run in one transaction.
+// AddBookmark records that the unit bookmarks the file at ref's path and
+// returns the file's row. A bookmark names its file by path alone (a
+// [FormError] for an id, before any I/O). With active, the bookmark
+// becomes the unit's one active bookmark, and the add is refused with
+// ErrActiveBookmark while another bookmark of the unit is active; the
+// other one is left as it is. The parent's resolution, the file's lookup,
+// the hold of the file, and the insert run in one transaction.
 //
 // The hold is blobfs's reference-then-delete rule: Files.Hold locks the
 // file's row until the transaction ends, so a delete that begins meanwhile
@@ -474,12 +488,16 @@ func (s *Service) moveID(ctx context.Context, tx *sqlate.Tx, src, dst Ref) (Move
 // under way. A file the unit has bookmarked already is
 // ErrAlreadyBookmarked, active or not. The root is blobfs.ErrRootDirectory
 // before any I/O.
-func (s *Service) AddBookmark(ctx context.Context, path, unit string, active bool) (blobfs.File, error) {
-	if _, _, err := splitParent(path); err != nil {
-		return blobfs.File{}, fmt.Errorf("files: bookmark add %s: %w", path, err)
+func (s *Service) AddBookmark(ctx context.Context, ref Ref, unit string, active bool) (blobfs.File, error) {
+	at := label(ref, "file")
+	if err := checkBookmark(ref); err != nil {
+		return blobfs.File{}, fmt.Errorf("files: bookmark add %s: %w", at, err)
+	}
+	if _, _, err := splitParent(ref.Path); err != nil {
+		return blobfs.File{}, fmt.Errorf("files: bookmark add %s: %w", at, err)
 	}
 	f, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (blobfs.File, error) {
-		f, err := s.store.file(ctx, tx, Ref{Path: path})
+		f, err := s.store.file(ctx, tx, ref)
 		if err != nil {
 			return blobfs.File{}, err
 		}
@@ -492,25 +510,30 @@ func (s *Service) AddBookmark(ctx context.Context, path, unit string, active boo
 		return f, s.store.insertBookmark(ctx, tx, unit, f.ID, active)
 	})
 	if err != nil {
-		return blobfs.File{}, fmt.Errorf("files: bookmark add %s as unit %s: %w", path, unit, err)
+		return blobfs.File{}, fmt.Errorf("files: bookmark add %s as unit %s: %w", at, unit, err)
 	}
 	return f, nil
 }
 
-// RemoveBookmark removes the unit's bookmark of the file at path, active or
-// not, and returns the file's row. The path is resolved and the row deleted
-// on the pool: the delete is keyed by the unit and the file's id, so the two
-// need not share a snapshot. A file that does not exist is
-// blobfs.ErrNotFound; a file the unit has not bookmarked is ErrNoBookmark.
-// Removing the active bookmark leaves the unit with none, which a later add
-// with active may fill.
-func (s *Service) RemoveBookmark(ctx context.Context, path, unit string) (blobfs.File, error) {
-	f, err := s.store.file(ctx, s.store.db, Ref{Path: path})
+// RemoveBookmark removes the unit's bookmark of the file at ref's path,
+// active or not, and returns the file's row. A bookmark names its file by
+// path alone (a [FormError] for an id, before any I/O). The path is
+// resolved and the row deleted on the pool: the delete is keyed by the
+// unit and the file's id, so the two need not share a snapshot. A file
+// that does not exist is blobfs.ErrNotFound; a file the unit has not
+// bookmarked is ErrNoBookmark. Removing the active bookmark leaves the
+// unit with none, which a later add with active may fill.
+func (s *Service) RemoveBookmark(ctx context.Context, ref Ref, unit string) (blobfs.File, error) {
+	at := label(ref, "file")
+	if err := checkBookmark(ref); err != nil {
+		return blobfs.File{}, fmt.Errorf("files: bookmark rm %s: %w", at, err)
+	}
+	f, err := s.store.file(ctx, s.store.db, ref)
 	if err == nil {
 		err = s.store.deleteBookmark(ctx, s.store.db, unit, f.ID)
 	}
 	if err != nil {
-		return blobfs.File{}, fmt.Errorf("files: bookmark rm %s as unit %s: %w", path, unit, err)
+		return blobfs.File{}, fmt.Errorf("files: bookmark rm %s as unit %s: %w", at, unit, err)
 	}
 	return f, nil
 }

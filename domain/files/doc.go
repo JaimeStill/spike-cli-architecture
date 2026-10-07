@@ -25,8 +25,7 @@
 //     whose add holds the file, blobfs's reference-then-delete rule,
 //     before it inserts. It holds the form rules each operation runs
 //     before any I/O, which the commands run in Validate too.
-//     [Service.Start] runs [Service.Verify], which prepares every
-//     statement against the database.
+//     [Service.Start] prepares every statement against the database.
 //   - database.go holds the unexported store, the data access the Service
 //     and the Storage share: the domain's pattern catalog, and blobfs's
 //     statements, with whatever engine the caller passes, and the domain's
@@ -54,13 +53,14 @@
 //     form rules return.
 //   - commands.go holds the command functions, one per command over the
 //     node it reads, their flag structs, and the CLI-syntax parsers:
-//     [ParseRef], the filter and sort terms, and --unit. A command that
+//     the path-or-id argument, the filter and sort terms, and --unit. A
+//     command that
 //     changes state prints its one-line success there, and a command adds
 //     its flags' wording to the domain's refusals it reports. ls, stat, mv,
 //     put's destination, cat, cp, and rm take an argument written as
-//     id:<uuid> in place of a path; rm --recursive, mkdir, ls --unit, and
-//     the bookmark subcommands take a path alone. Each bookmark subcommand
-//     requires --unit.
+//     id:<uuid> in place of a path; mkdir, rmdir, rm --recursive, ls
+//     --unit, and the bookmark subcommands take a path alone. Each bookmark
+//     subcommand requires --unit.
 //   - output.go renders the listings and the rows, over package output's
 //     Table and Record: ls's listing and each half's page, bookmark ls's
 //     listing, and stat's file and directory records.
@@ -85,16 +85,14 @@
 //
 //   - [Commands], which builds the domain's whole command surface over the
 //     Service's and the Storage's nodes, each command declaring its own
-//   - [Service], [New], [Service.Start], and [Service.Verify]; [Storage]
-//     and [NewStorage]
+//   - [Service], [New], and [Service.Start]; [Storage] and [NewStorage]
 //   - the Service's operations: [Service.List], [Service.Stat],
 //     [Service.Resolve], [Service.Mkdir], [Service.Move],
 //     [Service.RemoveDirectory], [Service.AddBookmark],
 //     [Service.RemoveBookmark], and [Service.ListBookmarks]
 //   - the Storage's operations: [Storage.Put], [Storage.Open],
 //     [Storage.Copy], [Storage.Remove], and [Storage.RemoveTree]
-//   - the shapes they take and return, and [ParseRef], which reads a
-//     command line's path-or-id argument
+//   - the shapes they take and return
 //   - [WriteContents], [WriteFileRecord], and [WriteDirectoryRecord],
 //     which write a listing and a row as ls and stat print them, so the
 //     scenario package's tours show a result as the command does
