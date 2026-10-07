@@ -180,7 +180,7 @@ func TestRemoveBookmark_AMissingFileIsLabelledOnceAsTheRemoval(t *testing.T) {
 	if !errors.Is(err, blobfs.ErrNotFound) {
 		t.Fatalf("RemoveBookmark() = %v, want ErrNotFound", err)
 	}
-	want := "files: remove bookmark /reports/a.txt as unit " + unitID + ": "
+	want := "files: remove bookmark of /reports/a.txt for unit " + unitID + ": "
 	if msg := err.Error(); !strings.HasPrefix(msg, want) || strings.Count(msg, "files:") != 1 {
 		t.Errorf("RemoveBookmark() = %q, want it to start %q and name the package once", msg, want)
 	}

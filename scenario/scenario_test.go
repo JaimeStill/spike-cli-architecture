@@ -82,10 +82,10 @@ func (s *stack) run(args ...string) (code int, stdout, stderr string) {
 // listing is the scenario listing over the stack's nodes.
 const listing = "" +
 	"Scenarios:\n" +
-	"  directories  Tour the directory commands on Postgres alone: mkdir, ls, stat, mv, rmdir\n" +
-	"               uses files\n" +
-	"  files        Tour the object commands on Postgres and the store: put, cat, cp, rm, rm --recursive\n" +
-	"               uses files, storage\n"
+	"  directories   Tour the directory commands on Postgres alone: mkdir, ls, stat, mv, rmdir\n" +
+	"                uses files\n" +
+	"  files         Tour the object commands on Postgres and the store: put, cat, cp, rm, rm --recursive\n" +
+	"                uses files, storage\n"
 
 func TestCommands_AloneHelpListsTheToursAndEndsWithTheListing(t *testing.T) {
 	for _, args := range [][]string{{"scenario"}, {"scenario", "--help"}} {
@@ -96,10 +96,15 @@ func TestCommands_AloneHelpListsTheToursAndEndsWithTheListing(t *testing.T) {
 		if code != process.ExitUsage {
 			t.Errorf("%v: code = %d, want %d", args, code, process.ExitUsage)
 		}
-		for _, want := range []string{"Usage:\n  prog scenario <command> [flags]\n", "Commands:\n", "  directories ", "  files "} {
+		// The Commands section and the listing pad the name column to one
+		// width, so each tour's line starts the same in both.
+		for _, want := range []string{"Usage:\n  prog scenario <command> [flags]\n", "Commands:\n  directories   Tour the directory commands", "\n  files         Tour the object commands"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("%v: help lacks %q:\n%s", args, want, out)
 			}
+		}
+		if strings.Count(out, "  directories   Tour ") != 2 || strings.Count(out, "  files         Tour ") != 2 {
+			t.Errorf("%v: help:\n%s\nwant each tour's line padded alike in Commands and Scenarios", args, out)
 		}
 		if !strings.HasSuffix(out, "\n\n"+listing) {
 			t.Errorf("%v: help:\n%s\nwant it to end with:\n%s", args, out, listing)

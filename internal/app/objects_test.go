@@ -250,7 +250,7 @@ func TestObjects_RmRecursiveByIDReportsTheBranchsPath(t *testing.T) {
 	if code != process.ExitOK {
 		t.Fatalf("code = %d, want %d; stderr = %q", code, process.ExitOK, errOut.String())
 	}
-	if want := "rm --recursive: /reports/2026 (0 files, 1 directories)\n"; out.String() != want {
+	if want := "rm --recursive: /reports/2026 (0 files, 1 directory)\n"; out.String() != want {
 		t.Errorf("stdout = %q, want %q", out.String(), want)
 	}
 	if n := rec.Pending(); n != 0 {
@@ -307,6 +307,10 @@ func TestObjects_UsageErrorsBuildNothing(t *testing.T) {
 		{"cat of a relative path", []string{"cat", "a.txt"}, "blobfs cat: blobfs: invalid path: \"a.txt\" does not start with /\n"},
 		{"put to a relative path", []string{"put", "-", "a.txt"}, "blobfs put: blobfs: invalid path: \"a.txt\" does not start with /\n"},
 		{"cp from a relative path", []string{"cp", "a.txt", "/b.txt"}, "blobfs cp: blobfs: invalid path: \"a.txt\" does not start with /\n"},
+		{"cp and its synopsis", []string{"cp", "/a.txt"}, "Usage: blobfs cp [flags] <path|id:<uuid>> <path|id:<uuid>>"},
+		{"rm of the root", []string{"rm", "/"}, "blobfs rm: blobfs: the root directory; rm removes a file, or with --recursive a directory, below the root\n"},
+		{"rm --recursive of the root", []string{"rm", "--recursive", "/"}, "blobfs rm: blobfs: the root directory; rm removes a file, or with --recursive a directory, below the root\n"},
+		{"rm --recursive of the root's id", []string{"rm", "--recursive", "id:" + blobfs.RootID}, "the nil UUID is the root's"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/domain/files"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
+	"github.com/JaimeStill/spike-cli-architecture/output"
 )
 
 // filesArea is the files tour's working area, a top-level directory the
@@ -91,7 +92,7 @@ func put(ctx context.Context, st *files.Storage, r *Reporter, path string, c fil
 		return err
 	}
 	f := res.File
-	return r.showf("put: %s (id %s, %d bytes, etag %s)\n", path, f.ID, sizeOf(f), etagOf(f))
+	return r.showf("put: %s (id %s, %s, etag %s)\n", path, f.ID, output.Count(sizeOf(f), "byte", "bytes"), etagOf(f))
 }
 
 func putStream(st *graph.Node[*files.Storage]) action {
@@ -146,7 +147,7 @@ func copyHello(st *graph.Node[*files.Storage]) action {
 		if err != nil {
 			return err
 		}
-		if err := r.showf("cp: %s -> %s (id %s, %d bytes, etag %s)\n", res.From, res.To, res.File.ID, sizeOf(res.File), etagOf(res.File)); err != nil {
+		if err := r.showf("cp: %s -> %s (id %s, %s, etag %s)\n", res.From, res.To, res.File.ID, output.Count(sizeOf(res.File), "byte", "bytes"), etagOf(res.File)); err != nil {
 			return err
 		}
 		return catFile(ctx, s, r, res.To, hello)
@@ -196,5 +197,5 @@ func removeFilesArea(ctx context.Context, st *files.Storage, r *Reporter) error 
 	if err != nil {
 		return err
 	}
-	return r.showf("rm --recursive: %s (%d files, %d directories)\n", filesArea, res.Files, res.Directories)
+	return r.showf("rm --recursive: %s (%s, %s)\n", filesArea, output.Count(res.Files, "file", "files"), output.Count(res.Directories, "directory", "directories"))
 }

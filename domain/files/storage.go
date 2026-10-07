@@ -11,6 +11,8 @@ import (
 	bfdata "github.com/standards-lab/blobfs/data"
 	"github.com/standards-lab/go-storage"
 	"github.com/standards-lab/sqlate"
+
+	"github.com/JaimeStill/spike-cli-architecture/output"
 )
 
 // This file holds the Storage and the blob protocol: the object operations,
@@ -221,11 +223,11 @@ func available(f blobfs.File) error {
 // before any row is written; a source that is not available is
 // ErrNotAvailable.
 func (s *Storage) Copy(ctx context.Context, src, dst Ref) (CopyResult, error) {
-	at := label(src, "file") + " " + label(dst, "directory")
+	at := label(src, "file") + " into " + label(dst, "directory")
 	if dst.ID == "" && !strings.HasPrefix(dst.Path, "/") {
 		return CopyResult{}, fmt.Errorf("files: copy %s: %w: %q does not start with /", at, blobfs.ErrInvalidPath, dst.Path)
 	}
-	res, err := s.copyRef(ctx, src, dst)
+	res, err := s.copyRef(ctx, src, dst, &at)
 	if err != nil {
 		return CopyResult{}, fmt.Errorf("files: copy %s: %w", at, err)
 	}
@@ -234,8 +236,12 @@ func (s *Storage) Copy(ctx context.Context, src, dst Ref) (CopyResult, error) {
 
 // copyRef is Copy's body, its errors unlabelled: the source read and
 // checked available, its path, the destination's directory, its path, and
-// the copy's name found, and the copy written.
-func (s *Storage) copyRef(ctx context.Context, src, dst Ref) (CopyResult, error) {
+// the copy's name found, and the copy written. It rewrites *at, the label
+// Copy gives an error, as each side resolves: the source's path once it is
+// computed, and then the destination directory's path, with the copy's
+// name after "as" when it is not the source's, so an error after the
+// resolution names the paths, not the arguments.
+func (s *Storage) copyRef(ctx context.Context, src, dst Ref, at *string) (CopyResult, error) {
 	db := s.store.db
 	f, err := s.store.file(ctx, db, src)
 	if err != nil {
@@ -248,9 +254,14 @@ func (s *Storage) copyRef(ctx context.Context, src, dst Ref) (CopyResult, error)
 	if err != nil {
 		return CopyResult{}, err
 	}
+	*at = from + " into " + label(dst, "directory")
 	dirID, toDir, name, err := s.store.destination(ctx, db, dst, f.Name)
 	if err != nil {
 		return CopyResult{}, err
+	}
+	*at = from + " into " + toDir
+	if name != f.Name {
+		*at += " as " + name
 	}
 	made, err := s.copy(ctx, f, dirID, name)
 	if err != nil {
@@ -313,10 +324,8 @@ func (b *deferredBody) close() {
 // blobfs.ErrRootDirectory before any I/O, and a file that does not exist is
 // blobfs.ErrNotFound.
 func (s *Storage) Remove(ctx context.Context, ref Ref) (Located[blobfs.File], error) {
-	if ref.ID == "" {
-		if _, _, err := splitParent(ref.Path); err != nil {
-			return Located[blobfs.File]{}, fmt.Errorf("files: remove %s: %w", ref.Path, err)
-		}
+	if err := checkRoot(ref); err != nil {
+		return Located[blobfs.File]{}, fmt.Errorf("files: remove %s: %w", label(ref, "file"), err)
 	}
 	var path string
 	f, err := s.remove(ctx, func(tx *sqlate.Tx) (blobfs.File, error) {
@@ -373,7 +382,7 @@ func (s *Storage) removable(ctx context.Context, tx *sqlate.Tx, f blobfs.File) e
 		return err
 	}
 	if n > 0 {
-		return fmt.Errorf("%d unit(s) bookmark the file: %w", n, ErrBookmarked)
+		return &bookmarkedError{count: n}
 	}
 	return nil
 }
@@ -407,7 +416,7 @@ func (s *Storage) removable(ctx context.Context, tx *sqlate.Tx, f blobfs.File) e
 // I/O, by path or by the root's id.
 func (s *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) {
 	at := label(ref, "directory")
-	if err := refuseRoot(ref); err != nil {
+	if err := checkRoot(ref); err != nil {
 		return TreeRemoval{}, fmt.Errorf("files: remove tree %s: %w", at, err)
 	}
 	fs, db := s.store.blobfs, s.store.db
@@ -429,7 +438,7 @@ func (s *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) 
 			return bfdata.Marked{}, err
 		}
 		if n > 0 {
-			return bfdata.Marked{}, fmt.Errorf("%d bookmark(s) hold files in the branch: %w", n, ErrBookmarked)
+			return bfdata.Marked{}, &bookmarkedError{count: n, branch: true}
 		}
 		return marked, nil
 	})
@@ -453,7 +462,7 @@ func (s *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) 
 		err = last
 	}
 	if err != nil {
-		return removed, fmt.Errorf("files: remove tree %s: removed %d files and %d directories, then: %w", at, removed.Files, removed.Directories, err)
+		return removed, fmt.Errorf("files: remove tree %s: removed %s and %s, then: %w", at, output.Count(removed.Files, "file", "files"), output.Count(removed.Directories, "directory", "directories"), err)
 	}
 	return removed, nil
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/domain/files"
@@ -47,19 +48,21 @@ func Commands(svc *graph.Node[*files.Service], st *graph.Node[*files.Storage]) [
 // root's help both end with. It prints what a scenario declares, not the
 // nodes those reach: the graph discovers a node's dependencies only by
 // running its constructor, and the listing builds nothing.
+//
+// The columns are laid out as package cli lays out a help section, by a
+// tabwriter with a padding of 3, so in the scenario parent's help the
+// listing's names line up with the Commands section above it, where the
+// same names appear.
 func WriteListing(w io.Writer, svc *graph.Node[*files.Service], st *graph.Node[*files.Storage]) {
-	all := scenarios(svc, st)
-	width := 0
-	for _, s := range all {
-		width = max(width, len(s.Name))
-	}
 	_, _ = io.WriteString(w, "Scenarios:\n")
-	for _, s := range all {
-		_, _ = fmt.Fprintf(w, "  %-*s  %s\n", width, s.Name, s.Summary)
+	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
+	for _, s := range scenarios(svc, st) {
 		names := make([]string, len(s.Nodes))
 		for i, n := range s.Nodes {
 			names[i] = n.Name()
 		}
-		_, _ = fmt.Fprintf(w, "  %-*s  uses %s\n", width, "", strings.Join(names, ", "))
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\n", s.Name, s.Summary)
+		_, _ = fmt.Fprintf(tw, "  \tuses %s\n", strings.Join(names, ", "))
 	}
+	_ = tw.Flush()
 }

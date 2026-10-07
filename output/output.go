@@ -41,3 +41,13 @@ func Record(w io.Writer, fields []Field) error {
 	}
 	return tw.Flush()
 }
+
+// Count renders n with the noun that agrees with it: "1 file" with
+// singular, and "0 files" or "2 files" with plural, so no count a command
+// prints reads "1 files".
+func Count[N int | int64](n N, singular, plural string) string {
+	if n == 1 {
+		return "1 " + singular
+	}
+	return fmt.Sprintf("%d %s", n, plural)
+}

@@ -286,7 +286,7 @@ func TestMissingSources_AreLabelledOnceByTheOperation(t *testing.T) {
 		{"cp by path", []sqltest.Response{resolvedRoot(), fileRows()}, func(o *files.Storage) error {
 			_, err := o.Copy(context.Background(), files.Ref{Path: "/a.txt"}, files.Ref{Path: "/b.txt"})
 			return err
-		}, "files: copy /a.txt /b.txt: "},
+		}, "files: copy /a.txt into /b.txt: "},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -488,6 +488,21 @@ func TestRemove_ByIDComputesThePathInTheDeletesTransaction(t *testing.T) {
 	}
 }
 
+func TestRemove_OneUnitsBookmarkIsCountedInTheSingular(t *testing.T) {
+	o, _, _ := openStorage(t,
+		resolvedRoot(),
+		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
+		held(fileID),
+		counted(1),
+	)
+
+	_, err := o.Remove(context.Background(), files.Ref{Path: "/a.txt"})
+
+	if !errors.Is(err, files.ErrBookmarked) || err.Error() != "files: remove /a.txt: 1 unit bookmarks the file" {
+		t.Errorf("Remove() = %v, want ErrBookmarked naming one unit once", err)
+	}
+}
+
 func TestRemove_RefusesABookmarkedFileBeforeTouchingAnything(t *testing.T) {
 	// The file is held, its bookmarks counted, and the count refuses the
 	// delete before Files.Delete runs: the transaction rolls back with the
@@ -503,8 +518,8 @@ func TestRemove_RefusesABookmarkedFileBeforeTouchingAnything(t *testing.T) {
 
 	_, err := o.Remove(context.Background(), files.Ref{Path: "/a.txt"})
 
-	if !errors.Is(err, files.ErrBookmarked) || !strings.Contains(err.Error(), "2 unit(s) bookmark the file") {
-		t.Fatalf("Remove() = %v, want ErrBookmarked naming the count", err)
+	if !errors.Is(err, files.ErrBookmarked) || err.Error() != "files: remove /a.txt: 2 units bookmark the file" {
+		t.Fatalf("Remove() = %v, want ErrBookmarked naming the count once", err)
 	}
 	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpRollback}
 	if got := nonPrepares(rec); !slices.Equal(got, want) {
@@ -657,8 +672,8 @@ func TestRemoveTree_RefusesABranchWithABookmarkedFileBeforeTouchingAnything(t *t
 
 	_, err := o.RemoveTree(context.Background(), files.Ref{Path: "/d"})
 
-	if !errors.Is(err, files.ErrBookmarked) || !strings.Contains(err.Error(), "2 bookmark(s) hold files in the branch") {
-		t.Fatalf("RemoveTree() = %v, want ErrBookmarked naming the count", err)
+	if !errors.Is(err, files.ErrBookmarked) || err.Error() != "files: remove tree /d: 2 bookmarks hold files in the branch" {
+		t.Fatalf("RemoveTree() = %v, want ErrBookmarked naming the count once", err)
 	}
 	want := []sqltest.Op{sqltest.OpQuery, sqltest.OpBegin, sqltest.OpExec, sqltest.OpExec, sqltest.OpExec, sqltest.OpQuery, sqltest.OpRollback}
 	if got := nonPrepares(rec); !slices.Equal(got, want) {

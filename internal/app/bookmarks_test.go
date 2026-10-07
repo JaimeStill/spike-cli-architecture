@@ -168,7 +168,7 @@ func TestBookmarks_ARefusalIsReportedOnce(t *testing.T) {
 	if code != process.ExitFailure {
 		t.Errorf("code = %d, want %d", code, process.ExitFailure)
 	}
-	if want := "blobfs bookmark add: files: add bookmark /reports/plan.txt as unit " + unitID + ": the unit has an active bookmark already (constraint uq_bookmark_active)\n"; errOut.String() != want {
+	if want := "blobfs bookmark add: files: add bookmark of /reports/plan.txt for unit " + unitID + ": the unit has an active bookmark already (constraint uq_bookmark_active)\n"; errOut.String() != want {
 		t.Errorf("stderr = %q, want %q", errOut.String(), want)
 	}
 	if out.Len() != 0 {

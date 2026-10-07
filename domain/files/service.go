@@ -56,7 +56,8 @@ func (s *Service) Start(ctx context.Context) error {
 // an id cannot name its target; every other operation takes either form, a
 // move and a copy each of their two Refs on its own. The unit rules are
 // the requests a unit's ownership cannot serve: a unit bound below the top
-// level, and a cursor into the owner listing. The operation runs each rule
+// level, and a cursor into the owner listing. The root rule is the root
+// refused as the entry an operation removes or bookmarks. The operation runs each rule
 // before any I/O, and the command runs the same rule in its Validate, so a
 // refusal is a usage error before anything is built.
 
@@ -92,6 +93,25 @@ func checkMkdir(ref Ref) error {
 		return &FormError{Reason: "a directory is created by path, not by id"}
 	}
 	return nil
+}
+
+// checkRoot refuses ref when it names the root, by path or by the root's
+// id, with blobfs.ErrRootDirectory, and a path that is not absolute or
+// ends with a slash with blobfs.ErrInvalidPath: the root rule of an
+// operation that removes or bookmarks an entry, none of which the root can
+// be. A command runs it in Validate, so rmdir /, rm /, rm --recursive /,
+// and bookmark add / are usage errors before anything is built; the
+// operations run it again, before any I/O, as a backstop for a caller that
+// skips it.
+func checkRoot(ref Ref) error {
+	if ref.ID == blobfs.RootID {
+		return blobfs.ErrRootDirectory
+	}
+	if ref.ID != "" {
+		return nil
+	}
+	_, _, err := splitParent(ref.Path)
+	return err
 }
 
 // checkUnitDepth refuses a directory's create with a unit at a path below
@@ -369,7 +389,7 @@ func (s *Service) Mkdir(ctx context.Context, ref Ref, unit string) (blobfs.Direc
 // the root's id.
 func (s *Service) RemoveDirectory(ctx context.Context, ref Ref) (Located[blobfs.Directory], error) {
 	at := label(ref, "directory")
-	if err := refuseRoot(ref); err != nil {
+	if err := checkRoot(ref); err != nil {
 		return Located[blobfs.Directory]{}, fmt.Errorf("files: remove directory %s: %w", at, err)
 	}
 	removed, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (Located[blobfs.Directory], error) {
@@ -390,21 +410,6 @@ func (s *Service) RemoveDirectory(ctx context.Context, ref Ref) (Located[blobfs.
 		return Located[blobfs.Directory]{}, fmt.Errorf("files: remove directory %s: %w", at, err)
 	}
 	return removed, nil
-}
-
-// refuseRoot refuses ref when it names the root, by path or by the root's
-// id, as blobfs.ErrRootDirectory, and a path that is not absolute or ends
-// with a slash as blobfs.ErrInvalidPath, before any I/O: the checks an
-// operation that removes or bookmarks an entry runs on its Ref.
-func refuseRoot(ref Ref) error {
-	if ref.ID == blobfs.RootID {
-		return blobfs.ErrRootDirectory
-	}
-	if ref.ID != "" {
-		return nil
-	}
-	_, _, err := splitParent(ref.Path)
-	return err
 }
 
 // Move moves the directory or file src names, in one transaction. src and
@@ -577,13 +582,14 @@ func (s *Service) movingByID(ctx context.Context, tx *sqlate.Tx, id string) (mov
 // is blobfs.ErrNotFound, and so is a file removed between its lookup and
 // the insert. A pending file can be bookmarked. A deleting file is refused
 // with ErrNotAvailable over blobfs's DeletingError, because its delete is
-// under way. A file the unit has bookmarked already is
+// under way. An error after the file's path is computed names the path,
+// whichever form named the file. A file the unit has bookmarked already is
 // ErrAlreadyBookmarked, active or not. The root is blobfs.ErrRootDirectory
 // before any I/O, by path or by the root's id.
 func (s *Service) AddBookmark(ctx context.Context, ref Ref, unit string, active bool) (Located[blobfs.File], error) {
 	at := label(ref, "file")
-	if err := refuseRoot(ref); err != nil {
-		return Located[blobfs.File]{}, fmt.Errorf("files: add bookmark %s: %w", at, err)
+	if err := checkRoot(ref); err != nil {
+		return Located[blobfs.File]{}, fmt.Errorf("files: add bookmark of %s for unit %s: %w", at, unit, err)
 	}
 	f, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (Located[blobfs.File], error) {
 		f, err := s.store.file(ctx, tx, ref)
@@ -594,6 +600,7 @@ func (s *Service) AddBookmark(ctx context.Context, ref Ref, unit string, active 
 		if err != nil {
 			return Located[blobfs.File]{}, err
 		}
+		at = path
 		if err := s.store.blobfs.Files.Hold(ctx, tx, f.ID); err != nil {
 			if errors.Is(err, blobfs.ErrDeleting) {
 				return Located[blobfs.File]{}, fmt.Errorf("%w: %w", ErrNotAvailable, err)
@@ -603,7 +610,7 @@ func (s *Service) AddBookmark(ctx context.Context, ref Ref, unit string, active 
 		return Located[blobfs.File]{Path: path, Row: f}, s.store.insertBookmark(ctx, tx, unit, f.ID, active)
 	})
 	if err != nil {
-		return Located[blobfs.File]{}, fmt.Errorf("files: add bookmark %s as unit %s: %w", at, unit, err)
+		return Located[blobfs.File]{}, fmt.Errorf("files: add bookmark of %s for unit %s: %w", at, unit, err)
 	}
 	return f, nil
 }
@@ -615,7 +622,9 @@ func (s *Service) AddBookmark(ctx context.Context, ref Ref, unit string, active 
 // keyed by the unit and the file's id, so the reads need not share its
 // snapshot. A file that does not exist is blobfs.ErrNotFound; a file the
 // unit has not bookmarked is ErrNoBookmark. Removing the active bookmark
-// leaves the unit with none, which a later add with active may fill.
+// leaves the unit with none, which a later add with active may fill. An
+// error after the path is computed names the path, whichever form named
+// the file.
 func (s *Service) RemoveBookmark(ctx context.Context, ref Ref, unit string) (Located[blobfs.File], error) {
 	at := label(ref, "file")
 	f, err := s.store.file(ctx, s.store.db, ref)
@@ -624,10 +633,11 @@ func (s *Service) RemoveBookmark(ctx context.Context, ref Ref, unit string) (Loc
 		path, err = s.store.filePath(ctx, s.store.db, ref, f)
 	}
 	if err == nil {
+		at = path
 		err = s.store.deleteBookmark(ctx, s.store.db, unit, f.ID)
 	}
 	if err != nil {
-		return Located[blobfs.File]{}, fmt.Errorf("files: remove bookmark %s as unit %s: %w", at, unit, err)
+		return Located[blobfs.File]{}, fmt.Errorf("files: remove bookmark of %s for unit %s: %w", at, unit, err)
 	}
 	return Located[blobfs.File]{Path: path, Row: f}, nil
 }
@@ -643,7 +653,7 @@ func (s *Service) ListBookmarks(ctx context.Context, unit string, l Listing) (Pa
 		return s.store.bookmarksOf(ctx, tx, unit, Listing{Page: l.Page, Size: l.Size, Sort: l.Sort, Total: l.Total})
 	}, sqlate.ReadOnly(), sqlate.Isolation(sql.LevelRepeatableRead))
 	if err != nil {
-		return Page[Bookmark]{}, fmt.Errorf("files: list bookmarks as unit %s: %w", unit, err)
+		return Page[Bookmark]{}, fmt.Errorf("files: list bookmarks of unit %s: %w", unit, err)
 	}
 	return p, nil
 }

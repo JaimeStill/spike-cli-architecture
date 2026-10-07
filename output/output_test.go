@@ -50,3 +50,19 @@ func TestRecord_AlignsLabels(t *testing.T) {
 		t.Errorf("output =\n%s\nwant\n%s", b.String(), want)
 	}
 }
+
+func TestCount_TheNounAgreesWithTheCount(t *testing.T) {
+	tests := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0 files"},
+		{1, "1 file"},
+		{2, "2 files"},
+	}
+	for _, tt := range tests {
+		if got := output.Count(tt.n, "file", "files"); got != tt.want {
+			t.Errorf("Count(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}

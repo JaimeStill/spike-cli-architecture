@@ -15,6 +15,7 @@ import (
 
 	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
+	"github.com/JaimeStill/spike-cli-architecture/output"
 )
 
 // Commands builds the domain's whole command surface over the composition
@@ -32,9 +33,10 @@ import (
 //
 // Each command counts its arguments in Args and checks them and its flags
 // in Validate, the domain's request rules included, so a malformed
-// path-or-id, an id where no id can name the target, a unit, a unit below
-// the top level, a cursor into ls / --unit, a filter, a sort term, or a
-// total mode is a usage error before anything is built; each bookmark
+// path-or-id, an id where no id can name the target, the root where an
+// entry is removed or bookmarked, a unit, a unit below the top level, a
+// cursor into ls / --unit, a filter, a sort term, or a total mode is a
+// usage error before anything is built; each bookmark
 // subcommand requires --unit, so a run without it is a usage error too.
 func Commands(svc *graph.Node[*Service], st *graph.Node[*Storage]) []*cli.Command {
 	return []*cli.Command{
@@ -163,7 +165,7 @@ func stat(svc *graph.Node[*Service]) *cli.Command {
 	}).Use(svc)
 }
 
-// mv is mv <src> <dst>: the directory or file src names moved, in one
+// mv is mv <path|id:<uuid>> <path|id:<uuid>>, src then dst: the directory or file src names moved, in one
 // transaction, each argument a path or an id. A src by id is the file with
 // it, or else the directory. A dst by path is an existing directory to
 // move into, or else the new path; a dst by id is the directory to move
@@ -173,7 +175,7 @@ func mv(svc *graph.Node[*Service]) *cli.Command {
 	return (&cli.Command{
 		Name:     "mv",
 		Summary:  "Move or rename a directory or a file within its top-level directory",
-		Synopsis: "<src> <dst>",
+		Synopsis: "<path|id:<uuid>> <path|id:<uuid>>",
 		Args:     cli.ExactArgs(2),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
@@ -193,7 +195,8 @@ func mv(svc *graph.Node[*Service]) *cli.Command {
 
 // rmdir is rmdir <path|id:<uuid>>: an empty directory removed, reported
 // at its path, which for an id is the path the removal resolved. A
-// directory that still has contents is refused, and so is the root.
+// directory that still has contents is refused, and so is the root, in
+// Validate.
 func rmdir(svc *graph.Node[*Service]) *cli.Command {
 	var ref Ref
 	return (&cli.Command{
@@ -203,8 +206,13 @@ func rmdir(svc *graph.Node[*Service]) *cli.Command {
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			ref, err = parseRef(inv.Args[0])
-			return err
+			if ref, err = parseRef(inv.Args[0]); err != nil {
+				return err
+			}
+			if err := checkRoot(ref); err != nil {
+				return fmt.Errorf("%w; rmdir removes a directory below the root", err)
+			}
+			return nil
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
 			dir, err := inv.Get(svc).RemoveDirectory(ctx, ref)
@@ -229,7 +237,8 @@ func bookmark(svc *graph.Node[*Service]) *cli.Command {
 // bookmarkAdd is bookmark add <path|id:<uuid>> --unit <uuid> [--active]:
 // the unit's bookmark of the file, active when asked, and refused while
 // another bookmark of the unit is active. It reports the file at its
-// path, which for an id is the path the add resolved.
+// path, which for an id is the path the add resolved. The root is
+// refused in Validate.
 func bookmarkAdd(svc *graph.Node[*Service]) *cli.Command {
 	var unit string
 	var active bool
@@ -243,6 +252,9 @@ func bookmarkAdd(svc *graph.Node[*Service]) *cli.Command {
 			var err error
 			if ref, err = parseRef(inv.Args[0]); err != nil {
 				return err
+			}
+			if err := checkRoot(ref); err != nil {
+				return fmt.Errorf("%w; bookmark add takes a file", err)
 			}
 			unit, err = parseUnit(unit)
 			return err
@@ -375,7 +387,7 @@ func put(st *graph.Node[*Storage]) *cli.Command {
 				resumed = ", resumed the pending row"
 			}
 			f := res.File
-			_, err = fmt.Fprintf(inv.Stdout, "put: %s (id %s, %d bytes, etag %s%s)\n", res.Path, f.ID, sizeOf(f), etagOf(f), resumed)
+			_, err = fmt.Fprintf(inv.Stdout, "put: %s (id %s, %s, etag %s%s)\n", res.Path, f.ID, output.Count(sizeOf(f), "byte", "bytes"), etagOf(f), resumed)
 			return err
 		},
 	}
@@ -412,7 +424,7 @@ func cat(st *graph.Node[*Storage]) *cli.Command {
 	}).Use(st)
 }
 
-// cp is cp <src> <dst>: the available file src names copied, each
+// cp is cp <path|id:<uuid>> <path|id:<uuid>>, src then dst: the available file src names copied, each
 // argument a path or an id. A dst by path is an existing directory to copy
 // into under the source's name, or else the new path; a dst by id is the
 // directory to copy into under the source's name. A name already taken is
@@ -422,7 +434,7 @@ func cp(st *graph.Node[*Storage]) *cli.Command {
 	return (&cli.Command{
 		Name:     "cp",
 		Summary:  "Copy an available file into a directory or to a new path",
-		Synopsis: "<src> <dst>",
+		Synopsis: "<path|id:<uuid>> <path|id:<uuid>>",
 		Args:     cli.ExactArgs(2),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
@@ -435,7 +447,7 @@ func cp(st *graph.Node[*Storage]) *cli.Command {
 				return err
 			}
 			f := res.File
-			_, err = fmt.Fprintf(inv.Stdout, "cp: %s -> %s (id %s, %d bytes, etag %s)\n", res.From, res.To, f.ID, sizeOf(f), etagOf(f))
+			_, err = fmt.Fprintf(inv.Stdout, "cp: %s -> %s (id %s, %s, etag %s)\n", res.From, res.To, f.ID, output.Count(sizeOf(f), "byte", "bytes"), etagOf(f))
 			return err
 		},
 	}).Use(st)
@@ -444,8 +456,9 @@ func cp(st *graph.Node[*Storage]) *cli.Command {
 // rm is rm <path|id:<uuid>>, a file deleted, and rm --recursive
 // <path|id:<uuid>>, a directory and everything beneath it deleted with
 // the totals its sweep removed; each is reported at the resolved path,
-// which for an id is the path the delete computed. There is no -r
-// shorthand.
+// which for an id is the path the delete computed. The root is refused,
+// in either form, in Validate. A delete a bookmark refuses says so once,
+// with the remedy. There is no -r shorthand.
 func rm(st *graph.Node[*Storage]) *cli.Command {
 	var recursive bool
 	var ref Ref
@@ -456,8 +469,13 @@ func rm(st *graph.Node[*Storage]) *cli.Command {
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			ref, err = parseRef(inv.Args[0])
-			return err
+			if ref, err = parseRef(inv.Args[0]); err != nil {
+				return err
+			}
+			if err := checkRoot(ref); err != nil {
+				return fmt.Errorf("%w; rm removes a file, or with --recursive a directory, below the root", err)
+			}
+			return nil
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
 			s := inv.Get(st)
@@ -469,7 +487,7 @@ func rm(st *graph.Node[*Storage]) *cli.Command {
 				if err != nil {
 					return err
 				}
-				_, err = fmt.Fprintf(inv.Stdout, "rm --recursive: %s (%d files, %d directories)\n", res.Path, res.Files, res.Directories)
+				_, err = fmt.Fprintf(inv.Stdout, "rm --recursive: %s (%s, %s)\n", res.Path, output.Count(res.Files, "file", "files"), output.Count(res.Directories, "directory", "directories"))
 				return err
 			}
 			f, err := s.Remove(ctx, ref)

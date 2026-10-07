@@ -25,6 +25,7 @@ import (
 	"github.com/standards-lab/go-core/process/processtest"
 
 	"github.com/JaimeStill/spike-cli-architecture/internal/livetest"
+	"github.com/JaimeStill/spike-cli-architecture/output"
 )
 
 // binary is the path of cmd/blobfs, built once by TestMain.
@@ -505,7 +506,7 @@ func interrupt(t *testing.T, tg target, r *faultRelay, path string) {
 	if code != 1 || out != "" {
 		t.Fatalf("rm --recursive %s with the store refusing deletes exited %d with stdout %q; want a refusal", path, code, out)
 	}
-	if want := fmt.Sprintf("files: remove tree %s: removed %d files and 1 directories, then: ", path, branchDeletes); !strings.Contains(errOut, want) {
+	if want := fmt.Sprintf("files: remove tree %s: removed %s and 1 directory, then: ", path, output.Count(branchDeletes, "file", "files")); !strings.Contains(errOut, want) {
 		t.Errorf("rm --recursive %s stderr = %q, want %q", path, errOut, want)
 	}
 	if got := strings.Count(errOut, "delete the object of file "); got != branchFiles-branchDeletes {
@@ -869,10 +870,14 @@ func (s *script) removeDirectory(t *testing.T) {
 	refused(t, s.tg, "not found", "stat", "/reports/2025")
 	refused(t, s.tg, "directory not empty", "rmdir", "/reports")
 	refused(t, s.tg, "directory not empty", "rmdir", "/archive")
-	refused(t, s.tg, "the root directory", "rmdir", "/")
 	refused(t, s.tg, "not found", "rmdir", "/reports/missing")
 	refused(t, s.tg, "not found", "rmdir", "id:"+blobfs.NewID())
-	misused(t, s.tg, "the nil UUID is the root's", "rmdir", "id:"+blobfs.RootID)
+	// The root, by path or by its id, is a usage error that builds
+	// nothing: against a database on a port nothing listens on, a run that
+	// built the Service would fail its start and exit 1.
+	unreachable := s.tg.with(fmt.Sprintf("BLOBFS_DATABASE_PORT=%d", closedPort(t)))
+	misused(t, unreachable, "blobfs rmdir: blobfs: the root directory; rmdir removes a directory below the root\n", "rmdir", "/")
+	misused(t, unreachable, "the nil UUID is the root's", "rmdir", "id:"+blobfs.RootID)
 	archive := ids(ok(t, s.tg, "ls", "/"))["archive"]
 	refused(t, s.tg, "directory not empty", "rmdir", "id:"+archive)
 
@@ -1002,11 +1007,13 @@ func (s *script) copy(t *testing.T) {
 	if out := ok(t, s.tg, "stat", "/objects/sub2/report.json"); field(out, "content-type") != "application/json" {
 		t.Errorf("stat of the copy by ids:\n%s", out)
 	}
-	refused(t, s.tg, "name taken", "cp", "/objects/hello.txt", "/objects/sub")
-	refused(t, s.tg, "name taken", "cp", "/objects/hello.txt", "/objects/copy.txt")
-	refused(t, s.tg, "name taken", "cp", "/objects/hello.txt", "/objects")
+	// An error after the resolution names the resolved paths, the copy's
+	// name after "as" when it is not the source's.
+	taken(t, s.tg, "blobfs cp: files: copy /objects/hello.txt into /objects/sub: ", "cp", "/objects/hello.txt", "/objects/sub")
+	taken(t, s.tg, "blobfs cp: files: copy /objects/hello.txt into /objects as copy.txt: ", "cp", "/objects/hello.txt", "/objects/copy.txt")
+	taken(t, s.tg, "blobfs cp: files: copy /objects/hello.txt into /objects: ", "cp", "/objects/hello.txt", "/objects")
 	refused(t, s.tg, "the file is not available: it is pending", "cp", "/objects/stuck.txt", "/objects/sub")
-	refused(t, s.tg, "not found", "cp", "/objects/missing.txt", "/objects/sub")
+	refused(t, s.tg, "blobfs cp: files: copy /objects/missing.txt into /objects/sub: ", "cp", "/objects/missing.txt", "/objects/sub")
 	refused(t, s.tg, "not found", "cp", "/objects/hello.txt", "/objects/nope/hello.txt")
 
 	// cp by a path and an id, each resolved on its own: an id destination
@@ -1024,7 +1031,19 @@ func (s *script) copy(t *testing.T) {
 	if got := ok(t, s.tg, "cat", "/objects/sub2/notes.txt"); got != "notes\n" {
 		t.Errorf("cat of the copy of a path into an id = %q", got)
 	}
-	refused(t, s.tg, "name taken", "cp", "/objects/hello.txt", "id:"+under["sub"])
+	taken(t, s.tg, "blobfs cp: files: copy /objects/hello.txt into /objects/sub: ", "cp", "/objects/hello.txt", "id:"+under["sub"])
+	taken(t, s.tg, "blobfs cp: files: copy /objects/hello.txt into /objects/sub: ", "cp", "id:"+under["hello.txt"], "id:"+under["sub"])
+}
+
+// taken runs a cp the destination's name refuses and fails the test unless
+// it exits one with stderr starting want, the copy's label, and naming the
+// taken name.
+func taken(t *testing.T, tg target, want string, args ...string) {
+	t.Helper()
+	out, errOut, code := run(t, tg, args...)
+	if code != 1 || out != "" || !strings.HasPrefix(errOut, want) || !strings.Contains(errOut, "blobfs: name taken") {
+		t.Errorf("%v exited %d: stdout %q, stderr %q; want 1 and a stderr starting %q that names the taken name", args, code, out, errOut, want)
+	}
 }
 
 // remove deletes single files by path and by id, a pending file among
@@ -1045,7 +1064,8 @@ func (s *script) remove(t *testing.T) {
 		t.Errorf("ls /objects after the removals = %s", got)
 	}
 	refused(t, s.tg, "not found", "rm", "id:"+blobfs.NewID())
-	refused(t, s.tg, "the root directory", "rm", "/")
+	unreachable := s.tg.with(fmt.Sprintf("BLOBFS_DATABASE_PORT=%d", closedPort(t)))
+	misused(t, unreachable, "blobfs rm: blobfs: the root directory; rm removes a file, or with --recursive a directory, below the root\n", "rm", "/")
 }
 
 // removeTree deletes a branch, by path and by id, and prints its path and
@@ -1056,7 +1076,9 @@ func (s *script) removeTree(t *testing.T) {
 	for _, p := range []string{"/tree", "/tree/a", "/tree/a/b"} {
 		ok(t, s.tg, "mkdir", p)
 	}
-	put(t, s.tg, "/tree/x.txt", "x")
+	if out := okIn(t, s.tg, "x", "put", "-", "/tree/x.txt"); !strings.HasPrefix(out, "put: /tree/x.txt (id ") || !strings.Contains(out, ", 1 byte, etag ") {
+		t.Errorf("put of one byte stdout = %q, want the size in the singular", out)
+	}
 	put(t, s.tg, "/tree/a/y.txt", "y")
 	put(t, s.tg, "/tree/a/b/z.txt", "z")
 	if out := ok(t, s.tg, "rm", "--recursive", "/tree"); out != "rm --recursive: /tree (3 files, 3 directories)\n" {
@@ -1069,7 +1091,7 @@ func (s *script) removeTree(t *testing.T) {
 	ok(t, s.tg, "mkdir", "/tree/a")
 	put(t, s.tg, "/tree/a/y.txt", "y")
 	a := ids(ok(t, s.tg, "ls", "/tree"))["a"]
-	if out := ok(t, s.tg, "rm", "--recursive", "id:"+a); out != "rm --recursive: /tree/a (1 files, 1 directories)\n" {
+	if out := ok(t, s.tg, "rm", "--recursive", "id:"+a); out != "rm --recursive: /tree/a (1 file, 1 directory)\n" {
 		t.Errorf("rm --recursive by id stdout = %q", out)
 	}
 	if got := names(ok(t, s.tg, "ls", "/tree")); got != "" {
@@ -1086,7 +1108,7 @@ func (s *script) removeTree(t *testing.T) {
 	branch(t, rt, "/half")
 	interrupt(t, rt, r, "/half")
 	refused(t, rt, "deleting", "ls", "/half")
-	if out := ok(t, rt, "rm", "--recursive", "/half"); out != fmt.Sprintf("rm --recursive: /half (%d files, 1 directories)\n", branchFiles-branchDeletes) {
+	if out := ok(t, rt, "rm", "--recursive", "/half"); out != fmt.Sprintf("rm --recursive: /half (%s, 1 directory)\n", output.Count(branchFiles-branchDeletes, "file", "files")) {
 		t.Errorf("rm --recursive of an interrupted branch stdout = %q", out)
 	}
 
@@ -1096,16 +1118,17 @@ func (s *script) removeTree(t *testing.T) {
 	branch(t, rt, "/orphan")
 	interrupt(t, rt, r, "/orphan")
 	ok(t, rt, "mkdir", "/other")
-	if out := ok(t, rt, "rm", "--recursive", "/other"); out != fmt.Sprintf("rm --recursive: /other (%d files, 2 directories)\n", branchFiles-branchDeletes) {
+	if out := ok(t, rt, "rm", "--recursive", "/other"); out != fmt.Sprintf("rm --recursive: /other (%s, 2 directories)\n", output.Count(branchFiles-branchDeletes, "file", "files")) {
 		t.Errorf("rm --recursive with another marked branch stdout = %q", out)
 	}
 	if got := names(ok(t, s.tg, "ls", "/")); got != "a c ids objects reports" {
 		t.Errorf("ls / after the branch deletes = %s", got)
 	}
 
-	refused(t, s.tg, "the root directory", "rm", "--recursive", "/")
+	unreachable := s.tg.with(fmt.Sprintf("BLOBFS_DATABASE_PORT=%d", closedPort(t)))
+	misused(t, unreachable, "blobfs rm: blobfs: the root directory; rm removes a file, or with --recursive a directory, below the root\n", "rm", "--recursive", "/")
+	misused(t, unreachable, "the nil UUID is the root's", "rm", "--recursive", "id:"+blobfs.RootID)
 	refused(t, s.tg, "not found", "rm", "--recursive", "/missing")
-	misused(t, s.tg, "the nil UUID is the root's", "rm", "--recursive", "id:"+blobfs.RootID)
 	refused(t, s.tg, "not found", "rm", "--recursive", "id:"+blobfs.NewID())
 	misused(t, s.tg, "flag provided but not defined: -r", "rm", "-r", "/objects")
 }
@@ -1196,7 +1219,7 @@ func (s *script) units(t *testing.T) {
 
 	// rm --recursive removes the owner row of the branch's root with it,
 	// or the sweep's removal of the root would be refused.
-	if out := ok(t, s.tg, "rm", "--recursive", "/owned"); out != "rm --recursive: /owned (1 files, 2 directories)\n" {
+	if out := ok(t, s.tg, "rm", "--recursive", "/owned"); out != "rm --recursive: /owned (1 file, 2 directories)\n" {
 		t.Errorf("rm --recursive of an owned branch stdout = %q", out)
 	}
 	if got := names(ok(t, s.tg, "ls", "/", "--unit", unit)); got != "" {
@@ -1229,7 +1252,11 @@ func (s *script) bookmarks(t *testing.T) {
 	}
 	refused(t, s.tg, "the unit has an active bookmark already (constraint uq_bookmark_active)", "bookmark", "add", "/library/y.txt", "--unit", unit, "--active")
 	refused(t, s.tg, "the unit has bookmarked the file already (constraint pk_bookmark)", "bookmark", "add", "/library/deep/z.txt", "--unit", unit)
-	refused(t, s.tg, "not found", "bookmark", "add", "/library/missing.txt", "--unit", unit)
+	refused(t, s.tg, "blobfs bookmark add: files: add bookmark of /library/missing.txt for unit "+unit+": ", "bookmark", "add", "/library/missing.txt", "--unit", unit)
+	// After the add resolves the file, the error names its path, whichever
+	// form named it.
+	refused(t, s.tg, "blobfs bookmark add: files: add bookmark of /library/deep/z.txt for unit "+unit+": the unit has bookmarked the file already", "bookmark", "add", "id:"+z, "--unit", unit)
+	misused(t, s.tg.with(fmt.Sprintf("BLOBFS_DATABASE_PORT=%d", closedPort(t))), "blobfs bookmark add: blobfs: the root directory; bookmark add takes a file\n", "bookmark", "add", "/", "--unit", unit)
 	refused(t, s.tg, "not found", "bookmark", "add", "/library/deep", "--unit", unit)
 	refused(t, s.tg, "not found", "bookmark", "add", "id:"+blobfs.NewID(), "--unit", unit)
 	misused(t, s.tg, "required flag --unit not set", "bookmark", "add", "/library/y.txt")
@@ -1270,15 +1297,15 @@ func (s *script) bookmarks(t *testing.T) {
 
 	// rm of a bookmarked file is refused before anything is touched, and
 	// so is rm --recursive of a branch holding one.
-	refused(t, s.tg, "2 unit(s) bookmark the file: the file is bookmarked; remove the bookmarks and rerun rm", "rm", "/library/x.txt")
-	refused(t, s.tg, "the file is bookmarked", "rm", "id:"+x)
+	refused(t, s.tg, "blobfs rm: files: remove /library/x.txt: 2 units bookmark the file; remove the bookmarks and rerun rm\n", "rm", "/library/x.txt")
+	refused(t, s.tg, "2 units bookmark the file; remove the bookmarks and rerun rm\n", "rm", "id:"+x)
 	if out := ok(t, s.tg, "stat", "/library/x.txt"); field(out, "status") != "available" || field(out, "version") != "2" {
 		t.Errorf("stat after the refused rm:\n%s\nwant the row untouched", out)
 	}
 	if got := ok(t, s.tg, "cat", "/library/x.txt"); got != "x" {
 		t.Errorf("cat after the refused rm = %q", got)
 	}
-	refused(t, s.tg, "3 bookmark(s) hold files in the branch: the file is bookmarked; remove the bookmarks and rerun rm --recursive", "rm", "--recursive", "/library")
+	refused(t, s.tg, "blobfs rm: files: remove tree /library: 3 bookmarks hold files in the branch; remove the bookmarks and rerun rm --recursive\n", "rm", "--recursive", "/library")
 	if got := names(ok(t, s.tg, "ls", "/library")); got != "deep x.txt y.txt" {
 		t.Errorf("ls /library after the refused rm --recursive = %s", got)
 	}
@@ -1288,9 +1315,9 @@ func (s *script) bookmarks(t *testing.T) {
 	if out := ok(t, s.tg, "bookmark", "rm", "/library/x.txt", "--unit", unit); out != "bookmark rm: /library/x.txt (file "+x+", unit "+unit+")\n" {
 		t.Errorf("bookmark rm stdout = %q", out)
 	}
-	refused(t, s.tg, "the unit has no bookmark of the file", "bookmark", "rm", "/library/x.txt", "--unit", unit)
+	refused(t, s.tg, "blobfs bookmark rm: files: remove bookmark of /library/x.txt for unit "+unit+": the unit has no bookmark of the file", "bookmark", "rm", "/library/x.txt", "--unit", unit)
 	refused(t, s.tg, "not found", "bookmark", "rm", "/library/missing.txt", "--unit", unit)
-	refused(t, s.tg, "1 unit(s) bookmark the file", "rm", "/library/x.txt")
+	refused(t, s.tg, "blobfs rm: files: remove /library/x.txt: 1 unit bookmarks the file; remove the bookmarks and rerun rm\n", "rm", "/library/x.txt")
 	if out := ok(t, s.tg, "bookmark", "rm", "id:"+x, "--unit", other); out != "bookmark rm: /library/x.txt (file "+x+", unit "+other+")\n" {
 		t.Errorf("bookmark rm by id stdout = %q", out)
 	}

@@ -385,6 +385,10 @@ func TestFiles_MalformedArgumentsAreUsageErrors(t *testing.T) {
 		{"mv of two relative paths", []string{"mv", "a", "b"}, "blobfs mv: blobfs: invalid path: \"a\" does not start with /\n"},
 		{"mv to a relative path", []string{"mv", "/a", "b"}, "blobfs mv: blobfs: invalid path: \"b\" does not start with /\n"},
 		{"stat of a relative path", []string{"stat", "reports"}, "blobfs stat: blobfs: invalid path: \"reports\" does not start with /\n"},
+		{"rmdir of the root", []string{"rmdir", "/"}, "blobfs rmdir: blobfs: the root directory; rmdir removes a directory below the root\n"},
+		{"rmdir of the root's id", []string{"rmdir", "id:" + blobfs.RootID}, "the nil UUID is the root's"},
+		{"bookmark add of the root", []string{"bookmark", "add", "/", "--unit", unitID}, "blobfs bookmark add: blobfs: the root directory; bookmark add takes a file\n"},
+		{"mv and its synopsis", []string{"mv", "a", "b"}, "Usage: blobfs mv [flags] <path|id:<uuid>> <path|id:<uuid>>"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -397,7 +401,7 @@ func TestFiles_MalformedArgumentsAreUsageErrors(t *testing.T) {
 			if code != process.ExitUsage {
 				t.Errorf("code = %d, want %d; stderr = %q", code, process.ExitUsage, errOut.String())
 			}
-			if !strings.Contains(errOut.String(), tt.want) || !strings.Contains(errOut.String(), "Usage: blobfs "+tt.args[0]+" [flags]") {
+			if !strings.Contains(errOut.String(), tt.want) || !strings.Contains(errOut.String(), "Usage: "+commandPath(tt.args)+" [flags]") {
 				t.Errorf("stderr = %q, want %q and the usage line", errOut.String(), tt.want)
 			}
 			if got := built.Log(); len(got) != 0 {

@@ -1,6 +1,11 @@
 package files
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/JaimeStill/spike-cli-architecture/output"
+)
 
 // The sentinels the domain adds to blobfs's. A refusal matches one of
 // these or one of blobfs's own, so a caller classifies it with errors.Is.
@@ -83,3 +88,26 @@ type FormError struct {
 }
 
 func (e *FormError) Error() string { return e.Reason }
+
+// bookmarkedError is ErrBookmarked with the count that refused the delete:
+// the units that bookmark a file, or the bookmarks that hold files in a
+// branch. Its message states the refusal once, in place of the sentinel's
+// own text, so a command that adds the remedy reads "1 unit bookmarks the
+// file; remove the bookmarks and rerun rm"; errors.Is still matches
+// ErrBookmarked.
+type bookmarkedError struct {
+	count  int64
+	branch bool
+}
+
+func (e *bookmarkedError) Error() string {
+	if e.branch {
+		if e.count == 1 {
+			return "1 bookmark holds a file in the branch"
+		}
+		return fmt.Sprintf("%d bookmarks hold files in the branch", e.count)
+	}
+	return output.Count(e.count, "unit bookmarks", "units bookmark") + " the file"
+}
+
+func (e *bookmarkedError) Unwrap() error { return ErrBookmarked }
