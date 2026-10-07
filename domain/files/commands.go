@@ -26,11 +26,11 @@ import (
 // with Use, the bookmark subcommands through their parent, so the
 // dispatcher builds and starts the database and the store's statement
 // check before the body runs, and shuts them down after; the body reads the
-// Store from the Invocation's System. None declares the object store. Each
-// validates its arguments and flags in Args, so a malformed path-or-id,
-// unit, filter, sort term, or total mode is a usage error before anything
-// is built, and each bookmark subcommand requires --unit, so a run without
-// it is a usage error too.
+// Store with the Invocation's Get. None declares the object store. Each
+// counts its arguments in Args and checks them and its flags in Validate,
+// so a malformed path-or-id, unit, filter, sort term, or total mode is a
+// usage error before anything is built, and each bookmark subcommand
+// requires --unit, so a run without it is a usage error too.
 func Commands(store *graph.Node[*Store]) []*cli.Command {
 	g := group{store: store}
 	return []*cli.Command{
@@ -48,11 +48,6 @@ type group struct {
 	store *graph.Node[*Store]
 }
 
-// storeOf returns the Store the dispatcher built for inv.
-func (g group) storeOf(inv *cli.Invocation) *Store {
-	return inv.System.Get(g.store)
-}
-
 // mkdir is mkdir <path> [--unit <uuid>]: the last segment created under
 // its existing parent, and with --unit, at a top-level path, the owner row
 // that binds it to the unit, in the same transaction. There is no -p; a
@@ -63,16 +58,14 @@ func (g group) mkdir() *cli.Command {
 		Name:     "mkdir",
 		Summary:  "Create a directory under an existing parent",
 		Synopsis: "<path>",
-		Args: func(args []string) error {
-			if err := cli.ExactArgs(1)(args); err != nil {
-				return err
-			}
+		Args:     cli.ExactArgs(1),
+		Validate: func(*cli.Invocation) error {
 			var err error
 			unit, err = parseUnit(unit)
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			dir, err := g.storeOf(inv).Mkdir(ctx, inv.Args[0], unit)
+			dir, err := inv.Get(g.store).Mkdir(ctx, inv.Args[0], unit)
 			if err != nil {
 				return err
 			}
@@ -99,24 +92,22 @@ func (g group) list() *cli.Command {
 		Name:     "ls",
 		Summary:  "List a directory: its directories, then its files, one page each",
 		Synopsis: "<path|id:<uuid>>",
-		Args: func(args []string) error {
-			if err := cli.ExactArgs(1)(args); err != nil {
-				return err
-			}
+		Args:     cli.ExactArgs(1),
+		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if ref, err = parseRefArg(args[0]); err != nil {
+			if ref, err = parseRefArg(inv.Args[0]); err != nil {
 				return err
 			}
 			if l, err = f.listing(); err != nil {
 				return err
 			}
 			if ref.ID != "" && l.Unit != "" {
-				return cli.Usagef("ls %s --unit: a listing by id has no path to derive the unit's scope from; list the path instead", args[0])
+				return cli.Usagef("ls %s --unit: a listing by id has no path to derive the unit's scope from; list the path instead", inv.Args[0])
 			}
 			return nil
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			s := g.storeOf(inv)
+			s := inv.Get(g.store)
 			var c Contents
 			var err error
 			if ref.ID != "" {
@@ -143,16 +134,14 @@ func (g group) stat() *cli.Command {
 		Name:     "stat",
 		Summary:  "Show a file's or a directory's row, one field per line",
 		Synopsis: "<path|id:<uuid>>",
-		Args: func(args []string) error {
-			if err := cli.ExactArgs(1)(args); err != nil {
-				return err
-			}
+		Args:     cli.ExactArgs(1),
+		Validate: func(inv *cli.Invocation) error {
 			var err error
-			ref, err = parseRefArg(args[0])
+			ref, err = parseRefArg(inv.Args[0])
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			s := g.storeOf(inv)
+			s := inv.Get(g.store)
 			if ref.ID != "" {
 				e, err := s.Find(ctx, ref.ID)
 				if err != nil {
@@ -192,16 +181,14 @@ func (g group) move() *cli.Command {
 		Name:     "mv",
 		Summary:  "Move or rename a directory or a file within its top-level directory",
 		Synopsis: "<src> <dst>",
-		Args: func(args []string) error {
-			if err := cli.ExactArgs(2)(args); err != nil {
-				return err
-			}
+		Args:     cli.ExactArgs(2),
+		Validate: func(inv *cli.Invocation) error {
 			var err error
-			src, dst, err = parsePair("mv", args[0], args[1])
+			src, dst, err = parsePair("mv", inv.Args[0], inv.Args[1])
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			s := g.storeOf(inv)
+			s := inv.Get(g.store)
 			var res MoveResult
 			var err error
 			if src.ID != "" {
@@ -230,7 +217,7 @@ func (g group) removeDirectory() *cli.Command {
 		Synopsis: "<path>",
 		Args:     cli.ExactArgs(1),
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			dir, err := g.storeOf(inv).RemoveDirectory(ctx, inv.Args[0])
+			dir, err := inv.Get(g.store).RemoveDirectory(ctx, inv.Args[0])
 			if err != nil {
 				return err
 			}
@@ -258,16 +245,14 @@ func (g group) bookmarkAdd() *cli.Command {
 		Name:     "add",
 		Summary:  "Bookmark the file at a path for a unit; --active makes it the unit's one active bookmark",
 		Synopsis: "<path>",
-		Args: func(args []string) error {
-			if err := cli.ExactArgs(1)(args); err != nil {
-				return err
-			}
+		Args:     cli.ExactArgs(1),
+		Validate: func(*cli.Invocation) error {
 			var err error
 			unit, err = parseUnit(unit)
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			f, err := g.storeOf(inv).AddBookmark(ctx, inv.Args[0], unit, active)
+			f, err := inv.Get(g.store).AddBookmark(ctx, inv.Args[0], unit, active)
 			if err != nil {
 				return err
 			}
@@ -294,10 +279,8 @@ func (g group) bookmarkList() *cli.Command {
 	cmd := &cli.Command{
 		Name:    "ls",
 		Summary: "List a unit's bookmarks with their files' paths, one page",
-		Args: func(args []string) error {
-			if err := cli.NoArgs(args); err != nil {
-				return err
-			}
+		Args:    cli.NoArgs,
+		Validate: func(*cli.Invocation) error {
 			var err error
 			if unit, err = parseUnit(unit); err != nil {
 				return err
@@ -306,7 +289,7 @@ func (g group) bookmarkList() *cli.Command {
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			p, err := g.storeOf(inv).ListBookmarks(ctx, unit, l)
+			p, err := inv.Get(g.store).ListBookmarks(ctx, unit, l)
 			if err != nil {
 				return err
 			}
@@ -331,16 +314,14 @@ func (g group) bookmarkRemove() *cli.Command {
 		Name:     "rm",
 		Summary:  "Remove a unit's bookmark of the file at a path, active or not",
 		Synopsis: "<path>",
-		Args: func(args []string) error {
-			if err := cli.ExactArgs(1)(args); err != nil {
-				return err
-			}
+		Args:     cli.ExactArgs(1),
+		Validate: func(*cli.Invocation) error {
 			var err error
 			unit, err = parseUnit(unit)
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			f, err := g.storeOf(inv).RemoveBookmark(ctx, inv.Args[0], unit)
+			f, err := inv.Get(g.store).RemoveBookmark(ctx, inv.Args[0], unit)
 			if err != nil {
 				return err
 			}
@@ -357,9 +338,10 @@ func (g group) bookmarkRemove() *cli.Command {
 // objects with Use, so the dispatcher builds and starts the database, the
 // Store's statement check, and the object store before the body runs; a
 // store that cannot be reached fails the command at start, naming the
-// store's node, before anything is read or written. Each validates its
-// arguments in Args, so a malformed path-or-id, or an id where a path is
-// needed, is a usage error before anything is built.
+// store's node, before anything is read or written. Each counts its
+// arguments in Args and checks them and its flags in Validate, so a
+// malformed path-or-id, or an id where a path is needed, is a usage error
+// before anything is built.
 func ObjectCommands(objects *graph.Node[*Objects]) []*cli.Command {
 	g := objectGroup{objects: objects}
 	return []*cli.Command{
@@ -375,11 +357,6 @@ type objectGroup struct {
 	objects *graph.Node[*Objects]
 }
 
-// objectsOf returns the Objects the dispatcher built for inv.
-func (g objectGroup) objectsOf(inv *cli.Invocation) *Objects {
-	return inv.System.Get(g.objects)
-}
-
 // put is put <local-file|-> <path|id:<uuid>> [--content-type <type>]: the
 // local file, or standard input for -, written as the file at the path,
 // or into the directory with the id under the local file's base name.
@@ -391,16 +368,14 @@ func (g objectGroup) put() *cli.Command {
 		Name:     "put",
 		Summary:  "Upload a local file, or stdin for -, as the file at a path or into a directory",
 		Synopsis: "<local-file|-> <path|id:<uuid>>",
-		Args: func(args []string) error {
-			if err := cli.ExactArgs(2)(args); err != nil {
-				return err
-			}
+		Args:     cli.ExactArgs(2),
+		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if dst, err = parseRefArg(args[1]); err != nil {
+			if dst, err = parseRefArg(inv.Args[1]); err != nil {
 				return err
 			}
-			if dst.ID != "" && args[0] == "-" {
-				return cli.Usagef("put - %s: stdin has no name to store under; give the destination as a path", args[1])
+			if dst.ID != "" && inv.Args[0] == "-" {
+				return cli.Usagef("put - %s: stdin has no name to store under; give the destination as a path", inv.Args[1])
 			}
 			return nil
 		},
@@ -412,7 +387,7 @@ func (g objectGroup) put() *cli.Command {
 			}
 			defer closeBody()
 			c := Content{Body: body, Size: size, ContentType: declaredType(contentType, src)}
-			o := g.objectsOf(inv)
+			o := inv.Get(g.objects)
 			label := inv.Args[1]
 			var res PutResult
 			if dst.ID != "" {
@@ -445,16 +420,14 @@ func (g objectGroup) cat() *cli.Command {
 		Name:     "cat",
 		Summary:  "Write an available file's content to stdout",
 		Synopsis: "<path|id:<uuid>>",
-		Args: func(args []string) error {
-			if err := cli.ExactArgs(1)(args); err != nil {
-				return err
-			}
+		Args:     cli.ExactArgs(1),
+		Validate: func(inv *cli.Invocation) error {
 			var err error
-			ref, err = parseRefArg(args[0])
+			ref, err = parseRefArg(inv.Args[0])
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			o := g.objectsOf(inv)
+			o := inv.Get(g.objects)
 			var body io.ReadCloser
 			var err error
 			if ref.ID != "" {
@@ -484,16 +457,14 @@ func (g objectGroup) copy() *cli.Command {
 		Name:     "cp",
 		Summary:  "Copy an available file into a directory or to a new path",
 		Synopsis: "<src> <dst>",
-		Args: func(args []string) error {
-			if err := cli.ExactArgs(2)(args); err != nil {
-				return err
-			}
+		Args:     cli.ExactArgs(2),
+		Validate: func(inv *cli.Invocation) error {
 			var err error
-			src, dst, err = parsePair("cp", args[0], args[1])
+			src, dst, err = parsePair("cp", inv.Args[0], inv.Args[1])
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			o := g.objectsOf(inv)
+			o := inv.Get(g.objects)
 			var res CopyResult
 			var err error
 			if src.ID != "" {
@@ -520,21 +491,19 @@ func (g objectGroup) remove() *cli.Command {
 		Name:     "rm",
 		Summary:  "Delete a file, or with --recursive a directory and everything beneath it",
 		Synopsis: "<path|id:<uuid>>",
-		Args: func(args []string) error {
-			if err := cli.ExactArgs(1)(args); err != nil {
-				return err
-			}
+		Args:     cli.ExactArgs(1),
+		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if ref, err = parseRefArg(args[0]); err != nil {
+			if ref, err = parseRefArg(inv.Args[0]); err != nil {
 				return err
 			}
 			if recursive && ref.ID != "" {
-				return cli.Usagef("rm --recursive %s: a branch is removed by path, not by id", args[0])
+				return cli.Usagef("rm --recursive %s: a branch is removed by path, not by id", inv.Args[0])
 			}
 			return nil
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			o := g.objectsOf(inv)
+			o := inv.Get(g.objects)
 			if recursive {
 				res, err := o.RemoveTree(ctx, ref.Path)
 				if err != nil {
@@ -848,7 +817,8 @@ func (f *listingFlags) listing() (Listing, error) {
 // parseUnit reads a --unit value: empty when the flag was not given, and
 // otherwise a UUID, returned in canonical form. A value that is not one is
 // a usage error. A required --unit that is missing is reported by the
-// dispatcher's Require, after Args, so the empty value passes here.
+// dispatcher's Require, before Validate, so the empty value passes here
+// only for an optional --unit.
 func parseUnit(unit string) (string, error) {
 	if unit == "" {
 		return "", nil

@@ -12,6 +12,7 @@ import (
 	godatabase "github.com/standards-lab/go-database"
 	"github.com/standards-lab/go-storage"
 
+	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/internal/app"
 	"github.com/JaimeStill/spike-cli-architecture/internal/apptest"
 )
@@ -25,7 +26,7 @@ import (
 func run(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code = app.New(strings.NewReader(""), &out, &errOut).Run(context.Background(), args)
+	code = app.New(cli.Streams{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut}).Run(context.Background(), args)
 	return code, out.String(), errOut.String()
 }
 
@@ -59,7 +60,7 @@ func clearEnv(t *testing.T) {
 // I/O, so a run of a command that declares nodes builds them, fails with
 // "lifecycle config: halted", and starts nothing.
 func haltedApp(stdout, stderr *bytes.Buffer) (*app.App, *apptest.Recorder) {
-	a := app.New(strings.NewReader(""), stdout, stderr)
+	a := app.New(cli.Streams{Stdin: strings.NewReader(""), Stdout: stdout, Stderr: stderr})
 	built := apptest.Builds(a)
 	apptest.Halt(a)
 	return a, built
@@ -175,7 +176,7 @@ func TestRun_ConfigurationReadOnlyOnRequest(t *testing.T) {
 func TestNew_IsCold(t *testing.T) {
 	var out, errOut bytes.Buffer
 
-	app.New(strings.NewReader(""), &out, &errOut)
+	app.New(cli.Streams{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut})
 
 	if out.Len() != 0 || errOut.Len() != 0 {
 		t.Errorf("New() wrote %q, %q, want nothing", out.String(), errOut.String())

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"io"
 
 	"github.com/standards-lab/go-database"
 	"github.com/standards-lab/go-storage"
@@ -17,22 +16,20 @@ import (
 // App is the blobfs program: its dependency graph, its command tree, and
 // the streams it reads from and reports to.
 type App struct {
-	graph  *graph.Graph
-	infra  *infrastructure
-	admin  *admin
-	domain *domain
-	root   *cli.Command
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
+	graph   *graph.Graph
+	infra   *infrastructure
+	admin   *admin
+	domain  *domain
+	root    *cli.Command
+	streams cli.Streams
 }
 
 // New describes the graph, builds the command tree, and returns the App. It
 // is cold: it constructs nothing, reads no configuration, and writes
-// nothing until [App.Run]. stdin is what a command reads as standard
-// input, such as put's content from -; nothing reads it but such a
-// command.
-func New(stdin io.Reader, stdout, stderr io.Writer) *App {
+// nothing until [App.Run]. streams are what every run reads from and
+// writes to: Stdin is what a command reads as standard input, such as
+// put's content from -, and nothing reads it but such a command.
+func New(streams cli.Streams) *App {
 	g := graph.New()
 	infra := defineInfrastructure(g)
 	a := &App{
@@ -44,9 +41,7 @@ func New(stdin io.Reader, stdout, stderr io.Writer) *App {
 			Name:    "blobfs",
 			Summary: "blobfs manages files in a blob store.",
 		},
-		stdin:  stdin,
-		stdout: stdout,
-		stderr: stderr,
+		streams: streams,
 	}
 	a.root.Add(versionCommand())
 	a.root.Add(mountAdmin(a.admin)...)
@@ -64,7 +59,7 @@ func New(stdin io.Reader, stdout, stderr io.Writer) *App {
 // command's result. An App runs one command at a time, since a graph.Graph
 // is not safe for concurrent use.
 func (a *App) Run(ctx context.Context, args []string) int {
-	return cli.Run(ctx, a.root, args, a.stdin, a.stdout, a.stderr, cli.WithGraph(a.graph, a.infra.lifecycleConfig))
+	return cli.Run(ctx, a.root, args, a.streams, cli.WithGraph(a.graph, a.infra.lifecycleConfig))
 }
 
 // Nodes is the App's graph nodes, one handle each, as [App.Nodes] returns

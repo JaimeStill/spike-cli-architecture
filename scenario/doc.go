@@ -16,8 +16,8 @@
 // The package exports:
 //
 //   - [Scenario], an ordered list of [Step]s over the [Node]s it declares
-//   - [Run], which runs a scenario's steps over a built System, narrating
-//     each before doing it
+//   - [Run], which runs a scenario's steps with its command's Invocation,
+//     narrating each before doing it
 //   - [Reporter] and [NewReporter], the channel a step narrates through
 //   - [Command], the leaf command that runs one scenario
 //   - [WriteListing], which prints the scenarios and the nodes each

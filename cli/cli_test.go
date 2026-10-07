@@ -31,7 +31,7 @@ func dispatch(t *testing.T, root *cli.Command, args ...string) result {
 func dispatchIn(t *testing.T, root *cli.Command, stdin io.Reader, args ...string) result {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := cli.Run(context.Background(), root, args, stdin, &stdout, &stderr)
+	code := cli.Run(context.Background(), root, args, cli.Streams{Stdin: stdin, Stdout: &stdout, Stderr: &stderr})
 	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
 }
 

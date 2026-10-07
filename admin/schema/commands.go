@@ -2,7 +2,6 @@ package schema
 
 import (
 	"context"
-	"flag"
 	"strconv"
 	"strings"
 
@@ -18,7 +17,7 @@ import (
 // The group declares client with Use, and every subcommand inherits it, so
 // the dispatcher builds and starts the client's dependencies before a
 // verb's body runs and shuts them down after; the body reads the client
-// from the Invocation's System. Every subcommand takes no arguments.
+// with the Invocation's Get. Every subcommand takes no arguments.
 func Commands(client *graph.Node[*Client]) *cli.Command {
 	g := group{client: client}
 	return (&cli.Command{
@@ -39,11 +38,6 @@ type group struct {
 	client *graph.Node[*Client]
 }
 
-// clientOf returns the Client the dispatcher built for inv.
-func (g group) clientOf(inv *cli.Invocation) *Client {
-	return inv.System.Get(g.client)
-}
-
 // leaf builds one subcommand over a Client method that takes no input: it
 // runs op on the built client and prints result on success.
 func (g group) leaf(name, summary string, op func(*Client, context.Context) error, result string) *cli.Command {
@@ -52,7 +46,7 @@ func (g group) leaf(name, summary string, op func(*Client, context.Context) erro
 		Summary: summary,
 		Args:    cli.NoArgs,
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			if err := op(g.clientOf(inv), ctx); err != nil {
+			if err := op(inv.Get(g.client), ctx); err != nil {
 				return err
 			}
 			return output.Line(inv.Stdout, result)
@@ -69,7 +63,7 @@ func (g group) status() *cli.Command {
 		Summary: "Show each set's head, latest version, pending migrations, and dirty mark",
 		Args:    cli.NoArgs,
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			sets, err := g.clientOf(inv).Status(ctx)
+			sets, err := inv.Get(g.client).Status(ctx)
 			if err != nil {
 				return err
 			}
@@ -81,16 +75,24 @@ func (g group) status() *cli.Command {
 // reset builds the reset subcommand. It is destructive, so --yes is a
 // required flag: the dispatcher refuses a reset without it as a usage
 // error, before anything is built. A --yes given as false satisfies the
-// requirement, so the argument validator refuses it too: it runs after the
-// flags are parsed and, like the required-flag check, before the Build, so
-// an unconfirmed reset never starts the database.
+// requirement, so Validate refuses it too: it runs after the required-flag
+// check and before the Build, so an unconfirmed reset never starts the
+// database.
 func (g group) reset() *cli.Command {
 	var yes bool
 	cmd := &cli.Command{
 		Name:    "reset",
 		Summary: "Revert every set, the app's first, and drop the history tables; requires --yes",
+		Args:    cli.NoArgs,
+		Validate: func(inv *cli.Invocation) error {
+			// The required-flag check has already refused an absent --yes.
+			if inv.Changed("yes") && !yes {
+				return cli.Usagef("--yes=false does not confirm the reset")
+			}
+			return nil
+		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			if err := g.clientOf(inv).Reset(ctx); err != nil {
+			if err := inv.Get(g.client).Reset(ctx); err != nil {
 				return err
 			}
 			return output.Line(inv.Stdout, "schema reset: both sets reverted and their history tables dropped")
@@ -98,29 +100,7 @@ func (g group) reset() *cli.Command {
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the reset: every set is reverted and the history tables are dropped")
 	cmd.Require("yes")
-	cmd.Args = func(args []string) error {
-		if err := cli.NoArgs(args); err != nil {
-			return err
-		}
-		// An absent --yes is left to the required-flag check, which
-		// reports it as missing.
-		if given(cmd, "yes") && !yes {
-			return cli.Usagef("--yes=false does not confirm the reset")
-		}
-		return nil
-	}
 	return cmd
-}
-
-// given reports whether the flag name was set on cmd's command line.
-func given(cmd *cli.Command, name string) bool {
-	set := false
-	cmd.Flags().Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			set = true
-		}
-	})
-	return set
 }
 
 var statusHeader = []string{"set", "table", "version", "latest", "pending", "dirty"}

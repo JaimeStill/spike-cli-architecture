@@ -56,7 +56,7 @@ func newTree(t *testing.T, steps func(a, b *graph.Node[string]) []scenario.Step,
 
 func (tr *tree) run(args ...string) (code int, stdout, stderr string) {
 	var out, errOut bytes.Buffer
-	code = cli.Run(context.Background(), tr.root, args, strings.NewReader(""), &out, &errOut, cli.WithGraph(tr.g, tr.cfg))
+	code = cli.Run(context.Background(), tr.root, args, cli.Streams{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut}, cli.WithGraph(tr.g, tr.cfg))
 	return code, out.String(), errOut.String()
 }
 
@@ -64,8 +64,8 @@ func TestCommand_BuildsTheDeclaredNodesAndNarratesOverThem(t *testing.T) {
 	tr := newTree(t, func(a, b *graph.Node[string]) []scenario.Step {
 		return []scenario.Step{{
 			Intent: "Read both nodes",
-			Action: func(_ context.Context, sys *graph.System, r *scenario.Reporter) error {
-				r.Note("read %s and %s", sys.Get(a), sys.Get(b))
+			Action: func(_ context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
+				r.Note("read %s and %s", inv.Get(a), inv.Get(b))
 				return nil
 			},
 		}}
@@ -109,7 +109,7 @@ func TestCommand_ReadsTheScenariosFlags(t *testing.T) {
 	tr := newTree(t, func(a, b *graph.Node[string]) []scenario.Step {
 		return []scenario.Step{{
 			Intent: "Report the level",
-			Action: func(_ context.Context, _ *graph.System, r *scenario.Reporter) error {
+			Action: func(_ context.Context, _ *cli.Invocation, r *scenario.Reporter) error {
 				r.Note("level %d", level)
 				return nil
 			},
@@ -146,7 +146,7 @@ func TestCommand_AFailedStepIsReportedOnceUnderTheCommandsPath(t *testing.T) {
 	tr := newTree(t, func(a, b *graph.Node[string]) []scenario.Step {
 		return []scenario.Step{{
 			Intent: "Fail",
-			Action: func(context.Context, *graph.System, *scenario.Reporter) error {
+			Action: func(context.Context, *cli.Invocation, *scenario.Reporter) error {
 				return context.DeadlineExceeded
 			},
 		}}

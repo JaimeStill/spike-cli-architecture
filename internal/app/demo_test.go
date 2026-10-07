@@ -13,6 +13,7 @@ import (
 	"github.com/standards-lab/go-storage/storagetest"
 	"github.com/standards-lab/sqlate/sqltest"
 
+	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/internal/app"
 	"github.com/JaimeStill/spike-cli-architecture/internal/apptest"
 )
@@ -48,7 +49,7 @@ func TestList_PrintsEachScenarioAndTheNodesItDeclaresAndBuildsNothing(t *testing
 func TestRootHelp_EndsWithTheScenarioListingAndBuildsNothing(t *testing.T) {
 	clearEnv(t)
 	var listing, listErr bytes.Buffer
-	if code := app.New(strings.NewReader(""), &listing, &listErr).Run(context.Background(), []string{"list"}); code != process.ExitOK {
+	if code := app.New(cli.Streams{Stdin: strings.NewReader(""), Stdout: &listing, Stderr: &listErr}).Run(context.Background(), []string{"list"}); code != process.ExitOK {
 		t.Fatalf("list: code = %d, want %d; stderr = %q", code, process.ExitOK, listErr.String())
 	}
 	tail := "\nRun 'blobfs <command> --help' for help on a command.\n\nScenarios:\n" + listing.String()

@@ -44,7 +44,7 @@ import (
 // ordered after the recorded database, so the two, one layer in
 // production, start and shut down in an order the test can assert.
 func probeApp(r *apptest.Recorder, stdout, stderr *bytes.Buffer) *app.App {
-	a := app.New(strings.NewReader(""), stdout, stderr)
+	a := app.New(cli.Streams{Stdin: strings.NewReader(""), Stdout: stdout, Stderr: stderr})
 	g, n := a.Graph(), a.Nodes()
 	database := g.Define("recorded database", func(s *graph.Scope) (*recorded, error) {
 		db, err := postgres.New(s.Use(n.DatabaseConfig))

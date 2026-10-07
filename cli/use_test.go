@@ -156,7 +156,7 @@ func newUseTree() *useTree {
 // run dispatches args over the tree with its graph, under ctx.
 func (u *useTree) run(ctx context.Context, args ...string) result {
 	var stdout, stderr bytes.Buffer
-	code := cli.Run(ctx, u.root, args, strings.NewReader(""), &stdout, &stderr, cli.WithGraph(u.g, u.cfg))
+	code := cli.Run(ctx, u.root, args, cli.Streams{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}, cli.WithGraph(u.g, u.cfg))
 	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
 }
 
@@ -188,11 +188,8 @@ func TestUse_BuildsAndRunsTheLeafUnderALifecycle(t *testing.T) {
 	if got := u.rec.list(); !slices.Equal(got, want) {
 		t.Errorf("events = %q, want %q", got, want)
 	}
-	if u.inv.System == nil {
-		t.Fatal("Invocation.System is nil")
-	}
-	if got := u.inv.System.Get(u.store); got == nil || got.name != "store" {
-		t.Errorf("System.Get(store) = %v, want the built store", got)
+	if got := u.inv.Get(u.store); got == nil || got.name != "store" {
+		t.Errorf("Get(store) = %v, want the built store", got)
 	}
 }
 
@@ -206,11 +203,8 @@ func TestUse_InheritedFromTheParent(t *testing.T) {
 	if got := u.rec.list(); !slices.Equal(got, want) {
 		t.Errorf("events = %q, want %q", got, want)
 	}
-	if u.inv.System == nil {
-		t.Fatal("Invocation.System is nil")
-	}
-	if got := u.inv.System.Get(u.db); got == nil || got.name != "db" {
-		t.Errorf("System.Get(db) = %v, want the built db", got)
+	if got := u.inv.Get(u.db); got == nil || got.name != "db" {
+		t.Errorf("Get(db) = %v, want the built db", got)
 	}
 }
 
@@ -233,9 +227,6 @@ func TestUse_NoneRunsWithoutABuild(t *testing.T) {
 	}
 	if got, want := u.rec.list(), []string{"prerun", "run plain"}; !slices.Equal(got, want) {
 		t.Errorf("events = %q, want %q", got, want)
-	}
-	if u.inv.System != nil {
-		t.Error("Invocation.System is set for a leaf whose path declares no nodes")
 	}
 }
 

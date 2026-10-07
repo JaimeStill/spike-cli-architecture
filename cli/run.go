@@ -40,20 +40,29 @@ func WithGraph(g *graph.Graph, lifecycleConfig *graph.Node[lifecycle.Config]) Op
 }
 
 // Run dispatches args, the program arguments without the program name, over
-// the tree rooted at root, and returns the process exit code. stdin, stdout,
-// and stderr are the process's streams, or a test's buffers: a running
-// command reads stdin and writes stdout and stderr through its [Invocation],
-// and the dispatcher prints to stdout and stderr itself but never reads
-// stdin. A dispatch to a leaf goes in this order, stopping at the first
-// failure: parse each level's flags, select the leaf, validate its arguments
-// with [Command.Args], check its required flags and then its exclusive
-// groups, run the root's [Command.PreRun], run the leaf. When the leaf's
-// path has nodes declared with [Command.Use], running the leaf means
-// building their union and the lifecycle configuration node from the
-// [WithGraph] graph, starting the System with a [lifecycle.Coordinator],
-// running the leaf under it with [Invocation].System set, and shutting the
-// System down; nothing is built when the dispatch ends before the leaf would
-// run.
+// the tree rooted at root, and returns the process exit code. streams are
+// the process's streams, or a test's buffers: a running command reads Stdin
+// and writes Stdout and Stderr through its [Invocation], which embeds them,
+// and the dispatcher prints to Stdout and Stderr itself but never reads
+// Stdin.
+//
+// A dispatch to a leaf goes in this order, stopping at the first failure:
+//
+//  1. parse each level's flags and select the leaf
+//  2. count its positional arguments with [Command.Args]
+//  3. check its required flags, [Command.Require]
+//  4. check its exclusive groups, [Command.Exclusive]
+//  5. validate its input with [Command.Validate]
+//  6. run the root's [Command.PreRun]
+//  7. build the nodes its path declares with [Command.Use]
+//  8. run the leaf with [Command.Run]
+//
+// When the leaf's path has nodes declared with Use, the Build constructs
+// their union and the lifecycle configuration node from the [WithGraph]
+// graph; the System is started with a [lifecycle.Coordinator], the leaf
+// runs under it, reading each declared node's value with
+// [Invocation.Get], and the System is shut down. Nothing is built when the
+// dispatch ends before the Build.
 //
 // Run owns every line the dispatcher prints, and returns go-core's process
 // exit codes:
@@ -62,8 +71,9 @@ func WithGraph(g *graph.Graph, lifecycleConfig *graph.Node[lifecycle.Config]) Op
 //     --help, prints its generated help to stdout and returns ExitUsage
 //   - an unknown subcommand, an unknown flag, a malformed flag value, a
 //     rejected argument count, a missing required flag, a broken exclusive
-//     group, or a [UsageError] that PreRun or the command returns is
-//     reported on stderr with the command's usage and returns ExitUsage
+//     group, any error Validate returns, or a [UsageError] that PreRun or
+//     the command returns is reported on stderr with the command's usage
+//     and returns ExitUsage
 //   - any other error PreRun or the command returns, or a Build, start, or
 //     shutdown error, is reported once on stderr and returns ExitFailure
 //   - a command that succeeds returns ExitOK
@@ -71,7 +81,7 @@ func WithGraph(g *graph.Graph, lifecycleConfig *graph.Node[lifecycle.Config]) Op
 // Run panics at the start of the dispatch when any command in the tree has
 // declared [Command.Use] and no [WithGraph] option was given, whichever
 // command is selected.
-func Run(ctx context.Context, root *Command, args []string, stdin io.Reader, stdout, stderr io.Writer, opts ...Option) int {
+func Run(ctx context.Context, root *Command, args []string, streams Streams, opts ...Option) int {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
@@ -81,20 +91,20 @@ func Run(ctx context.Context, root *Command, args []string, stdin io.Reader, std
 	var path []*Command
 	for {
 		path = append(path, cmd)
-		rest, code, ok := parse(cmd, args, stdout, stderr)
+		rest, code, ok := parse(cmd, args, streams)
 		if !ok {
 			return code
 		}
 		if !cmd.isParent() {
-			return execute(ctx, &o, path, rest, stdin, stdout, stderr)
+			return execute(ctx, &o, path, rest, streams)
 		}
 		if len(rest) == 0 {
-			return process.Usage(stdout, help(cmd))
+			return process.Usage(streams.Stdout, help(cmd))
 		}
 		sub := cmd.child(rest[0])
 		if sub == nil {
 			msg := fmt.Sprintf("%s: unknown command %q\n\n%s", cmd.path(), rest[0], help(cmd))
-			return process.Usage(stderr, msg)
+			return process.Usage(streams.Stderr, msg)
 		}
 		cmd, args = sub, rest[1:]
 	}
@@ -106,7 +116,7 @@ func Run(ctx context.Context, root *Command, args []string, stdin io.Reader, std
 // anywhere among its positional arguments, up to a "--". When parsing ends
 // the dispatch, because help was asked for or a flag was wrong, it reports
 // that and returns ok false with the exit code.
-func parse(cmd *Command, args []string, stdout, stderr io.Writer) (rest []string, code int, ok bool) {
+func parse(cmd *Command, args []string, streams Streams) (rest []string, code int, ok bool) {
 	fs := cmd.Flags()
 	var positional []string
 	if !cmd.isParent() {
@@ -115,9 +125,9 @@ func parse(cmd *Command, args []string, stdout, stderr io.Writer) (rest []string
 	err := fs.Parse(args)
 	switch {
 	case errors.Is(err, flag.ErrHelp):
-		return nil, process.Usage(stdout, help(cmd)), false
+		return nil, process.Usage(streams.Stdout, help(cmd)), false
 	case err != nil:
-		return nil, usageError(cmd, stderr, err), false
+		return nil, usageError(cmd, streams.Stderr, err), false
 	}
 	if cmd.isParent() {
 		return fs.Args(), process.ExitOK, true
@@ -126,52 +136,60 @@ func parse(cmd *Command, args []string, stdout, stderr io.Writer) (rest []string
 	return positional, process.ExitOK, true
 }
 
-// execute validates the leaf's positional arguments and flag groups, runs
-// the root's PreRun and then the leaf, under a lifecycle when the path
-// declares nodes with Use, and maps the first error to an exit code. path
-// holds the commands from the root to the leaf.
-func execute(ctx context.Context, o *options, path []*Command, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+// execute checks the leaf's positional argument count, its flag groups,
+// and its input with Validate, runs the root's PreRun and then the leaf,
+// under a lifecycle when the path declares nodes with Use, and maps the
+// first error to an exit code. path holds the commands from the root to
+// the leaf.
+func execute(ctx context.Context, o *options, path []*Command, args []string, streams Streams) int {
 	root, cmd := path[0], path[len(path)-1]
 	if cmd.Args != nil {
 		if err := cmd.Args(args); err != nil {
-			return usageError(cmd, stderr, err)
+			return usageError(cmd, streams.Stderr, err)
 		}
 	}
-	inv := &Invocation{Args: args, Stdin: stdin, Stdout: stdout, Stderr: stderr, changed: changed(path)}
+	inv := &Invocation{Streams: streams, Args: args, cmd: cmd, uses: uses(path), changed: changed(path)}
 	if err := cmd.checkFlags(inv.changed); err != nil {
-		return usageError(cmd, stderr, err)
+		return usageError(cmd, streams.Stderr, err)
+	}
+	if cmd.Validate != nil {
+		// Validate's error is a usage error whatever its type.
+		if err := cmd.Validate(inv); err != nil {
+			return usageError(cmd, streams.Stderr, err)
+		}
 	}
 	var err error
 	if root.PreRun != nil {
 		err = root.PreRun(ctx, inv)
 	}
 	if err == nil {
-		err = o.run(ctx, uses(path), cmd, inv)
+		err = o.run(ctx, cmd, inv)
 	}
 	if err == nil {
 		return process.ExitOK
 	}
 	if _, ok := errors.AsType[*UsageError](err); ok {
-		return usageError(cmd, stderr, err)
+		return usageError(cmd, streams.Stderr, err)
 	}
-	return process.Fail(stderr, cmd.path(), err)
+	return process.Fail(streams.Stderr, cmd.path(), err)
 }
 
-// run runs the leaf cmd with inv. With no uses it calls Run directly;
-// otherwise it builds uses and the lifecycle configuration node, and runs
-// cmd under a Coordinator for the System, with inv.System set. The error is
-// the Build's, or the Coordinator's: startup's or the leaf's, joined with
-// the shutdown's.
-func (o *options) run(ctx context.Context, uses []graph.Ref, cmd *Command, inv *Invocation) error {
-	if len(uses) == 0 {
+// run runs the leaf cmd with inv. When inv's path declares no nodes it
+// calls Run directly; otherwise it builds them and the lifecycle
+// configuration node, and runs cmd under a Coordinator for the System,
+// with the System set on inv for [Invocation.Get]. The error is the
+// Build's, or the Coordinator's: startup's or the leaf's, joined with the
+// shutdown's.
+func (o *options) run(ctx context.Context, cmd *Command, inv *Invocation) error {
+	if len(inv.uses) == 0 {
 		return cmd.Run(ctx, inv)
 	}
-	sys, err := o.graph.Build(append(uses, o.lifecycleConfig)...)
+	sys, err := o.graph.Build(append(slices.Clone(inv.uses), o.lifecycleConfig)...)
 	if err != nil {
 		return err
 	}
 	return lifecycle.New(sys, sys.Get(o.lifecycleConfig)).Exec(ctx, func(ctx context.Context) error {
-		inv.System = sys
+		inv.system = sys
 		return cmd.Run(ctx, inv)
 	})
 }

@@ -6,14 +6,14 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/JaimeStill/spike-cli-architecture/graph"
+	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/scenario"
 )
 
 func TestRun_NarratesEachStepBeforeItsAction(t *testing.T) {
 	var out bytes.Buffer
-	act := func(name string) func(context.Context, *graph.System, *scenario.Reporter) error {
-		return func(context.Context, *graph.System, *scenario.Reporter) error {
+	act := func(name string) func(context.Context, *cli.Invocation, *scenario.Reporter) error {
+		return func(context.Context, *cli.Invocation, *scenario.Reporter) error {
 			out.WriteString("acted " + name + "\n")
 			return nil
 		}
@@ -51,9 +51,9 @@ func TestRun_NamesTheFailedStepByNumberAndIntent(t *testing.T) {
 	s := scenario.Scenario{
 		Name: "stub",
 		Steps: []scenario.Step{
-			{Intent: "First", Action: func(context.Context, *graph.System, *scenario.Reporter) error { return nil }},
-			{Intent: "Make the area", Action: func(context.Context, *graph.System, *scenario.Reporter) error { return boom }},
-			{Intent: "Never reached", Action: func(context.Context, *graph.System, *scenario.Reporter) error { ran = true; return nil }},
+			{Intent: "First", Action: func(context.Context, *cli.Invocation, *scenario.Reporter) error { return nil }},
+			{Intent: "Make the area", Action: func(context.Context, *cli.Invocation, *scenario.Reporter) error { return boom }},
+			{Intent: "Never reached", Action: func(context.Context, *cli.Invocation, *scenario.Reporter) error { ran = true; return nil }},
 		},
 	}
 	var out bytes.Buffer
@@ -79,7 +79,7 @@ func TestRun_StopsWhenTheContextEnds(t *testing.T) {
 	s := scenario.Scenario{
 		Name: "stub",
 		Steps: []scenario.Step{
-			{Intent: "Cancel", Action: func(context.Context, *graph.System, *scenario.Reporter) error { cancel(); return nil }},
+			{Intent: "Cancel", Action: func(context.Context, *cli.Invocation, *scenario.Reporter) error { cancel(); return nil }},
 			{Intent: "Never narrated"},
 		},
 	}

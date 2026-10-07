@@ -15,8 +15,8 @@
 // root defines the node that constructs the Client over its database and
 // passes it to [Commands]. The group declares that node with Use, so the
 // dispatcher builds and starts the database before a verb's body runs and
-// shuts it down after, and each body reads the Client from the
-// Invocation's System. This package never reads configuration, names a
+// shuts it down after, and each body reads the Client with the
+// Invocation's Get. This package never reads configuration, names a
 // driver, or imports the composition root.
 //
 // The package exports:

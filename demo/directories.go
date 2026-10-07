@@ -7,6 +7,7 @@ import (
 
 	"github.com/standards-lab/blobfs"
 
+	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/domain/files"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 	"github.com/JaimeStill/spike-cli-architecture/scenario"
@@ -32,7 +33,7 @@ type directories struct {
 }
 
 // storeOf returns the Store the dispatcher built for the run.
-func (d directories) storeOf(sys *graph.System) *files.Store { return sys.Get(d.store) }
+func (d directories) storeOf(inv *cli.Invocation) *files.Store { return inv.Get(d.store) }
 
 // Directories is the directories tour over store, the files node: mkdir,
 // ls with its paging, sorting, and filtering, stat, mv, and rmdir, with
@@ -61,8 +62,8 @@ func Directories(store *graph.Node[*files.Store]) scenario.Scenario {
 	}
 }
 
-func (d directories) clear(ctx context.Context, sys *graph.System, r *scenario.Reporter) error {
-	s := d.storeOf(sys)
+func (d directories) clear(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
+	s := d.storeOf(inv)
 	_, err := s.Resolve(ctx, DirectoriesArea)
 	if errors.Is(err, blobfs.ErrNotFound) {
 		r.Note("Nothing to clear: %s does not exist, so this run starts clean.", DirectoriesArea)
@@ -75,27 +76,27 @@ func (d directories) clear(ctx context.Context, sys *graph.System, r *scenario.R
 	return removeDirectories(ctx, s, r, DirectoriesArea)
 }
 
-func (d directories) mkdirArea(ctx context.Context, sys *graph.System, r *scenario.Reporter) error {
+func (d directories) mkdirArea(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	r.Note("A directory created with a unit is top-level, and its owner row is written in the same transaction, so the unit's scope starts here.")
-	dir, err := d.storeOf(sys).Mkdir(ctx, DirectoriesArea, Unit)
+	dir, err := d.storeOf(inv).Mkdir(ctx, DirectoriesArea, Unit)
 	if err != nil {
 		return err
 	}
 	return showLine(r, "mkdir: %s (id %s, unit %s)", DirectoriesArea, dir.ID, Unit)
 }
 
-func (d directories) listUnit(ctx context.Context, sys *graph.System, r *scenario.Reporter) error {
+func (d directories) listUnit(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	r.Note("At the root, a unit's listing is its own top-level directories, read through the owner rows.")
 	l := files.Listing{Page: 1, Size: 20, Unit: Unit}
-	c, err := d.storeOf(sys).List(ctx, "/", l)
+	c, err := d.storeOf(inv).List(ctx, "/", l)
 	if err != nil {
 		return err
 	}
 	return showListing(r, l, c)
 }
 
-func (d directories) mkdirChildren(ctx context.Context, sys *graph.System, r *scenario.Reporter) error {
-	s := d.storeOf(sys)
+func (d directories) mkdirChildren(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
+	s := d.storeOf(inv)
 	for _, name := range children {
 		path := DirectoriesArea + "/" + name
 		dir, err := s.Mkdir(ctx, path, "")
@@ -119,26 +120,26 @@ func firstPage() (files.Listing, error) {
 	return files.Listing{Page: 1, Size: 2, Sort: []files.Sort{sort}}, nil
 }
 
-func (d directories) listFirstPage(ctx context.Context, sys *graph.System, r *scenario.Reporter) error {
+func (d directories) listFirstPage(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	r.Note("A page by number counts the total; the next-dirs line is the cursor that continues the directory half.")
 	l, err := firstPage()
 	if err != nil {
 		return err
 	}
-	c, err := d.storeOf(sys).List(ctx, DirectoriesArea, l)
+	c, err := d.storeOf(inv).List(ctx, DirectoriesArea, l)
 	if err != nil {
 		return err
 	}
 	return showListing(r, l, c)
 }
 
-func (d directories) listNextPage(ctx context.Context, sys *graph.System, r *scenario.Reporter) error {
+func (d directories) listNextPage(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	r.Note("The cursor continues after the last row the first page showed, under the same sort; a continued half counts nothing.")
 	l, err := firstPage()
 	if err != nil {
 		return err
 	}
-	s := d.storeOf(sys)
+	s := d.storeOf(inv)
 	first, err := s.List(ctx, DirectoriesArea, l)
 	if err != nil {
 		return err
@@ -154,31 +155,31 @@ func (d directories) listNextPage(ctx context.Context, sys *graph.System, r *sce
 	return showListing(r, l, c)
 }
 
-func (d directories) listFiltered(ctx context.Context, sys *graph.System, r *scenario.Reporter) error {
+func (d directories) listFiltered(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	filter, err := files.ParseFilter("name:in:alpha,charlie,echo")
 	if err != nil {
 		return err
 	}
 	l := files.Listing{Page: 1, Size: 20, Filters: []files.Filter{filter}}
-	c, err := d.storeOf(sys).List(ctx, DirectoriesArea, l)
+	c, err := d.storeOf(inv).List(ctx, DirectoriesArea, l)
 	if err != nil {
 		return err
 	}
 	return showListing(r, l, c)
 }
 
-func (d directories) stat(ctx context.Context, sys *graph.System, r *scenario.Reporter) error {
+func (d directories) stat(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	path := DirectoriesArea + "/alpha"
-	dir, err := d.storeOf(sys).Resolve(ctx, path)
+	dir, err := d.storeOf(inv).Resolve(ctx, path)
 	if err != nil {
 		return err
 	}
 	return showDirectory(r, path, dir)
 }
 
-func (d directories) move(ctx context.Context, sys *graph.System, r *scenario.Reporter) error {
+func (d directories) move(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	r.Note("A destination that names an existing directory takes the source under its own name; one that names a new path renames. Both stay under the one top-level directory.")
-	s := d.storeOf(sys)
+	s := d.storeOf(inv)
 	for _, mv := range [][2]string{
 		{DirectoriesArea + "/echo", DirectoriesArea + "/alpha"},
 		{DirectoriesArea + "/bravo", DirectoriesArea + "/foxtrot"},
@@ -194,8 +195,8 @@ func (d directories) move(ctx context.Context, sys *graph.System, r *scenario.Re
 	return nil
 }
 
-func (d directories) listMoved(ctx context.Context, sys *graph.System, r *scenario.Reporter) error {
-	s := d.storeOf(sys)
+func (d directories) listMoved(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
+	s := d.storeOf(inv)
 	l := files.Listing{Page: 1, Size: 20}
 	for _, path := range []string{DirectoriesArea, DirectoriesArea + "/alpha"} {
 		c, err := s.List(ctx, path, l)
@@ -210,9 +211,9 @@ func (d directories) listMoved(ctx context.Context, sys *graph.System, r *scenar
 	return nil
 }
 
-func (d directories) removeArea(ctx context.Context, sys *graph.System, r *scenario.Reporter) error {
+func (d directories) removeArea(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	r.Note("rmdir removes an empty directory only, so the tree goes from the leaves up; the working area's owner row goes with it, and a rerun starts clean.")
-	return removeDirectories(ctx, d.storeOf(sys), r, DirectoriesArea)
+	return removeDirectories(ctx, d.storeOf(inv), r, DirectoriesArea)
 }
 
 // removeDirectories removes the directory at path and every directory

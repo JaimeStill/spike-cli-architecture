@@ -17,6 +17,7 @@ import (
 	godatabase "github.com/standards-lab/go-database"
 	"github.com/standards-lab/sqlate/sqltest"
 
+	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/domain/files"
 	"github.com/JaimeStill/spike-cli-architecture/internal/app"
 	"github.com/JaimeStill/spike-cli-architecture/internal/apptest"
@@ -114,7 +115,7 @@ func scriptedApp(t *testing.T, stdout, stderr *bytes.Buffer, responses ...sqltes
 func scriptedAppIn(t *testing.T, stdin io.Reader, stdout, stderr *bytes.Buffer, responses ...sqltest.Response) (*app.App, *apptest.Recorder, *sqltest.Recorder, *sql.DB) {
 	t.Helper()
 	clearEnv(t)
-	a := app.New(stdin, stdout, stderr)
+	a := app.New(cli.Streams{Stdin: stdin, Stdout: stdout, Stderr: stderr})
 	built := apptest.Builds(a)
 	rec, pool := apptest.ScriptDatabase(t, a, responses...)
 	return a, built, rec, pool
