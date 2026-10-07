@@ -392,6 +392,23 @@ slices 4/4 committed · standards ✓ · spec ✓ · editor ✓
   Nodes.Objects, NewFiles, NewObjects) for Graph.Replace, beyond the clock or probe hook
   tests-and-docs.md allows, continuing main's pattern. Open question for the architect.
 
+- files: redirected at the session brief (architect): the schema mount moves to admin.go, so
+  each layer file mounts its own commands.
+- files: integration state arises through production surfaces, as go-web-service's does: the
+  interrupted rm --recursive by severing a processtest.Forward store relay mid-sweep, the pending
+  put by killing the process mid-upload; the SQL seeding goes, and no exception is recorded
+  (architect).
+- files: graph test fixtures move to an internal/apptest package over an App that exports its
+  node set and graph as production API; export_test.go goes, and the recorders assert what a run
+  built instead of wrapping exported production constructors (architect).
+- files: cli gains a help footer hook, and the root's help appends the scenario listing through
+  it, as spike-blobfs's did; the missing footer was a cobra feature the dispatcher lacked
+  (architect, rejecting "leave it to list").
+- files: processtest gains a one-shot runner beside Launch (args, stdin, env in; stdout,
+  stderr, exit code out; on Main's build), mirroring lifecycle's Exec beside Run; rejected
+  deconstructing it, since nothing in it is fused. The spike's runner is the prototype
+  (architect).
+
 ## Pending edits
 
 - architecture · `standards/go-elemental/principles/topology-and-naming.md`: state that the
@@ -410,3 +427,5 @@ slices 4/4 committed · standards ✓ · spec ✓ · editor ✓
   subsystem, coordinator, Exec/Run; "stage" retired; "service" kept for the deployed
   application and the infrastructure tiers), with `standards/go-elemental/principles/
   lifecycle-and-context.md` and `principles/composition-root.md` updated to it.
+- coordinator · `context/roadmap.toml`: the go-core goal (added above) also gives
+  `process/processtest` a one-shot runner beside Launch, for CLIs, citing the spike's runner.
