@@ -9,7 +9,8 @@
 //
 // The package exports:
 //
-//   - [Command], one node of a command tree, a parent or a leaf
+//   - [Command], one node of a command tree, a parent or a leaf; its
+//     Footer appends the command's own text to its generated help
 //   - [Command.Add], which attaches subcommands
 //   - [Command.Flags], which returns the command's flag set; flags defined
 //     on the root are root flags, accepted at any depth

@@ -46,6 +46,7 @@ func New(stdin io.Reader, stdout, stderr io.Writer) *App {
 	a.root.Add(mountAdmin(a.admin)...)
 	a.root.Add(mountDomain(a.domain)...)
 	a.root.Add(mountDemo(a.domain)...)
+	a.root.Footer = scenariosFooter(a.domain)
 	return a
 }
 

@@ -45,6 +45,62 @@ func TestList_PrintsEachScenarioAndTheNodesItDeclaresAndBuildsNothing(t *testing
 	}
 }
 
+func TestRootHelp_EndsWithTheScenarioListingAndBuildsNothing(t *testing.T) {
+	clearEnv(t)
+	var listing, listErr bytes.Buffer
+	if code := recordingApp(&recorder{}, &listing, &listErr).Run(context.Background(), []string{"list"}); code != process.ExitOK {
+		t.Fatalf("list: code = %d, want %d; stderr = %q", code, process.ExitOK, listErr.String())
+	}
+	tail := "\nRun 'blobfs <command> --help' for help on a command.\n\nScenarios:\n" + listing.String()
+	tests := []struct {
+		name   string
+		args   []string
+		stderr bool // whether the help goes to stderr
+	}{
+		{"--help", []string{"--help"}, false},
+		{"no command", nil, false},
+		{"unknown command", []string{"bogus"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &recorder{}
+			var out, errOut bytes.Buffer
+
+			code := recordingApp(r, &out, &errOut).Run(context.Background(), tt.args)
+
+			if code != process.ExitUsage {
+				t.Errorf("code = %d, want %d", code, process.ExitUsage)
+			}
+			help, other := out.String(), errOut.String()
+			if tt.stderr {
+				help, other = other, help
+			}
+			if !strings.HasSuffix(help, tail) {
+				t.Errorf("help:\n%s\nwant it to end with:\n%s", help, tail)
+			}
+			if other != "" {
+				t.Errorf("other stream = %q, want empty", other)
+			}
+			if got := r.log(); len(got) != 0 {
+				t.Errorf("constructors run = %q, want none", got)
+			}
+		})
+	}
+}
+
+func TestRootHelp_ScenarioListingIsTheRootsOwn(t *testing.T) {
+	for _, args := range [][]string{{"demo"}, {"list", "--help"}, {"schema"}} {
+		code, out, _ := run(t, args...)
+
+		if code != process.ExitUsage {
+			t.Errorf("%v: code = %d, want %d", args, code, process.ExitUsage)
+		}
+		if strings.Contains(out, "Scenarios:") {
+			t.Errorf("%v: help:\n%s\nwant no scenario listing", args, out)
+		}
+	}
+}
+
 func TestDemo_HelpAndRefusalsBuildNothing(t *testing.T) {
 	tests := []struct {
 		name string

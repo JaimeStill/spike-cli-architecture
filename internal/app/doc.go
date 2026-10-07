@@ -13,7 +13,8 @@
 // it mounts the domain's commands at the root. demo.go mounts the scenarios
 // over the files and objects nodes: the demo parent with a leaf per tour,
 // and list at the root, which prints each scenario and the nodes it
-// declares. Defining them constructs nothing. A command declares the nodes
+// declares; the root's help ends with the same listing, through its
+// footer. Defining them constructs nothing. A command declares the nodes
 // it needs with Use: the schema group declares the migrator, and its verbs
 // inherit it, so a schema verb builds the migrator, the database, and their
 // configuration, and never the object store; each directory command, mkdir,

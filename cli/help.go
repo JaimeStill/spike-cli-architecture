@@ -8,7 +8,8 @@ import (
 )
 
 // help returns cmd's generated help: its summary, usage line, subcommands,
-// own flags, and inherited flags, each section left out when it is empty.
+// own flags, and inherited flags, each section left out when it is empty,
+// and last what cmd's own Footer writes, after a blank line.
 func help(cmd *Command) string {
 	var b strings.Builder
 	if cmd.Summary != "" {
@@ -29,6 +30,13 @@ func help(cmd *Command) string {
 
 	if len(cmd.children) > 0 {
 		fmt.Fprintf(&b, "\nRun '%s <command> --help' for help on a command.\n", cmd.path())
+	}
+	if cmd.Footer != nil {
+		var footer strings.Builder
+		cmd.Footer(&footer)
+		if footer.Len() > 0 {
+			fmt.Fprintf(&b, "\n%s", footer.String())
+		}
 	}
 	return strings.TrimSuffix(b.String(), "\n")
 }
