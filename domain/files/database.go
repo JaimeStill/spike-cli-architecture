@@ -324,6 +324,27 @@ func (s *store) contents(ctx context.Context, sess sqlate.Session, path, id stri
 	return Contents{Path: path, Directories: dirs, Files: files}, nil
 }
 
+// The names of the constraints and the unique index the app's bookmark
+// migration declares, which bookmarkSentinels maps to the sentinels. They
+// carry no blobfs_ prefix, so a violation of one is told from one of
+// blobfs's.
+const (
+	// constraintPrimaryKeyBookmark is the primary key on bookmark
+	// (unit_id, file_id). A violation on an add is ErrAlreadyBookmarked.
+	constraintPrimaryKeyBookmark = "pk_bookmark"
+
+	// constraintUniqueBookmarkActive is the partial unique index on
+	// bookmark (unit_id) WHERE active. A violation on an add is
+	// ErrActiveBookmark.
+	constraintUniqueBookmarkActive = "uq_bookmark_active"
+
+	// constraintForeignKeyBookmarkFile is the foreign key from
+	// bookmark.file_id to blobfs_file.id. A violation on an add is
+	// blobfs.ErrNotFound: the file was removed between its resolution and
+	// the insert.
+	constraintForeignKeyBookmarkFile = "fk_bookmark_file"
+)
+
 // bookmarkSentinels maps the constraints a bookmark insert can violate to
 // the sentinel each one means there, under the violation class the
 // constraint reports: the primary key is a bookmark the unit holds
