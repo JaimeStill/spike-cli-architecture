@@ -297,32 +297,38 @@ func TestRunContextEndedDuringStartup(t *testing.T) {
 	}
 }
 
+// starter is a start-only participant: a Starter and not a Stopper.
+type starter struct {
+	name string
+	r    *recorder
+}
+
+func (s starter) Start(context.Context) error {
+	s.r.record("start " + s.name)
+	return nil
+}
+
+// stopper is a stop-only participant: a Stopper and not a Starter.
+type stopper struct {
+	name string
+	r    *recorder
+}
+
+func (s stopper) Shutdown(context.Context) error {
+	s.r.record("stop " + s.name)
+	return nil
+}
+
 func TestParticipation(t *testing.T) {
 	var r recorder
-	hook := func(event string) func(context.Context) error {
-		return func(context.Context) error {
-			r.record(event)
-			return nil
-		}
-	}
 	g := graph.New()
 	nodes := []graph.Ref{
-		node(g, &fake{name: "methods", r: &r}),
-		g.Define("start-hook", func(s *graph.Scope) (*fake, error) {
-			s.OnStart(hook("hook start start-hook"))
-			return &fake{name: "start-hook", r: &r}, nil
+		node(g, &fake{name: "subsystem", r: &r}),
+		g.Define("start-only", func(*graph.Scope) (starter, error) {
+			return starter{name: "start-only", r: &r}, nil
 		}),
-		g.Define("shutdown-hook", func(s *graph.Scope) (*fake, error) {
-			s.OnShutdown(hook("hook stop shutdown-hook"))
-			return &fake{name: "shutdown-hook", r: &r}, nil
-		}),
-		g.Define("start-only", func(s *graph.Scope) (int, error) {
-			s.OnStart(hook("hook start start-only"))
-			return 1, nil
-		}),
-		g.Define("stop-only", func(s *graph.Scope) (string, error) {
-			s.OnShutdown(hook("hook stop stop-only"))
-			return "value", nil
+		g.Define("stop-only", func(*graph.Scope) (stopper, error) {
+			return stopper{name: "stop-only", r: &r}, nil
 		}),
 		g.Define("inert", func(*graph.Scope) (int, error) { return 2, nil }),
 	}
@@ -331,9 +337,9 @@ func TestParticipation(t *testing.T) {
 	}
 
 	got := r.list()
-	starts := []string{"start methods", "hook start start-hook", "start shutdown-hook", "hook start start-only"}
-	stops := []string{"stop methods", "stop start-hook", "hook stop shutdown-hook", "hook stop stop-only"}
-	if len(got) != 8 || !sameSet(got[:4], starts...) || !sameSet(got[4:], stops...) {
+	starts := []string{"start subsystem", "start start-only"}
+	stops := []string{"stop subsystem", "stop stop-only"}
+	if len(got) != 4 || !sameSet(got[:2], starts...) || !sameSet(got[2:], stops...) {
 		t.Errorf("events = %q, want starts %q then stops %q", got, starts, stops)
 	}
 }

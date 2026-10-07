@@ -62,10 +62,11 @@
 // the store unreachable. The Objects hold the Store and the object store,
 // and only the object commands declare their node, so only they build and
 // start the store. The boundary with the composition root is those two graph
-// nodes: the root defines the node that builds the Store over its database,
-// fixes blobfs's engine there, and makes [Store.Verify] the node's start, so
-// a files command against a schema that is not applied fails at start,
-// naming the node, before its body runs; and it defines the node that builds
+// nodes: the root defines the node that builds the Store over its database
+// and fixes blobfs's engine there, and the Store's own [Store.Start], which
+// runs [Store.Verify], is the node's start, so a files command against a
+// schema that is not applied fails at start, naming the node, before its
+// body runs; and the root defines the node that builds
 // the Objects over the Store's node and its object store's, whose start
 // creates the container and probes it, so an unreachable store fails an
 // object command at start, naming the store's node. This package never reads
@@ -77,7 +78,8 @@
 //   - [Commands], which builds the directory and bookmark commands over the
 //     Store's node, and [ObjectCommands], which builds the object commands
 //     over the Objects' node
-//   - [Store], [New], and [Store.Verify]; [Objects] and [NewObjects]
+//   - [Store], [New], [Store.Start], and [Store.Verify]; [Objects] and
+//     [NewObjects]
 //   - the Store's operations: [Store.List], [Store.ListDirectory],
 //     [Store.Stat], [Store.StatFile], [Store.Resolve],
 //     [Store.StatDirectory], [Store.Find], [Store.Mkdir], [Store.Move],

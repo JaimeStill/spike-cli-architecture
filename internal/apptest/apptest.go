@@ -23,8 +23,8 @@ import (
 const envPrefix = "APPTEST"
 
 // Recorder records events in order. It is safe for concurrent use, as a
-// lifecycle hook may record from its own goroutine. The zero value is
-// ready to use.
+// value's Start or Shutdown may record from its own goroutine. The zero
+// value is ready to use.
 type Recorder struct {
 	mu     sync.Mutex
 	events []string

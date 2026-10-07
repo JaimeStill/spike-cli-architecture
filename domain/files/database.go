@@ -81,6 +81,14 @@ func New(db *sqlate.DB, opts ...bfdata.Option) (*Store, error) {
 	}, nil
 }
 
+// Start runs [Store.Verify], so the Store takes part in a lifecycle's
+// startup as a start-only participant: a schema that is not applied fails
+// the command at start, before its body runs. The Store holds nothing to
+// shut down.
+func (s *Store) Start(ctx context.Context) error {
+	return s.Verify(ctx)
+}
+
 // Verify prepares every statement of blobfs's, its engine's included, and
 // of the domain's, and probes every listing's field contract against the
 // database, so a schema that is not applied, or no longer matches the

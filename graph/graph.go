@@ -1,14 +1,19 @@
 package graph
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // Graph describes a set of nodes and their constructors. Describing is
 // inert: [Graph.Define] and [Graph.Replace] record constructors and run
-// none, and only [Graph.Build] constructs anything. A Graph is not safe for
-// concurrent use.
+// none, and only [Graph.Build] constructs anything. The first Build freezes
+// the description: Define and Replace panic after it. A Graph is not safe
+// for concurrent use.
 type Graph struct {
 	nodes []*node
-	names map[string]bool
+	// built is set by the first Build, which freezes the description:
+	// Define and Replace panic after it.
 	built bool
 	// observers are called, in the order added, as a Build begins each
 	// node.
@@ -17,7 +22,7 @@ type Graph struct {
 
 // New returns an empty Graph.
 func New() *Graph {
-	return &Graph{names: make(map[string]bool)}
+	return &Graph{}
 }
 
 // node is the untyped core of a [Node]: what a Build needs to construct it
@@ -40,9 +45,11 @@ type Node[T any] struct {
 }
 
 // Ref is any [Node], whatever its type: what [Graph.Build] takes as roots
-// and [Scope.After] as an ordering target. It is sealed; only *Node[T]
-// implements it.
+// and [Scope.After] as an ordering target, and what names a node without
+// its type. It is sealed; only *Node[T] implements it.
 type Ref interface {
+	// Name returns the name the node was defined with.
+	Name() string
 	ref() *node
 }
 
@@ -66,19 +73,21 @@ func erase[T any](ctor func(*Scope) (T, error)) func(*Scope) (any, error) {
 
 // Define adds a node named name, constructed by ctor, and returns its
 // handle. It runs nothing: ctor runs only when a [Graph.Build] reaches the
-// node. Define panics when name is empty or already defined on g, or when
-// ctor is nil.
+// node. Define panics once g has run a Build, when name is empty or already
+// defined on g, or when ctor is nil.
 func (g *Graph) Define[T any](name string, ctor func(*Scope) (T, error)) *Node[T] {
+	if g.built {
+		panic(fmt.Sprintf("graph: Define of %q after Build", name))
+	}
 	if name == "" {
 		panic("graph: Define with an empty name")
 	}
-	if g.names[name] {
+	if slices.ContainsFunc(g.nodes, func(n *node) bool { return n.name == name }) {
 		panic(fmt.Sprintf("graph: Define of duplicate name %q", name))
 	}
 	if ctor == nil {
 		panic(fmt.Sprintf("graph: Define %q with a nil constructor", name))
 	}
-	g.names[name] = true
 	core := &node{graph: g, name: name, index: len(g.nodes), ctor: erase(ctor)}
 	g.nodes = append(g.nodes, core)
 	return &Node[T]{core: core}

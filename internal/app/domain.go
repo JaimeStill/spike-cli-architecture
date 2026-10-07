@@ -40,18 +40,13 @@ func mountDomain(d *domain) []*cli.Command {
 // newFiles constructs the files Store over the database's pool, wrapped in
 // sqlate's Postgres dialect, with blobfs's Postgres engine: this is the
 // one place the engine is named, as it is fixed for the program. It does
-// no I/O. The node's start is the Store's statement check, which runs once
-// the database has started, so a schema that is not applied fails the
-// command at start, labelled with the node's name, before its body runs.
-// The Store holds nothing to shut down.
+// no I/O. The Store's own Start, its statement check, is the node's start,
+// which runs once the database has started, so a schema that is not
+// applied fails the command at start, labelled with the node's name, before
+// its body runs. The Store holds nothing to shut down.
 func (d *domain) newFiles(s *graph.Scope) (*files.Store, error) {
 	db := s.Use(d.in.database)
-	store, err := files.New(sqlate.Wrap(db.Conn(), postgres.Dialect{}), bfdata.WithEngine(blobfspg.Engine))
-	if err != nil {
-		return nil, err
-	}
-	s.OnStart(store.Verify)
-	return store, nil
+	return files.New(sqlate.Wrap(db.Conn(), postgres.Dialect{}), bfdata.WithEngine(blobfspg.Engine))
 }
 
 // newObjects constructs the object operations over the files Store and the

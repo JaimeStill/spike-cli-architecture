@@ -23,7 +23,7 @@ const envPrefix = "BLOBFS"
 //
 // *database.DB and *storage.Store each implement lifecycle.Subsystem, a
 // Start (a ping, a probe) and a Shutdown, so the lifecycle starts and shuts
-// them down with no hooks recorded here.
+// them down through their own methods.
 type infrastructure struct {
 	databaseConfig  *graph.Node[database.Config]
 	storageConfig   *graph.Node[storage.Config]

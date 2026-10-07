@@ -22,6 +22,7 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 	"github.com/JaimeStill/spike-cli-architecture/internal/app"
 	"github.com/JaimeStill/spike-cli-architecture/internal/apptest"
+	"github.com/JaimeStill/spike-cli-architecture/lifecycle"
 )
 
 // The real database and store against the compose stack: `mise run
@@ -31,58 +32,64 @@ import (
 // the suite ends.
 
 // probeApp returns blobfs with a test-only command, "probe", added at its
-// root, that declares the database and the store with Use, which no
-// production command combines yet. The database and store nodes are
-// Replace-d by constructors that build each value as the production ones
-// do, from the production configuration nodes, so from the variables
-// `mise run integration` sets, and record its Start and Shutdown into r;
-// and the store is ordered after the database, so the two, one layer in
+// root, that brings up a real database and a real store, which no
+// production command combines yet. A node takes part in the lifecycle only
+// through its value's methods, so the probe does not declare the production
+// database and store nodes, whose values the lifecycle would start
+// directly: it defines two test-only nodes, "recorded database" and
+// "recorded store", each of which builds its value as the production node
+// does, from the production configuration nodes, so from the variables
+// `mise run integration` sets, and wraps it in a recorded value that runs
+// its Start and Shutdown and records each into r. The recorded store is
+// ordered after the recorded database, so the two, one layer in
 // production, start and shut down in an order the test can assert.
 func probeApp(r *apptest.Recorder, stdout, stderr *bytes.Buffer) *app.App {
 	a := app.New(strings.NewReader(""), stdout, stderr)
 	g, n := a.Graph(), a.Nodes()
-	g.Replace(n.Database, func(s *graph.Scope) (*godatabase.DB, error) {
+	database := g.Define("recorded database", func(s *graph.Scope) (*recorded, error) {
 		db, err := postgres.New(s.Use(n.DatabaseConfig))
 		if err != nil {
 			return nil, err
 		}
-		recordLifecycle(s, r, "database", db.Start, db.Shutdown)
-		return db, nil
+		return &recorded{name: "database", value: db, r: r}, nil
 	})
-	g.Replace(n.Store, func(s *graph.Scope) (*storage.Store, error) {
-		s.After(n.Database)
+	store := g.Define("recorded store", func(s *graph.Scope) (*recorded, error) {
+		s.After(database)
 		cfg := s.Use(n.StorageConfig)
 		client, err := azureblob.New(cfg)
 		if err != nil {
 			return nil, err
 		}
-		st := storage.New(client, cfg)
-		recordLifecycle(s, r, "store", st.Start, st.Shutdown)
-		return st, nil
+		return &recorded{name: "store", value: storage.New(client, cfg), r: r}, nil
 	})
 	a.Root().Add((&cli.Command{
 		Name:    "probe",
 		Summary: "Start and shut down the database and the store",
 		Args:    cli.NoArgs,
 		Run:     func(context.Context, *cli.Invocation) error { return nil },
-	}).Use(n.Database, n.Store))
+	}).Use(database, store))
 	return a
 }
 
-// recordLifecycle records hooks that run the value's own start and
-// shutdown and record each on r, with " failed" on an error. A hook
-// overrides the value's method, so the lifecycle runs these in its place.
-func recordLifecycle(s *graph.Scope, r *apptest.Recorder, name string, start, shutdown func(context.Context) error) {
-	s.OnStart(func(ctx context.Context) error {
-		err := start(ctx)
-		r.Record(event("start "+name, err))
-		return err
-	})
-	s.OnShutdown(func(ctx context.Context) error {
-		err := shutdown(ctx)
-		r.Record(event("shutdown "+name, err))
-		return err
-	})
+// recorded is a Subsystem that runs value's own Start and Shutdown and
+// records each on r as "start name" or "shutdown name", with " failed" on
+// an error.
+type recorded struct {
+	name  string
+	value lifecycle.Subsystem
+	r     *apptest.Recorder
+}
+
+func (v *recorded) Start(ctx context.Context) error {
+	err := v.value.Start(ctx)
+	v.r.Record(event("start "+v.name, err))
+	return err
+}
+
+func (v *recorded) Shutdown(ctx context.Context) error {
+	err := v.value.Shutdown(ctx)
+	v.r.Record(event("shutdown "+v.name, err))
+	return err
 }
 
 func event(name string, err error) string {
@@ -143,7 +150,7 @@ func TestInfrastructureIntegration_StoreUnreachableClosesTheDatabase(t *testing.
 	if code != process.ExitFailure {
 		t.Errorf("code = %d, want %d", code, process.ExitFailure)
 	}
-	oneReport(t, errOut.String(), "blobfs probe: store: ")
+	oneReport(t, errOut.String(), "blobfs probe: recorded store: ")
 	// The store, constructed though it failed to start, is shut down, and
 	// then the database it started after.
 	want := []string{"start database", "start store failed", "shutdown store", "shutdown database"}
@@ -167,7 +174,7 @@ func TestInfrastructureIntegration_DatabaseUnreachable(t *testing.T) {
 	}
 	// pgx's own continuation lines list each dial attempt, indented by a
 	// tab, after the dispatcher's line.
-	oneReport(t, errOut.String(), "blobfs probe: database: ")
+	oneReport(t, errOut.String(), "blobfs probe: recorded database: ")
 	// The store's layer never began to start, so only the database is
 	// shut down.
 	want := []string{"start database failed", "shutdown database"}

@@ -2,25 +2,22 @@ package graph
 
 import (
 	"cmp"
-	"context"
 	"fmt"
 	"slices"
 )
 
 // System is what one [Graph.Build] constructed: every node the roots
-// reached, with its value and hooks, in computed layers.
+// reached, with its value, in computed layers.
 type System struct {
 	entries map[*node]*entry
 	layers  [][]*entry
 }
 
-// Dependency is one built node: its name, its constructed value, and the
-// hooks its constructor recorded, nil when it recorded none.
+// Dependency is one built node: its name and its constructed value. A
+// lifecycle reads what the node takes part in from the value's methods.
 type Dependency struct {
-	Name       string
-	Value      any
-	OnStart    func(context.Context) error
-	OnShutdown func(context.Context) error
+	Name  string
+	Value any
 }
 
 // Get returns n's value in s. It panics when n is not in s: a node the
@@ -50,10 +47,8 @@ func (s *System) Layers() [][]Dependency {
 		out[i] = make([]Dependency, len(layer))
 		for j, e := range layer {
 			out[i][j] = Dependency{
-				Name:       e.node.name,
-				Value:      e.value,
-				OnStart:    e.onStart,
-				OnShutdown: e.onShutdown,
+				Name:  e.node.name,
+				Value: e.value,
 			}
 		}
 	}
