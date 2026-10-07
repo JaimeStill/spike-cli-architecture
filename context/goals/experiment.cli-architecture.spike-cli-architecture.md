@@ -107,7 +107,7 @@ Door          two-way: the spike repository only, no release
 
 ## Progress
 
-slices 4/4 committed · redirect 4/4 · standards ✓ · spec ✓ · editor ✓
+slices 4/4 committed · redirect 4/4 · review rulings 0/5 applied · ergonomics — · standards — · spec — · editor —
 
 ## Decisions
 
@@ -458,6 +458,119 @@ slices 4/4 committed · redirect 4/4 · standards ✓ · spec ✓ · editor ✓
   code (not the test infrastructure), layer by layer from the lowest, judging each layer's
   structures, methods, and signatures, and how the layers compose.
 
+- files review · graph: Use keeps returning T, a dependency's failure unwinding by panic;
+  constructors must not recover, and Build re-panics when a constructor returns normally after
+  its Use aborted (architect).
+- files review · graph: the Scope hooks go; a node takes part in a lifecycle only by its value
+  implementing Start/Shutdown, Dependency becomes {Name, Value}, lifecycle drops its hook merge,
+  and files.Store's Verify becomes Store.Start. Reopens composition's "Scope.OnStart/OnShutdown
+  overrides" (architect).
+- files review · graph: Observe stays, a general tracing point; rejected a failed Build carrying
+  partial state (architect).
+- files review · graph: the names map goes (derived from nodes), and Define after the first
+  Build panics as Replace does, so the description is frozen once anything is built (architect).
+
+- files review: once every layer is settled, a subagent runs a final API ergonomics pass over
+  the whole spike, informed by the layer rulings, which may adjust STANDARDS.md (architect).
+
+- files review · lifecycle: Subsystem splits into single-method interfaces, Starter{Start} and
+  Stopper{Shutdown}, with Subsystem embedding both; a value takes part in each phase it
+  implements. The method stays Shutdown, as http.Server's and go-database's, go-web-sdk's, and
+  go-web-service's types have it; rejected Terminate (abrupt, and a cross-repo rename),
+  Shutdowner, Closer (io.Closer), and Ender (architect).
+- files review · lifecycle: the Coordinator type stays (New, then Exec or Run once), since
+  promotion brings readiness state that hangs on it (architect).
+- files review · lifecycle: engine.start always uses the WaitGroup; the single-step fast path
+  goes (architect).
+- files review · lifecycle: the lifecycle config stays a graph node passed to cli.WithGraph, so
+  its env read stays lazy (architect).
+
+- files review · cli: a command reads a declared node through the generic method inv.Get(node),
+  which panics naming the command's path and the node when the node is not declared on it;
+  Invocation.System is unexported, and each domain's handle helpers (storeOf, objectsOf,
+  schema's client) go; scenario steps take the Invocation (architect).
+- files review · cli: leaves gain Validate func(inv *Invocation) error, run after Args, Require,
+  and Exclusive and before PreRun and the Build, its error always a usage error; Args only counts
+  positionals, flag checks move to Validate, and schema's given() gives way to inv.Changed
+  (architect).
+- files review · cli: the streams are one struct, cli.Streams{Stdin, Stdout, Stderr}, taken by
+  Run and app.New and embedded in Invocation (architect).
+- files review · cli: PreRun, Exclusive, and Changed stay as the proven feature set; the
+  evidence-6 record notes which blobfs didn't use (architect).
+
+- files review · cli: Invocation, its methods (Get, Changed), and the Streams it embeds move out
+  of command.go into their own invocation.go (architect).
+
+- files review · output: Listing, Bookmarks, and their types move out of output into the files
+  domain, rendered over output.Table; output keeps only Table, Record, and Field (architect).
+- files review · output: Line goes for fmt.Fprintf; "a command that changes state is never
+  silent" becomes a STANDARDS.md judgement in the final ergonomics pass (architect).
+- files review · output: each domain package in a CLI keeps its rendering in its own output.go
+  (the listings and the exported writers, files' WriteContents, WriteFileRecord, and
+  WriteDirectoryRecord), apart from commands.go; the ergonomics pass carries it into
+  STANDARDS.md as a convention (architect).
+
+- files review · schema: Client goes; the migrator node is *migrate.Migrator from
+  schema.NewMigrator(db), and revert-all-keeping-history is a function beside it. General rule
+  for the ergonomics pass and STANDARDS.md: a type or layer is introduced only when it is
+  legitimately needed; no pass-through wrappers (architect).
+- files review · schema: the constructor's unused logger parameter goes; migration logging, when
+  wanted, is a graph node the constructor Uses (architect).
+
+- files review · files: each operation takes a Ref instead of a path method and an id method
+  (Stat, List, Move, Put, Open, Copy, Remove, Resolve); the domain enforces path-only and
+  same-form rules once, with a typed error the command maps to a usage error; MoveRequest goes.
+  Promote to go-web-service where it applies (architect); go-web-service's domains address by id
+  only today, so it applies once a domain there gains a second form of address.
+- files review · files: domain errors are worded in domain terms, not CLI flags; commands add
+  flag wording where they report them (architect).
+- files review · files: the Constraint* names are unexported; ParseSort and ParseFilter stay
+  exported for demo (architect).
+
+- files review · files ontology: the domain API is files.Service (service.go, built by New), as
+  go-web-service's domains have it; an unexported store holds the queries (database.go) and the
+  blob protocol (storage.go); "Store" stays the unexported data access in every database.go
+  (architect).
+- files review · files ontology: a CLI splits off a second API type per dependency profile,
+  named after its file: files.Storage (storage.go, NewStorage(svc, st)) replaces Objects; node
+  "objects" becomes "storage" and ObjectCommands becomes StorageCommands (architect).
+- files review · files ontology: the domain-file ontology (service.go, database.go, storage.go,
+  entities.go, errors.go, commands.go, output.go, and the CLI's dependency-profile split) becomes
+  an architecture page, carried as a pending edit, and STANDARDS.md points to it (architect).
+
+- files review · files commands: each command is a plain function of the node(s) it needs,
+  reading values with inv.Get; the handle types group and objectGroup go (architect).
+- files review · files commands: one exported files.Commands(svc, storage) returns the domain's
+  whole surface, each command declaring its own profile; StorageCommands folds in. Convention for
+  domain commands generally: one Commands call per domain, as schema.Commands (architect).
+- files review · files commands: demo builds Sort and Filter values directly, and ParseSort and
+  ParseFilter are unexported; amends the earlier ruling that kept them exported (architect).
+- files review · files commands: commands.go holds the command functions, their flag structs,
+  and the CLI-syntax parsers; output.go the writers and record layouts; Ref, Listing, Sort, and
+  Filter move to entities.go (architect).
+
+- files review · scenario: demo and scenario consolidate into one package, scenario, as the plan
+  layout and clutch have it; the runner stays the tool's own, promoted only on fit (architect).
+- files review · scenario: the surface is `blobfs scenario <name>`; `blobfs scenario` alone prints
+  its help with the listing as its Footer, and the root's help keeps the listing; the `list`
+  command goes. Reverses plan ruling 7 (slab's `demo` and root `list`), aligning package,
+  parent, and command word (architect).
+- files review · scenario: graph.Ref gains Name(), so Scenario.Nodes is []graph.Ref and
+  scenario.Node goes (architect).
+- files review · scenario: Scenario.Flags goes until a scenario needs options (architect).
+- files review · scenario: the package exports Scenario, Step, Reporter, Commands, and
+  WriteListing; run, newReporter, the tours, and their constants are unexported, and its tests
+  drive cli.Run through Commands (architect).
+- files review · scenario: steps are functions closing over their nodes, reading with inv.Get;
+  the handle types, storeOf, objectsOf, and showLine go (architect).
+
+- files review · app: the exported Nodes struct is the single description; each layer file's
+  define function fills its part of one Nodes value and its constructors read lower nodes from
+  it; the infrastructure, admin, and domain structs, their back-pointers, and Nodes()'s copy go
+  (architect).
+- files review · app: one infrastructure node, "sql", a *sqlate.DB over the database in sqlate's
+  Postgres dialect, which the migrator and the files service both Use (architect).
+
 ## Pending edits
 
 - architecture · `standards/go-elemental/principles/topology-and-naming.md`: state that the
@@ -482,3 +595,12 @@ slices 4/4 committed · redirect 4/4 · standards ✓ · spec ✓ · editor ✓
   test fixtures, built over the root's published composition (its graph and nodes), live in an
   internal `<app>test` package even when one test package consumes them, as the spike's
   `internal/apptest` does; the "more than one test package" hoisting rule covers shared helpers.
+- architecture · a go-elemental principles page for the domain-file ontology: a domain exports
+  one Service (service.go, New) over an unexported store whose queries sit in database.go and
+  whose blob protocol sits in storage.go; entities.go, errors.go, and, in a CLI, commands.go and
+  output.go; a CLI may split off a second API type per dependency profile, named after its file
+  (files.Storage in storage.go), so a command brings up only what it uses.
+- coordinator · `context/roadmap.toml` and `context/cli-applications.md`: the `slab` goal also
+  adopts the scenario convention: its demo and scenario packages consolidate into `scenario`,
+  `slab demo <name>` becomes `slab scenario <name>`, and `slab list` gives way to the scenario
+  parent's help footer (and the root's); the conventions note records one shape for every CLI.
