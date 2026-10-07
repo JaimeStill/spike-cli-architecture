@@ -83,8 +83,8 @@ type Nodes struct {
 }
 
 // Graph returns the graph a's commands are built from, as [New] described
-// it. Nothing in the program reads it but [App.Run]; it is published so a
-// caller can, before the App runs, observe what a run builds with
+// it. The program itself never calls it; it is published so a caller
+// can, before the App runs, observe what a run builds with
 // graph.Graph.Observe, or Replace a node's constructor with a substitute.
 // A Replace changes the App itself, and the graph panics on a Replace once
 // a run has built from it.

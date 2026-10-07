@@ -1,4 +1,4 @@
-// Package apptest is the fixtures internal/app's tests share for running
+// Package apptest holds the fixtures internal/app's tests share for running
 // blobfs with some of its graph's nodes Replace-d, over the composition
 // [app.App] publishes: its graph and its nodes. A test builds its App with
 // [app.New] and applies the fixtures to it before it runs, each a Replace

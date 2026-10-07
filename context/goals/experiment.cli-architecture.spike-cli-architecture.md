@@ -98,15 +98,16 @@ Slices        1. Directory commands: mkdir, ls, stat, mv, rmdir over published
               (No upgrade slice: `mise run currency` reports nothing.)
 Out of scope  promoting graph, lifecycle, or cli to go-core or go-cli-sdk; the
               evidence-6 record and the README's answer (the validate task); a
-              background or standalone sweep command; shorthand flags; the
-              root's help listing the scenarios; a blobfs variant other than
-              Postgres
+              background or standalone sweep command; shorthand flags; a blobfs
+              variant other than Postgres
+              *Superseded: "the root's help listing the scenarios" is in scope;
+              the architect's redirect put it there.*
 Door          two-way: the spike repository only, no release
 ```
 
 ## Progress
 
-slices 4/4 committed · standards ✓ · spec ✓ · editor ✓
+slices 4/4 committed · redirect 4/4 · standards ✓ · spec ✓ · editor ✓
 
 ## Decisions
 
@@ -381,9 +382,11 @@ slices 4/4 committed · standards ✓ · spec ✓ · editor ✓
   since each waits about 9s on the Azure SDK's retries; the hermetic tests cover all of them.
 - files: the integration tests seed a pending row and a deleting branch by SQL, the only way in
   since --fail-after was dropped. Open question for the architect: tests-and-docs.md wants
-  production surfaces.
+  production surfaces. *Superseded: the tests reach both states through production surfaces
+  (architect, at the redirect).*
 - files: spike-blobfs's root help appended the scenario listing; cli's generated help has no hook
-  for it (for the evidence-6 record).
+  for it (for the evidence-6 record). *Superseded: cli's Command.Footer appends it (architect,
+  at the redirect).*
 - files: stdin as a cli.Run parameter changes the go-cli-sdk candidate's signature (for the
   evidence-6 record).
 - files: go-core's processtest doesn't fit a CLI (no args or stdin, merged streams), a go-core or
@@ -391,6 +394,8 @@ slices 4/4 committed · standards ✓ · spec ✓ · editor ✓
 - files: internal/app's export_test.go exports production constructors (Nodes.Files,
   Nodes.Objects, NewFiles, NewObjects) for Graph.Replace, beyond the clock or probe hook
   tests-and-docs.md allows, continuing main's pattern. Open question for the architect.
+  *Superseded: export_test.go is gone; the tests use internal/apptest over the App's published
+  composition (architect, at the redirect).*
 
 - files: redirected at the session brief (architect): the schema mount moves to admin.go, so
   each layer file mounts its own commands.
@@ -408,6 +413,41 @@ slices 4/4 committed · standards ✓ · spec ✓ · editor ✓
   stderr, exit code out; on Main's build), mirroring lifecycle's Exec beside Run; rejected
   deconstructing it, since nothing in it is fused. The spike's runner is the prototype
   (architect).
+
+- files: cli's Command.Footer is `func(w io.Writer)` and returns no error, since help renders
+  into a buffer. Its text prints last, after the "Run … --help" pointer, where cobra's appended
+  template printed. Descendants don't inherit it, and a footer that writes nothing adds nothing.
+  The root's footer writes its own "Scenarios:" heading, and list and the footer write the
+  listing through one function.
+- files: `graph.Graph.Observe(fn func(name string))` calls fn with each node's name as a Build
+  begins constructing it, before its constructor runs: once per Build, depth-first, a node whose
+  constructor fails included. It exists because a System is readable only after a successful
+  Build. A go-core candidate (for the evidence-6 record).
+- files: internal/apptest exports Recorder, Builds, Halt and ErrHalted, ScriptDatabase, and
+  FakeStore. Its substitutes build their own fakes and finalize their configuration under the
+  APPTEST prefix, which nothing sets. App exports Nodes, Graph, and Root; Root exists only for
+  the integration probe's test-only command.
+- files: the integration probe (internal/app/infrastructure_integration_test.go) builds the
+  database and the store with the library constructors over the production configuration nodes,
+  so its three tests no longer run newDatabase or newStore; the black-box suite does.
+- files: the interrupted sweep runs on a 150-file branch, and the test severs the store relay
+  once a polled stat shows the branch's first file gone. A sweep that finishes before the sever
+  fails the test, and the failure names the fix: more files. The measured margin is about 7x:
+  17 to 20 of the 150 files were deleted before the sever, across 11 runs. Relayed runs set
+  BLOBFS_STORAGE_OPTIONS_MAX_RETRIES=0, so a refused delete fails at once.
+- files: the pending row comes from a `put -` whose stdin is held open, killed with SIGKILL once
+  stat shows the row pending.
+- files: the integration tests prove owner-row removal through the binary: the owner row's
+  foreign key to its directory has no cascade, so a row left behind would refuse the directory's
+  removal.
+- files: the integration suite's polls stop as soon as the watched process exits, and a process
+  still running at cleanup is killed and logged with its output.
+- files: only internal/app's tests use internal/apptest, but tests-and-docs.md hoists a helper
+  into a `<pkg>test` package only once more than one test package needs it. Should the standard
+  name fixtures over a composition root's published API, or should this be recorded as an
+  exception? Open question for the architect.
+- files: the interrupted sweep depends on a timing margin. Accept it, or require a deterministic
+  hold point, which needs a production surface the spike lacks? Open question for the architect.
 
 ## Pending edits
 

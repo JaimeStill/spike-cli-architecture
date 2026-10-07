@@ -51,10 +51,11 @@ staged composition?
 - **Dispatcher** (package `cli`): flag parsing, the command tree, help, and usage exits. A
   command's `Use` method declares the graph nodes it needs, inherited along its path;
   `cli.WithGraph` gives `cli.Run` the graph to build them from, and the body reads each value
-  through `Invocation.System`.
+  through `Invocation.System`. A command's `Footer` appends its own text to its generated help.
 - **Dependency graph** (package `graph`): a typed graph whose nodes are defined inertly and
   whose Build constructs only what its roots reach through `Scope.Use`, into a System of
-  computed layers. It imports only the standard library and is a go-core promotion candidate.
+  computed layers; `Graph.Observe` reports each node a Build begins constructing. It imports
+  only the standard library and is a go-core promotion candidate.
 - **Lifecycle** (package `lifecycle`): a Coordinator over a built System. `Exec` starts the
   System's subsystems layer by layer, runs a function, and shuts them down in reverse; `Run`
   serves until its context ends instead. A value takes part by implementing `Subsystem`, and
@@ -63,7 +64,9 @@ staged composition?
 - **Composition root** (package `internal/app`): New/Run, and the graph nodes for configuration,
   the database, the object store, the schema migrator, and the files domain's `files` and
   `objects` nodes. Each layer file mounts its own commands. It has no initializer: each command
-  declares its nodes with `Use`, and the dispatcher builds and runs them.
+  declares its nodes with `Use`, and the dispatcher builds and runs them. The App publishes its
+  graph, its nodes, and its root command (`Graph`, `Nodes`, `Root`) for tests to observe and
+  replace.
 - **Infrastructure**: Postgres through go-database with sqlate migrations, the object store
   through go-storage/azureblob, and the compose stack of Postgres and Azurite: the development
   project on 5436 and 10010 (`mise run up`), and the integration project on 5437 and 10011.
@@ -75,11 +78,15 @@ staged composition?
 - **Output and scenarios** (evidence 8): package `output` renders a command's result as a line,
   a table, a record, a directory listing, or a bookmark listing. Package `scenario` runs a
   narrated scenario whose command declares its nodes with `Use`; package `demo` holds the
-  `directories` and `files` tours under `blobfs demo`, and `blobfs list` prints them.
-- **Tests** (evidence 7): buffer-driven app tests; domain tests over sqltest and
+  `directories` and `files` tours under `blobfs demo`. `blobfs list` prints them, and the root's
+  help ends with the same listing.
+- **Tests** (evidence 7): buffer-driven app tests over package `internal/apptest`, whose fixtures
+  replace nodes in the App's graph and record what a run builds; domain tests over sqltest and
   `storagetest.Fake`; and, under `mise run integration`, on an isolated compose project it boots
   and tears down, integration tests and a black-box suite (package `integration`) that runs the
-  built binary as a child process.
+  built binary as a child process. The suite reaches every state through production surfaces: it
+  kills a `put -` with SIGKILL to leave a pending row, and severs a relay to the object store
+  mid-sweep to interrupt rm --recursive.
 
 ## References
 

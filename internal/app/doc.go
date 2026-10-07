@@ -34,9 +34,9 @@
 //
 // The App publishes its composition: [App.Graph], [App.Nodes], and
 // [App.Root] return the graph, a handle on each of its nodes, and the
-// command tree. Nothing in the program reads them but [App.Run]; they are
-// for a caller, internal/apptest's fixtures among them, that observes what
-// a run builds, Replaces a node's constructor with a substitute, or adds a
+// command tree. The program itself never calls them; they are for a
+// caller, internal/apptest's fixtures among them, that observes what a
+// run builds, Replaces a node's constructor with a substitute, or adds a
 // command over the nodes, before the App runs.
 //
 // The package exports:

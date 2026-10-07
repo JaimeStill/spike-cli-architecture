@@ -22,8 +22,8 @@
 //     through BLOBFS_STORAGE_OPTIONS_MAX_RETRIES, and the branch holds
 //     enough files that its sweep outlasts the notice that it has begun.
 //     Once stat in another run finds the branch's first file gone, the
-//     relay is severed, so every later delete is refused: the run exits one
-//     with the refusal and the counts it reached, and the branch stays
+//     relay is severed, so every later delete is refused: the run exits 1,
+//     reporting the refusal and the counts it reached, and the branch stays
 //     deleting. The relay is restored before the rerun that finishes it.
 //   - An unreachable store is an endpoint on a port nothing listens on.
 //
