@@ -17,8 +17,8 @@ type Reporter struct {
 	started bool // whether anything has been written
 }
 
-// NewReporter returns a Reporter writing to w.
-func NewReporter(w io.Writer) *Reporter {
+// newReporter returns a Reporter writing to w.
+func newReporter(w io.Writer) *Reporter {
 	return &Reporter{w: w}
 }
 
@@ -83,4 +83,36 @@ func (r *Reporter) blank() {
 		return
 	}
 	r.printf("\n")
+}
+
+// wrap breaks text into lines of at most width columns, breaking only at
+// whitespace: a word longer than width stands alone on a line that exceeds
+// it rather than being split. A newline in text is a hard break, so a
+// paragraph wraps on its own and an empty line between two stays empty.
+func wrap(text string, width int) []string {
+	var lines []string
+	for para := range strings.SplitSeq(text, "\n") {
+		lines = append(lines, wrapParagraph(para, width)...)
+	}
+	return lines
+}
+
+// wrapParagraph is wrap for one paragraph, which holds no newline: an
+// empty or blank paragraph is one empty line.
+func wrapParagraph(para string, width int) []string {
+	words := strings.Fields(para)
+	if len(words) == 0 {
+		return []string{""}
+	}
+	var lines []string
+	line := words[0]
+	for _, word := range words[1:] {
+		if len(line)+1+len(word) > width {
+			lines = append(lines, line)
+			line = word
+			continue
+		}
+		line += " " + word
+	}
+	return append(lines, line)
 }

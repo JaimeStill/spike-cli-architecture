@@ -10,10 +10,10 @@ import (
 	"testing"
 )
 
-// The scenarios through the built binary: list with nothing reachable,
-// each tour twice in a row against the isolated stack, a tour clearing what
-// an interrupted run left, and the directories tour with the object store
-// unreachable.
+// The scenarios through the built binary: the scenario parent's help, with
+// its listing, with nothing reachable, each tour twice in a row against the
+// isolated stack, a tour clearing what an interrupted run left, and the
+// directories tour with the object store unreachable.
 
 // intent matches a step's heading in a tour's narration, [i/n] and the
 // intent sentence.
@@ -35,49 +35,54 @@ func narrated(t *testing.T, name, out string) {
 		steps = append(steps, i)
 	}
 	if total == 0 || len(steps) != total {
-		t.Fatalf("demo %s narrated steps %v of %d:\n%s", name, steps, total, out)
+		t.Fatalf("scenario %s narrated steps %v of %d:\n%s", name, steps, total, out)
 	}
 	for i, step := range steps {
 		if step != i+1 {
-			t.Fatalf("demo %s narrated steps %v, want 1 to %d in order:\n%s", name, steps, total, out)
+			t.Fatalf("scenario %s narrated steps %v, want 1 to %d in order:\n%s", name, steps, total, out)
 		}
 	}
 	if !intent.MatchString(out) {
-		t.Errorf("demo %s output does not open with its first step's heading:\n%s", name, out)
+		t.Errorf("scenario %s output does not open with its first step's heading:\n%s", name, out)
 	}
 }
 
-// TestList prints the scenarios with the database and the object store
-// both on ports nothing listens on: list declares no node, so it builds
-// nothing and reads no configuration.
-func TestList(t *testing.T) {
+// TestScenarioHelp prints the scenario parent's help, which ends with the
+// listing, with the database and the object store both on ports nothing
+// listens on: the parent declares no node, so its help builds nothing and
+// reads no configuration.
+func TestScenarioHelp(t *testing.T) {
 	tg := target{env: []string{
 		fmt.Sprintf("BLOBFS_DATABASE_PORT=%d", closedPort(t)),
 		fmt.Sprintf("BLOBFS_STORAGE_ENDPOINT=http://127.0.0.1:%d/devstoreaccount1", closedPort(t)),
 	}}
-	out := ok(t, tg, "list")
+	out, errOut, code := run(t, tg, "scenario")
+	if code != 2 || errOut != "" {
+		t.Fatalf("scenario exited %d: %q, want 2 with nothing on stderr", code, errOut)
+	}
 	want := "" +
+		"\n\nScenarios:\n" +
 		"  directories  Tour the directory commands on Postgres alone: mkdir, ls, stat, mv, rmdir\n" +
 		"               uses files\n" +
 		"  files        Tour the object commands on Postgres and the store: put, cat, cp, rm, rm --recursive\n" +
 		"               uses files, storage\n"
-	if out != want {
-		t.Errorf("list stdout:\n%s\nwant:\n%s", out, want)
+	if !strings.HasPrefix(out, "Run a narrated scenario") || !strings.HasSuffix(out, want) {
+		t.Errorf("scenario help:\n%s\nwant the parent's help ending with:\n%s", out, want)
 	}
 }
 
-// TestDemos runs each tour twice in a row in one database and container:
+// TestScenarios runs each tour twice in a row in one database and container:
 // each narrates every step, works in its own area, and removes it, so the
 // second run succeeds as the first did and the root is empty after.
-func TestDemos(t *testing.T) {
+func TestScenarios(t *testing.T) {
 	tg := open(t)
 	ok(t, tg, "schema", "up")
 	for _, name := range []string{"directories", "files"} {
 		for run := 1; run <= 2; run++ {
-			out := ok(t, tg, "demo", name)
+			out := ok(t, tg, "scenario", name)
 			narrated(t, name, out)
 			if !strings.Contains(out, "Nothing to clear") {
-				t.Errorf("demo %s run %d found a working area left behind:\n%s", name, run, out)
+				t.Errorf("scenario %s run %d found a working area left behind:\n%s", name, run, out)
 			}
 		}
 	}
@@ -87,14 +92,14 @@ func TestDemos(t *testing.T) {
 	// The owner rows went with their directories, whose removal a row left
 	// behind would refuse through its foreign key.
 	if got := names(ok(t, tg, "ls", "/", "--unit", "0199c0de-0000-7000-8000-0000000000de")); got != "" {
-		t.Errorf("ls / as the demo unit after the tours = %s, want nothing left", got)
+		t.Errorf("ls / as the tour's unit after the tours = %s, want nothing left", got)
 	}
 }
 
-// TestDemosClearWhatAnInterruptedRunLeft leaves each tour's working area
+// TestScenariosClearWhatAnInterruptedRunLeft leaves each tour's working area
 // behind with content in it, as a run stopped partway would, and each tour
 // clears it first and succeeds.
-func TestDemosClearWhatAnInterruptedRunLeft(t *testing.T) {
+func TestScenariosClearWhatAnInterruptedRunLeft(t *testing.T) {
 	tg := open(t)
 	ok(t, tg, "schema", "up")
 	ok(t, tg, "mkdir", "/demo-directories")
@@ -105,10 +110,10 @@ func TestDemosClearWhatAnInterruptedRunLeft(t *testing.T) {
 	put(t, tg, "/demo-files/docs/hello.txt", "left behind")
 
 	for _, name := range []string{"directories", "files"} {
-		out := ok(t, tg, "demo", name)
+		out := ok(t, tg, "scenario", name)
 		narrated(t, name, out)
 		if !strings.Contains(out, "An earlier run stopped before its last step") {
-			t.Errorf("demo %s did not clear the area left behind:\n%s", name, out)
+			t.Errorf("scenario %s did not clear the area left behind:\n%s", name, out)
 		}
 	}
 	if got := names(ok(t, tg, "ls", "/")); got != "" {
@@ -116,22 +121,22 @@ func TestDemosClearWhatAnInterruptedRunLeft(t *testing.T) {
 	}
 }
 
-// TestDemoDirectoriesWithTheStoreUnreachable runs the tours with the
+// TestScenarioDirectoriesWithTheStoreUnreachable runs the tours with the
 // object store's endpoint on a port nothing listens on: the directories
 // tour declares the files node alone, so it never reaches the store and
 // succeeds, while the files tour fails at start, once, naming the store's
 // node, before narrating anything.
-func TestDemoDirectoriesWithTheStoreUnreachable(t *testing.T) {
+func TestScenarioDirectoriesWithTheStoreUnreachable(t *testing.T) {
 	tg := open(t, fmt.Sprintf("BLOBFS_STORAGE_ENDPOINT=http://127.0.0.1:%d/devstoreaccount1", closedPort(t)))
 	ok(t, tg, "schema", "up")
 
-	narrated(t, "directories", ok(t, tg, "demo", "directories"))
+	narrated(t, "directories", ok(t, tg, "scenario", "directories"))
 
-	out, errOut, code := run(t, tg, "demo", "files")
-	if prefix := "blobfs demo files: store: "; code != 1 || !strings.HasPrefix(errOut, prefix) || strings.Count(errOut, "\n") != 1 {
-		t.Errorf("demo files exited %d: %q, want one line starting %q", code, errOut, prefix)
+	out, errOut, code := run(t, tg, "scenario", "files")
+	if prefix := "blobfs scenario files: store: "; code != 1 || !strings.HasPrefix(errOut, prefix) || strings.Count(errOut, "\n") != 1 {
+		t.Errorf("scenario files exited %d: %q, want one line starting %q", code, errOut, prefix)
 	}
 	if out != "" {
-		t.Errorf("demo files stdout = %q, want nothing narrated", out)
+		t.Errorf("scenario files stdout = %q, want nothing narrated", out)
 	}
 }

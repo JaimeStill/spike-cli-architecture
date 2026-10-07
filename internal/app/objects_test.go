@@ -61,7 +61,7 @@ func TestObjects_CommandsBuildTheDatabaseAndTheStore(t *testing.T) {
 			if want := "blobfs " + args[0] + ": lifecycle config: halted\n"; errOut.String() != want {
 				t.Errorf("stderr = %q, want %q", errOut.String(), want)
 			}
-			wantBuilt := []string{"storage", "files", "database", "database config", "store", "lifecycle config"}
+			wantBuilt := []string{"storage", "files", "sql", "database", "database config", "store", "lifecycle config"}
 			if got := built.Log(); !slices.Equal(got, wantBuilt) {
 				t.Errorf("nodes built = %q, want %q", got, wantBuilt)
 			}

@@ -84,7 +84,7 @@ func TestFiles_CommandsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
 			if want := commandPath(args) + ": lifecycle config: halted\n"; errOut.String() != want {
 				t.Errorf("stderr = %q, want %q", errOut.String(), want)
 			}
-			wantBuilt := []string{"files", "database", "database config", "lifecycle config"}
+			wantBuilt := []string{"files", "sql", "database", "database config", "lifecycle config"}
 			if got := built.Log(); !slices.Equal(got, wantBuilt) {
 				t.Errorf("nodes built = %q, want %q", got, wantBuilt)
 			}
@@ -94,9 +94,9 @@ func TestFiles_CommandsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
 
 // scriptedBuilt is what a run of a command that declares the files node
 // builds over a scripted database, which reads no configuration node: the
-// files node, the database, and the lifecycle configuration, and never the
-// store or its configuration.
-var scriptedBuilt = []string{"files", "database", "lifecycle config"}
+// files node, the sql node, the database, and the lifecycle configuration,
+// and never the store or its configuration.
+var scriptedBuilt = []string{"files", "sql", "database", "lifecycle config"}
 
 // scriptedApp returns blobfs with its database node built over sqlate's
 // scripted driver, answering with responses, by apptest.ScriptDatabase,

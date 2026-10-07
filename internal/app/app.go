@@ -5,6 +5,7 @@ import (
 
 	"github.com/standards-lab/go-database"
 	"github.com/standards-lab/go-storage"
+	"github.com/standards-lab/sqlate"
 	"github.com/standards-lab/sqlate/migrate"
 
 	"github.com/JaimeStill/spike-cli-architecture/cli"
@@ -13,13 +14,12 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/lifecycle"
 )
 
-// App is the blobfs program: its dependency graph, its command tree, and
-// the streams it reads from and reports to.
+// App is the blobfs program: its dependency graph and the [Nodes] that
+// describe it, its command tree, and the streams it reads from and reports
+// to.
 type App struct {
 	graph   *graph.Graph
-	infra   *infrastructure
-	admin   *admin
-	domain  *domain
+	nodes   Nodes
 	root    *cli.Command
 	streams cli.Streams
 }
@@ -30,24 +30,22 @@ type App struct {
 // writes to: Stdin is what a command reads as standard input, such as
 // put's content from -, and nothing reads it but such a command.
 func New(streams cli.Streams) *App {
-	g := graph.New()
-	infra := defineInfrastructure(g)
 	a := &App{
-		graph:  g,
-		infra:  infra,
-		admin:  defineAdmin(g, infra),
-		domain: defineDomain(g, infra),
+		graph: graph.New(),
 		root: &cli.Command{
 			Name:    "blobfs",
 			Summary: "blobfs manages files in a blob store.",
 		},
 		streams: streams,
 	}
+	defineInfrastructure(a.graph, &a.nodes)
+	defineAdmin(a.graph, &a.nodes)
+	defineDomain(a.graph, &a.nodes)
 	a.root.Add(versionCommand())
-	a.root.Add(mountAdmin(a.admin)...)
-	a.root.Add(mountDomain(a.domain)...)
-	a.root.Add(mountDemo(a.domain)...)
-	a.root.Footer = scenariosFooter(a.domain)
+	a.root.Add(mountAdmin(&a.nodes)...)
+	a.root.Add(mountDomain(&a.nodes)...)
+	a.root.Add(mountScenario(&a.nodes)...)
+	a.root.Footer = scenarioFooter(&a.nodes)
 	return a
 }
 
@@ -59,18 +57,21 @@ func New(streams cli.Streams) *App {
 // command's result. An App runs one command at a time, since a graph.Graph
 // is not safe for concurrent use.
 func (a *App) Run(ctx context.Context, args []string) int {
-	return cli.Run(ctx, a.root, args, a.streams, cli.WithGraph(a.graph, a.infra.lifecycleConfig))
+	return cli.Run(ctx, a.root, args, a.streams, cli.WithGraph(a.graph, a.nodes.LifecycleConfig))
 }
 
-// Nodes is the App's graph nodes, one handle each, as [App.Nodes] returns
-// them: the configurations, the infrastructure built from them, the
-// migrator, and the files domain's two nodes. Each field's node is named
-// as the dispatcher labels its errors.
+// Nodes is the App's graph, one handle per node: the single description of
+// what blobfs is composed of. Each layer file's define function fills its
+// own part of one Nodes value, and its constructors read the lower layers'
+// nodes from that same value: the configurations and the infrastructure
+// built from them, the migrator, and the files domain's two nodes. Each
+// field's node is named as the dispatcher labels its errors.
 type Nodes struct {
 	DatabaseConfig  *graph.Node[database.Config]   // "database config"
 	StorageConfig   *graph.Node[storage.Config]    // "storage config"
 	LifecycleConfig *graph.Node[lifecycle.Config]  // "lifecycle config"
 	Database        *graph.Node[*database.DB]      // "database"
+	SQL             *graph.Node[*sqlate.DB]        // "sql"
 	Store           *graph.Node[*storage.Store]    // "store"
 	Migrator        *graph.Node[*migrate.Migrator] // "migrator"
 	Files           *graph.Node[*files.Service]    // "files"
@@ -87,18 +88,7 @@ func (a *App) Graph() *graph.Graph { return a.graph }
 
 // Nodes returns a handle on each of a's graph nodes, for a caller's Replace
 // or for a command it adds over them.
-func (a *App) Nodes() Nodes {
-	return Nodes{
-		DatabaseConfig:  a.infra.databaseConfig,
-		StorageConfig:   a.infra.storageConfig,
-		LifecycleConfig: a.infra.lifecycleConfig,
-		Database:        a.infra.database,
-		Store:           a.infra.store,
-		Migrator:        a.admin.migrator,
-		Files:           a.domain.files,
-		Storage:         a.domain.storage,
-	}
-}
+func (a *App) Nodes() Nodes { return a.nodes }
 
 // Root returns a's root command. A command a caller Adds to it before the
 // App runs is part of the App's tree from then on.

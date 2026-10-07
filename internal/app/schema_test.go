@@ -45,7 +45,7 @@ func TestSchema_VerbsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
 			if errOut.String() != want {
 				t.Errorf("stderr = %q, want %q", errOut.String(), want)
 			}
-			wantBuilt := []string{"migrator", "database", "database config", "lifecycle config"}
+			wantBuilt := []string{"migrator", "sql", "database", "database config", "lifecycle config"}
 			if got := built.Log(); !slices.Equal(got, wantBuilt) {
 				t.Errorf("nodes built = %q, want %q", got, wantBuilt)
 			}

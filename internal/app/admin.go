@@ -1,41 +1,32 @@
 package app
 
 import (
-	"github.com/standards-lab/sqlate"
 	"github.com/standards-lab/sqlate/migrate"
-	"github.com/standards-lab/sqlate/postgres"
 
 	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
 	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
-// admin is the graph's administration nodes: the migrator the schema group
-// uses, over the infrastructure's database.
-type admin struct {
-	in       *infrastructure
-	migrator *graph.Node[*migrate.Migrator]
-}
-
-// defineAdmin defines the administration nodes on g over in. It constructs
+// defineAdmin defines the administration nodes on g into n: the migrator
+// the schema group uses, over the infrastructure's sql node. It constructs
 // nothing.
-func defineAdmin(g *graph.Graph, in *infrastructure) *admin {
-	a := &admin{in: in}
-	a.migrator = g.Define("migrator", a.newMigrator)
-	return a
+func defineAdmin(g *graph.Graph, n *Nodes) {
+	n.Migrator = g.Define("migrator", newMigrator(n))
 }
 
 // mountAdmin builds the administration commands at the root: the schema
 // group over the migrator node.
-func mountAdmin(a *admin) []*cli.Command {
-	return []*cli.Command{schema.Commands(a.migrator)}
+func mountAdmin(n *Nodes) []*cli.Command {
+	return []*cli.Command{schema.Commands(n.Migrator)}
 }
 
-// newMigrator constructs the schema migrator over the database's pool,
-// wrapped in sqlate's Postgres dialect. It does no I/O: the pool first
-// connects when the lifecycle starts the database, after the Build, and the
-// migrator itself opens nothing.
-func (a *admin) newMigrator(s *graph.Scope) (*migrate.Migrator, error) {
-	db := s.Use(a.in.database)
-	return schema.NewMigrator(sqlate.Wrap(db.Conn(), postgres.Dialect{}))
+// newMigrator constructs the schema migrator over the sql node, the
+// database's pool in sqlate's Postgres dialect. It does no I/O: the pool
+// first connects when the lifecycle starts the database, after the Build,
+// and the migrator itself opens nothing.
+func newMigrator(n *Nodes) func(*graph.Scope) (*migrate.Migrator, error) {
+	return func(s *graph.Scope) (*migrate.Migrator, error) {
+		return schema.NewMigrator(s.Use(n.SQL))
+	}
 }

@@ -41,8 +41,8 @@ staged composition?
    and what replaced it or why it is no longer needed.
 7. The layout's test conventions hold without cobra: `internal/app` tests run the command tree
    over buffers, and domain tests run over go-storage's `storagetest.Fake` with no network.
-8. A scenario package with `list` mounts beside the direct commands and declares its
-   dependencies like any other command.
+8. A scenario package mounts beside the direct commands and declares its dependencies like
+   any other command.
 9. The dependency graph expresses go-web-service's stage table, and the CLI and a service run
    on one Coordinator.
 
@@ -51,7 +51,7 @@ staged composition?
 - **Dispatcher** (package `cli`): flag parsing, the command tree, help, and usage exits. A
   command's `Use` method declares the graph nodes it needs, inherited along its path;
   `cli.WithGraph` gives `cli.Run` the graph to build them from, and the body reads each value
-  through `Invocation.System`. A command's `Footer` appends its own text to its generated help.
+  through `inv.Get`. A command's `Footer` appends its own text to its generated help.
 - **Dependency graph** (package `graph`): a typed graph whose nodes are defined inertly and
   whose Build constructs only what its roots reach through `Scope.Use`, into a System of
   computed layers; `Graph.Observe` reports each node a Build begins constructing. It imports
@@ -62,8 +62,9 @@ staged composition?
   `Config` carries the shutdown timeout. It imports the standard library, go-core, and `graph`,
   and is a go-core promotion candidate.
 - **Composition root** (package `internal/app`): New/Run, and the graph nodes for configuration,
-  the database, the object store, the schema migrator, and the files domain's `files` and
-  `objects` nodes. Each layer file mounts its own commands. It has no initializer: each command
+  the database, the `sql` node (the database's pool in sqlate's Postgres dialect), the object
+  store, the schema migrator, and the files domain's `files` and `storage` nodes. One exported
+  `Nodes` value describes them: each layer file fills its own part and mounts its own commands. It has no initializer: each command
   declares its nodes with `Use`, and the dispatcher builds and runs them. The App publishes its
   graph, its nodes, and its root command (`Graph`, `Nodes`, `Root`) for tests to observe and
   replace.
@@ -72,14 +73,14 @@ staged composition?
   project on 5436 and 10010 (`mise run up`), and the integration project on 5437 and 10011.
 - **Domain and admin commands** (evidence 2): schema (package `admin/schema`, with status, up,
   down, and reset), and spike-blobfs's files surface on published blobfs (package
-  `domain/files`). Its `files` node, a Store over the database, serves the directory commands
-  (mkdir, ls, stat, mv, rmdir) and bookmark add, ls, and rm. Its `objects` node, over `files`
-  and the object store, serves put, cat, cp, rm, and rm --recursive.
+  `domain/files`). Its `files` node, a Service over the `sql` node, serves the directory
+  commands (mkdir, ls, stat, mv, rmdir) and bookmark add, ls, and rm. Its `storage` node, over
+  `files` and the object store, serves put, cat, cp, rm, and rm --recursive.
 - **Output and scenarios** (evidence 8): package `output` renders a command's result as a line,
   a table, a record, a directory listing, or a bookmark listing. Package `scenario` runs a
-  narrated scenario whose command declares its nodes with `Use`; package `demo` holds the
-  `directories` and `files` tours under `blobfs demo`. `blobfs list` prints them, and the root's
-  help ends with the same listing.
+  narrated scenario whose command declares its nodes with `Use`, and holds the `directories` and
+  `files` tours under `blobfs scenario`. `blobfs scenario` alone prints its help ending with the
+  listing of them, and the root's help ends with the same listing.
 - **Tests** (evidence 7): buffer-driven app tests over package `internal/apptest`, whose fixtures
   replace nodes in the App's graph and record what a run builds; domain tests over sqltest and
   `storagetest.Fake`; and, under `mise run integration`, on an isolated compose project it boots

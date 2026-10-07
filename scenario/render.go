@@ -1,4 +1,4 @@
-package demo
+package scenario
 
 import (
 	"io"
@@ -6,17 +6,16 @@ import (
 	"github.com/standards-lab/blobfs"
 
 	"github.com/JaimeStill/spike-cli-architecture/domain/files"
-	"github.com/JaimeStill/spike-cli-architecture/scenario"
 )
 
 // showListing shows c as ls prints it under l, cursor lines included, so a
 // later step can continue after a cursor the reader has seen.
-func showListing(r *scenario.Reporter, l files.Listing, c files.Contents) error {
+func showListing(r *Reporter, l files.Listing, c files.Contents) error {
 	return r.Show(func(w io.Writer) error { return files.WriteContents(w, l, c, true) })
 }
 
 // showDirectory shows a directory's row as stat prints it.
-func showDirectory(r *scenario.Reporter, path string, d blobfs.Directory) error {
+func showDirectory(r *Reporter, path string, d blobfs.Directory) error {
 	return r.Show(func(w io.Writer) error { return files.WriteDirectoryRecord(w, path, d) })
 }
 
