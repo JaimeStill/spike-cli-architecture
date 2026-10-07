@@ -35,12 +35,14 @@
 // TestScript is one ordered script over the directory, object, and
 // bookmark commands. TestTheStoreUnreachable closes the object store's
 // endpoint: every directory and bookmark command still succeeds, and two
-// object commands fail naming the store. scenarios_test.go prints the
-// scenario parent's help, with its listing, with nothing reachable, runs
-// each tour twice in a row and after an interrupted run, and runs scenario
-// directories with the store unreachable, where scenario files fails
-// naming the store. Every run logs its command line and output, so go test
-// -v prints the transcript.
+// object commands fail naming the store. TestAnInterruptedPut sends SIGINT
+// to a put blocked on its held-open standard input, through main's signal
+// context: it exits one, promptly, reporting the cancellation once.
+// scenarios_test.go prints the scenario parent's help, with its listing,
+// with nothing reachable, runs each tour twice in a row and after an
+// interrupted run, and runs scenario directories with the store
+// unreachable, where scenario files fails naming the store. Every run logs
+// its command line and output, so go test -v prints the transcript.
 //
 // The package has no code outside its tests.
 package integration

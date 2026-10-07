@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/standards-lab/blobfs"
 	"github.com/standards-lab/go-core/process"
@@ -124,6 +126,60 @@ func TestObjects_PutDashReadsTheInvocationsStdin(t *testing.T) {
 	}
 	if n := rec.Pending(); n != 0 {
 		t.Errorf("%d scripted responses unconsumed", n)
+	}
+}
+
+// heldStdin is standard input held open by a writer that never writes:
+// its Read blocks until the test ends, whatever the context, as a read of
+// a pipe does in the kernel. reading closes on the first Read.
+type heldStdin struct {
+	reading chan struct{}
+	once    sync.Once
+	release <-chan struct{}
+}
+
+func (h *heldStdin) Read([]byte) (int, error) {
+	h.once.Do(func() { close(h.reading) })
+	<-h.release
+	return 0, io.EOF
+}
+
+func TestObjects_PutDashEndsWithTheContextWhileStdinBlocks(t *testing.T) {
+	const fileID = "00000000-0000-7000-8000-000000000003"
+	release := make(chan struct{})
+	defer close(release)
+	stdin := &heldStdin{reading: make(chan struct{}), release: release}
+	var out, errOut bytes.Buffer
+	a, _, _, _ := scriptedAppIn(t, stdin, &out, &errOut,
+		resolvedRoot(),
+		sqltest.Response{Columns: fileColumns},
+		sqltest.Response{Columns: fileColumns, Rows: [][]driver.Value{
+			{fileID, blobfs.RootID, "a.txt", "pending", fileID + "/a.txt", nil, "application/octet-stream", nil, int64(1), stamp, stamp},
+		}},
+	)
+	apptest.FakeStore(t, a, storagetest.NewFake())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	go func() { done <- a.Run(ctx, []string{"put", "-", "/a.txt"}) }()
+
+	select {
+	case <-stdin.reading:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("put never read stdin; stderr = %q", errOut.String())
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != process.ExitFailure {
+			t.Errorf("code = %d, want %d", code, process.ExitFailure)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("put did not return once its context ended, its stdin still blocking")
+	}
+	if !strings.HasPrefix(errOut.String(), "blobfs put: files: put /a.txt: ") ||
+		!strings.HasSuffix(errOut.String(), ": "+context.Canceled.Error()+"\n") {
+		t.Errorf("stderr = %q, want the put's cancellation", errOut.String())
 	}
 }
 

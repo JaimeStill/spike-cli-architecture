@@ -369,7 +369,7 @@ func put(st *graph.Node[*Storage]) *cli.Command {
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
 			src := inv.Args[0]
-			body, size, closeBody, err := openLocal(inv.Stdin, src)
+			body, size, closeBody, err := openLocal(ctx, inv.Stdin, src)
 			if err != nil {
 				return fmt.Errorf("files: put %s: %w", src, err)
 			}
@@ -508,9 +508,10 @@ func rm(st *graph.Node[*Storage]) *cli.Command {
 // openLocal opens the body put uploads: stdin for -, its length unknown,
 // or the local file named, its length from the file system so the store
 // holds the body to it. The close function releases what was opened.
-func openLocal(stdin io.Reader, name string) (body io.Reader, size int64, closeBody func(), err error) {
+func openLocal(ctx context.Context, stdin io.Reader, name string) (body io.Reader, size int64, closeBody func(), err error) {
 	if name == "-" {
-		return stdin, 0, func() {}, nil
+		body, closeBody := cancelable(ctx, stdin)
+		return body, 0, closeBody, nil
 	}
 	file, err := os.Open(name)
 	if err != nil {
@@ -522,6 +523,28 @@ func openLocal(stdin io.Reader, name string) (body io.Reader, size int64, closeB
 		return nil, 0, nil, err
 	}
 	return file, info.Size(), func() { _ = file.Close() }, nil
+}
+
+// cancelable returns r as a body whose Read fails with ctx's error once
+// ctx ends. A read of the process's standard input blocks in the kernel,
+// where no context reaches it, so an upload waiting on a pipe held open
+// would outlive the signal that cancelled its run. The body is the read end
+// of a pipe that a goroutine copies r into; ctx's end closes the pipe's
+// write end with ctx's error, which unblocks a waiting Read. A copy still
+// blocked reading r stays so until r yields or the process exits, and a
+// write it makes after the close fails, ending it. The close function
+// releases the context's hook and the pipe.
+func cancelable(ctx context.Context, r io.Reader) (io.Reader, func()) {
+	pr, pw := io.Pipe()
+	go func() {
+		_, err := io.Copy(pw, r)
+		_ = pw.CloseWithError(err)
+	}()
+	stop := context.AfterFunc(ctx, func() { _ = pw.CloseWithError(ctx.Err()) })
+	return pr, func() {
+		stop()
+		_ = pr.Close()
+	}
 }
 
 // declaredType is the content type put declares: the flag when given,
