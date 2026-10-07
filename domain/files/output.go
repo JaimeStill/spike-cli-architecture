@@ -65,22 +65,22 @@ func writeBookmarks(w io.Writer, l Listing, p Page[Bookmark]) error {
 }
 
 // writeFileRecord writes a file's row as stat prints it, one field per
-// line. The path line is left out when path is empty, as it is for a stat
-// by id.
+// line, led by the path it is at.
 func writeFileRecord(w io.Writer, path string, f blobfs.File) error {
 	return output.Record(w, fileRecord(path, f))
 }
 
 // WriteDirectoryRecord writes a directory's row as stat prints it, one
-// field per line. The path line is left out when path is empty.
+// field per line, led by the path it is at.
 func WriteDirectoryRecord(w io.Writer, path string, d blobfs.Directory) error {
 	return output.Record(w, directoryRecord(path, d))
 }
 
-// fileRecord lays a file row out as the fields stat prints, in order. The
-// path line is left out when path is empty.
+// fileRecord lays a file row out as the fields stat prints, in order, the
+// path first.
 func fileRecord(path string, f blobfs.File) []output.Field {
-	fields := []output.Field{
+	return []output.Field{
+		{Name: "path", Value: path},
 		{Name: "id", Value: f.ID},
 		{Name: "name", Value: f.Name},
 		{Name: "status", Value: string(f.Status)},
@@ -92,21 +92,18 @@ func fileRecord(path string, f blobfs.File) []output.Field {
 		{Name: "created", Value: f.CreatedAt.UTC().Format(time.RFC3339)},
 		{Name: "updated", Value: f.UpdatedAt.UTC().Format(time.RFC3339)},
 	}
-	if path != "" {
-		fields = append([]output.Field{{Name: "path", Value: path}}, fields...)
-	}
-	return fields
 }
 
 // directoryRecord lays a directory row out as the fields stat prints, in
-// the file record's order for the fields the two share; the parent is -
-// for the root. The path line is left out when path is empty.
+// the file record's order for the fields the two share, the path first;
+// the parent is - for the root.
 func directoryRecord(path string, d blobfs.Directory) []output.Field {
 	parent := "-"
 	if d.ParentID != nil {
 		parent = *d.ParentID
 	}
-	fields := []output.Field{
+	return []output.Field{
+		{Name: "path", Value: path},
 		{Name: "id", Value: d.ID},
 		{Name: "parent", Value: parent},
 		{Name: "name", Value: d.Name},
@@ -114,10 +111,6 @@ func directoryRecord(path string, d blobfs.Directory) []output.Field {
 		{Name: "created", Value: d.CreatedAt.UTC().Format(time.RFC3339)},
 		{Name: "updated", Value: d.UpdatedAt.UTC().Format(time.RFC3339)},
 	}
-	if path != "" {
-		fields = append([]output.Field{{Name: "path", Value: path}}, fields...)
-	}
-	return fields
 }
 
 // sizeOf returns a file's size, or 0 when the row records none.

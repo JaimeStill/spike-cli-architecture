@@ -279,10 +279,17 @@ func TestFiles_DirectoryCommandsOverAScriptedDatabase(t *testing.T) {
 			want: "mv: /reports/plan.txt -> /reports/2026/plan.txt (id " + planID + ")\n",
 		},
 		{
-			name:      "stat by id",
-			args:      []string{"stat", "id:" + reportsID},
-			responses: []sqltest.Response{{Columns: fileColumns}, directoryRows(directoryRow(reportsID, blobfs.RootID, "reports"))},
+			// No file has the id, so the directory's row is read, then its
+			// path, which leads the record as it does by path.
+			name: "stat by id",
+			args: []string{"stat", "id:" + reportsID},
+			responses: []sqltest.Response{
+				{Columns: fileColumns},
+				directoryRows(directoryRow(reportsID, blobfs.RootID, "reports")),
+				ancestors([]driver.Value{reportsID, blobfs.RootID, "reports"}),
+			},
 			want: "" +
+				"path:    /reports\n" +
 				"id:      " + reportsID + "\n" +
 				"parent:  " + blobfs.RootID + "\n" +
 				"name:    reports\n" +
@@ -370,6 +377,14 @@ func TestFiles_MalformedArgumentsAreUsageErrors(t *testing.T) {
 		{"a page that is not a number", []string{"ls", "/", "--page", "two"}, "invalid value \"two\" for flag -page"},
 		{"mkdir without a path", []string{"mkdir"}, "accepts 1 argument, got 0"},
 		{"mv with one path", []string{"mv", "/a"}, "accepts 2 arguments, got 1"},
+		{"mkdir of a relative path", []string{"mkdir", "a/b"}, "blobfs mkdir: blobfs: invalid path: \"a/b\" does not start with /\n"},
+		{"mkdir --unit of a relative path", []string{"mkdir", "a/b", "--unit", unitID}, "blobfs mkdir: blobfs: invalid path: \"a/b\" does not start with /\n"},
+		{"mkdir of a trailing slash", []string{"mkdir", "/reports/"}, "invalid path: \"/reports/\": segment 2: blobfs: invalid name \"\": must not be empty"},
+		{"ls of a relative path", []string{"ls", "relative"}, "blobfs ls: blobfs: invalid path: \"relative\" does not start with /\n"},
+		{"ls of a dot segment", []string{"ls", "/reports/../x"}, "segment 2: blobfs: invalid name \"..\": must not be . or .."},
+		{"mv of two relative paths", []string{"mv", "a", "b"}, "blobfs mv: blobfs: invalid path: \"a\" does not start with /\n"},
+		{"mv to a relative path", []string{"mv", "/a", "b"}, "blobfs mv: blobfs: invalid path: \"b\" does not start with /\n"},
+		{"stat of a relative path", []string{"stat", "reports"}, "blobfs stat: blobfs: invalid path: \"reports\" does not start with /\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

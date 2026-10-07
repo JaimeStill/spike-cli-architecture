@@ -304,6 +304,9 @@ func TestObjects_UsageErrorsBuildNothing(t *testing.T) {
 		{"rm -r", []string{"rm", "-r", "/reports"}, "flag provided but not defined: -r"},
 		{"cat with no argument", []string{"cat"}, "accepts 1 argument, got 0"},
 		{"put with one argument", []string{"put", "-"}, "accepts 2 arguments, got 1"},
+		{"cat of a relative path", []string{"cat", "a.txt"}, "blobfs cat: blobfs: invalid path: \"a.txt\" does not start with /\n"},
+		{"put to a relative path", []string{"put", "-", "a.txt"}, "blobfs put: blobfs: invalid path: \"a.txt\" does not start with /\n"},
+		{"cp from a relative path", []string{"cp", "a.txt", "/b.txt"}, "blobfs cp: blobfs: invalid path: \"a.txt\" does not start with /\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -136,8 +136,8 @@ func ls(svc *graph.Node[*Service]) *cli.Command {
 }
 
 // stat is stat <path|id:<uuid>>: the file's row, or the directory's when
-// no file is at the path or has the id, one field per line. A record by id
-// carries no path line.
+// no file is at the path or has the id, one field per line, led by its
+// path, which for an id is the path the stat resolved.
 func stat(svc *graph.Node[*Service]) *cli.Command {
 	var ref Ref
 	return (&cli.Command{
@@ -156,9 +156,9 @@ func stat(svc *graph.Node[*Service]) *cli.Command {
 				return err
 			}
 			if e.Kind == EntryFile {
-				return writeFileRecord(inv.Stdout, ref.Path, e.File)
+				return writeFileRecord(inv.Stdout, e.Path, e.File)
 			}
-			return WriteDirectoryRecord(inv.Stdout, ref.Path, e.Directory)
+			return WriteDirectoryRecord(inv.Stdout, e.Path, e.Directory)
 		},
 	}).Use(svc)
 }
@@ -526,12 +526,17 @@ func declaredType(flag, local string) string {
 // any refusal as a usage error.
 
 // parseRef reads one path-or-id argument. Text after an id: prefix must be
-// a UUID other than the root's, checked by blobfs.ParseID before any I/O,
-// and is returned in canonical form; anything else is taken as a path,
-// which the Service validates.
+// a UUID other than the root's, checked by blobfs.ParseID, and is returned
+// in canonical form; anything else is a path, which must pass checkPath:
+// absolute, each segment a name blobfs takes. Neither check does I/O, so a
+// relative or malformed argument is a usage error before anything is
+// built.
 func parseRef(arg string) (Ref, error) {
 	rest, ok := strings.CutPrefix(arg, "id:")
 	if !ok {
+		if err := checkPath(arg); err != nil {
+			return Ref{}, err
+		}
 		return Ref{Path: arg}, nil
 	}
 	id, err := blobfs.ParseID(rest)

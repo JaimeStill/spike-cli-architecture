@@ -39,7 +39,8 @@ The architecture pages that apply, in the architecture repository:
 - A domain error is worded in the domain's terms; the command adds flag or command wording where
   it reports the error.
 - A command that changes state is never silent: it prints one success line with `fmt.Fprintf`.
-- A success line names an entry by its resolved path, whichever form the argument took.
+- A success line or a record names an entry by its resolved path, whichever form the argument
+  took.
 
 ## Composition
 

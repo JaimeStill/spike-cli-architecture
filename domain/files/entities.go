@@ -122,9 +122,12 @@ const (
 )
 
 // Entry is the row a Ref names, as Stat finds it: a file, or a directory
-// when no file is at the path or has the id. Kind says which of the two
-// rows is set.
+// when no file is at the path or has the id, and the path it is at. Kind
+// says which of the two rows is set. Path is the Ref's own path, or, for a
+// Ref by id, the path computed from the row, so a caller reports a path
+// whichever form named the entry.
 type Entry struct {
+	Path      string
 	Kind      EntryKind
 	File      blobfs.File
 	Directory blobfs.Directory
@@ -199,7 +202,7 @@ type Bookmark struct {
 // of blobfs's and nothing more: remove directory returns its directory's
 // row so, and remove, open, add bookmark, and remove bookmark their file's.
 // An operation with a result type of its own carries the path there
-// instead: put, copy, move, and remove tree.
+// instead: stat, put, copy, move, and remove tree.
 type Located[T any] struct {
 	Path string
 	Row  T

@@ -581,8 +581,17 @@ func (s *script) mkdir(t *testing.T) {
 	refused(t, s.tg, "blobfs: name taken (constraint blobfs_uq_directory_parent_name)", "mkdir", "/reports")
 	refused(t, s.tg, "not found", "mkdir", "/missing/child")
 	refused(t, s.tg, "the root directory", "mkdir", "/")
-	refused(t, s.tg, "invalid path", "mkdir", "reports")
 	misused(t, s.tg, "accepts 1 argument, got 2", "mkdir", "/a", "/b")
+	// A relative or malformed path is a usage error that builds nothing:
+	// against a database on a port nothing listens on, a run that built
+	// the Service would fail its start and exit 1.
+	unreachable := s.tg.with(fmt.Sprintf("BLOBFS_DATABASE_PORT=%d", closedPort(t)))
+	misused(t, unreachable, `invalid path: "reports" does not start with /`, "mkdir", "reports")
+	misused(t, unreachable, `invalid path: "a/b" does not start with /`, "mkdir", "a/b", "--unit", blobfs.NewID())
+	misused(t, unreachable, `invalid path: "/reports/": segment 2`, "mkdir", "/reports/")
+	misused(t, unreachable, `invalid path: "relative" does not start with /`, "ls", "relative")
+	misused(t, unreachable, `invalid path: "a" does not start with /`, "mv", "a", "b")
+	misused(t, unreachable, `invalid path: "a.txt" does not start with /`, "cat", "a.txt")
 }
 
 // list is ls with its id column, paging, sorting, filtering, --total none,
@@ -782,8 +791,8 @@ func (s *script) move(t *testing.T) {
 }
 
 // ids is the id:<uuid> forms of ls, stat, and mv: the record by id is the
-// record by path without its path line, and a move by ids, or by a path
-// and an id, reports the paths a move by path does.
+// record by path, its path line the path the id resolved, and a move by
+// ids, or by a path and an id, reports the paths a move by path does.
 func (s *script) ids(t *testing.T) {
 	for _, p := range []string{"/ids", "/ids/src", "/ids/dst", "/ids/sub"} {
 		ok(t, s.tg, "mkdir", p)
@@ -793,15 +802,15 @@ func (s *script) ids(t *testing.T) {
 	file := put(t, s.tg, "/ids/src/f.txt", "f.txt\n")
 
 	out := ok(t, s.tg, "stat", "/ids")
-	if byID := ok(t, s.tg, "stat", "id:"+idsDir); strings.TrimRight(byID, "\n") != strings.Join(lines(out)[1:], "\n") {
-		t.Errorf("stat of a directory by id:\n%s\nwant the record by path without its path line:\n%s", byID, out)
+	if byID := ok(t, s.tg, "stat", "id:"+idsDir); byID != out || field(byID, "path") != "/ids" {
+		t.Errorf("stat of a directory by id:\n%s\nwant the record by path:\n%s", byID, out)
 	}
 	out = ok(t, s.tg, "stat", "/ids/src/f.txt")
 	if field(out, "id") != file {
 		t.Errorf("stat of the put file:\n%s", out)
 	}
-	if byID := ok(t, s.tg, "stat", "id:"+file); strings.TrimRight(byID, "\n") != strings.Join(lines(out)[1:], "\n") {
-		t.Errorf("stat of a file by id:\n%s\nwant the record by path without its path line:\n%s", byID, out)
+	if byID := ok(t, s.tg, "stat", "id:"+file); byID != out || field(byID, "path") != "/ids/src/f.txt" {
+		t.Errorf("stat of a file by id:\n%s\nwant the record by path:\n%s", byID, out)
 	}
 	refused(t, s.tg, "no file or directory has it", "stat", "id:"+blobfs.NewID())
 	misused(t, s.tg, "must be a UUID", "stat", "id:nope")

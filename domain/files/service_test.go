@@ -301,11 +301,26 @@ func TestStat_ResolvesTheParentAndFindsTheFileByName(t *testing.T) {
 
 	e, err := s.Stat(context.Background(), files.Ref{Path: "/reports/a.txt"})
 
-	if err != nil || e.Kind != files.EntryFile || e.File.ID != fileID {
+	if err != nil || e.Kind != files.EntryFile || e.File.ID != fileID || e.Path != "/reports/a.txt" {
 		t.Fatalf("Stat() = %+v, %v", e, err)
 	}
 	if args := rec.Calls()[1].Args; len(args) != 2 || args[0] != dirID || args[1] != "a.txt" {
 		t.Errorf("the lookup bound %v, want the parent's id and the name", args)
+	}
+}
+
+func TestStat_AFileByIDCarriesItsResolvedPath(t *testing.T) {
+	// The file's row is read by id, then its directory's path, which the
+	// file's name completes.
+	s, rec := open(t, fileRows(fileRow(fileID, dirID, "a.txt", 3)), ancestors([]driver.Value{dirID, blobfs.RootID, "reports"}))
+
+	e, err := s.Stat(context.Background(), files.Ref{ID: fileID})
+
+	if err != nil || e.Kind != files.EntryFile || e.File.ID != fileID || e.Path != "/reports/a.txt" {
+		t.Errorf("Stat(id) = %+v, %v, want the file at /reports/a.txt", e, err)
+	}
+	if n := rec.Pending(); n != 0 {
+		t.Errorf("%d scripted responses unconsumed", n)
 	}
 }
 
@@ -325,26 +340,26 @@ func TestStat_TheRootIsItsDirectorysRow(t *testing.T) {
 }
 
 func TestStat_FileFirstThenDirectory(t *testing.T) {
+	reports := []driver.Value{dirID, blobfs.RootID, "reports"}
 	tests := []struct {
 		name string
 		ref  files.Ref
-		// responses answer the file's lookup, then the directory's.
+		// responses answer the file's lookup, then the directory's, then,
+		// for an id, the read of the directory's path.
 		responses []sqltest.Response
 	}{
-		{"by id", files.Ref{ID: dirID}, []sqltest.Response{fileRows(), directories(directoryRow(dirID, blobfs.RootID, "reports"))}},
+		{"by id", files.Ref{ID: dirID}, []sqltest.Response{fileRows(), directories(directoryRow(dirID, blobfs.RootID, "reports")), ancestors(reports)}},
 		{"by path", files.Ref{Path: "/reports"}, []sqltest.Response{resolvedRoot(), fileRows(), resolved(dirID, blobfs.RootID, "reports", 1)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, _ := open(t, fileRows(fileRow(fileID, dirID, "a.txt", 3)))
-			if e, err := s.Stat(context.Background(), files.Ref{ID: fileID}); err != nil || e.Kind != files.EntryFile || e.File.ID != fileID {
-				t.Errorf("Stat(file) = %+v, %v", e, err)
-			}
-
-			s, _ = open(t, tt.responses...)
+			s, rec := open(t, tt.responses...)
 			e, err := s.Stat(context.Background(), tt.ref)
-			if err != nil || e.Kind != files.EntryDirectory || e.Directory.Name != "reports" {
-				t.Errorf("Stat(directory) = %+v, %v", e, err)
+			if err != nil || e.Kind != files.EntryDirectory || e.Directory.Name != "reports" || e.Path != "/reports" {
+				t.Errorf("Stat(directory) = %+v, %v, want the directory at /reports", e, err)
+			}
+			if n := rec.Pending(); n != 0 {
+				t.Errorf("%d scripted responses unconsumed", n)
 			}
 		})
 	}

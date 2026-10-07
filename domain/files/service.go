@@ -51,13 +51,39 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 // The request rules: the refusals an operation makes from its request
-// alone. The form rule is the one form of Ref an operation refuses because
+// alone. The path rule is the syntax every path a Ref carries must have.
+// The form rule is the one form of Ref an operation refuses because
 // an id cannot name its target; every other operation takes either form, a
 // move and a copy each of their two Refs on its own. The unit rules are
 // the requests a unit's ownership cannot serve: a unit bound below the top
 // level, and a cursor into the owner listing. The operation runs each rule
 // before any I/O, and the command runs the same rule in its Validate, so a
 // refusal is a usage error before anything is built.
+
+// checkPath refuses a path that is not absolute, or that has a segment
+// blobfs would refuse, with blobfs.ErrInvalidPath. A path is / or, after
+// the leading slash, segments that blobfs.ValidateName takes once
+// normalized, which is how blobfs validates each segment of a path it
+// walks; an empty segment, as in a doubled or a trailing slash, is one it
+// refuses. The check reads the text alone, so a command runs it in
+// Validate, through parseRef, before anything is built; the operations
+// still refuse a relative path themselves, as a backstop for a caller that
+// skips it.
+func checkPath(path string) error {
+	rest, ok := strings.CutPrefix(path, "/")
+	if !ok {
+		return fmt.Errorf("%w: %q does not start with /", blobfs.ErrInvalidPath, path)
+	}
+	if rest == "" {
+		return nil
+	}
+	for i, segment := range strings.Split(rest, "/") {
+		if err := blobfs.ValidateName(blobfs.NormalizeName(segment)); err != nil {
+			return fmt.Errorf("%w: %q: segment %d: %w", blobfs.ErrInvalidPath, path, i+1, err)
+		}
+	}
+	return nil
+}
 
 // checkMkdir refuses a directory's create named by id: the directory does
 // not exist yet, so it has no id.
@@ -71,8 +97,8 @@ func checkMkdir(ref Ref) error {
 // checkUnitDepth refuses a directory's create with a unit at a path below
 // the top level with ErrUnitDepth: an owner row binds a top-level
 // directory only. A path that does not split into a parent and a name
-// passes, since the create refuses it itself, and so does an id, which
-// checkMkdir refuses.
+// passes, since checkPath or the create refuses it, and so does an id,
+// which checkMkdir refuses.
 func checkUnitDepth(ref Ref, unit string) error {
 	if unit == "" || ref.ID != "" {
 		return nil
@@ -242,25 +268,35 @@ func (s *Service) topLevel(ctx context.Context, sess sqlate.Session, l Listing) 
 // Stat returns the row ref names, on the pool: the file at the path or
 // with the id, whatever its status, or the directory when no file is
 // there, so a directory and a file that share a path report the file.
-// Entry's Kind says which. The root, which is no file, is its directory's
-// row. A path or an id neither a file nor a directory holds is
-// blobfs.ErrNotFound.
+// Entry's Kind says which, and its Path is where the row is: ref's path,
+// or for an id the path computed from the row, read after it. The root,
+// which is no file, is its directory's row. A path or an id neither a file
+// nor a directory holds is blobfs.ErrNotFound.
 func (s *Service) Stat(ctx context.Context, ref Ref) (Entry, error) {
+	at := label(ref, "id")
 	f, err := s.store.file(ctx, s.store.db, ref)
 	switch {
 	case err == nil:
-		return Entry{Kind: EntryFile, File: f}, nil
+		path, err := s.store.filePath(ctx, s.store.db, ref, f)
+		if err != nil {
+			return Entry{}, fmt.Errorf("files: stat %s: %w", at, err)
+		}
+		return Entry{Path: path, Kind: EntryFile, File: f}, nil
 	case !errors.Is(err, blobfs.ErrNotFound) && !errors.Is(err, blobfs.ErrRootDirectory):
-		return Entry{}, fmt.Errorf("files: stat %s: %w", label(ref, "id"), err)
+		return Entry{}, fmt.Errorf("files: stat %s: %w", at, err)
 	}
 	d, err := s.store.directory(ctx, s.store.db, ref)
 	switch {
 	case errors.Is(err, blobfs.ErrNotFound):
-		return Entry{}, fmt.Errorf("files: stat %s: no file or directory has it: %w", label(ref, "id"), blobfs.ErrNotFound)
+		return Entry{}, fmt.Errorf("files: stat %s: no file or directory has it: %w", at, blobfs.ErrNotFound)
 	case err != nil:
-		return Entry{}, fmt.Errorf("files: stat %s: %w", label(ref, "id"), err)
+		return Entry{}, fmt.Errorf("files: stat %s: %w", at, err)
 	}
-	return Entry{Kind: EntryDirectory, Directory: d}, nil
+	path, err := s.store.directoryPath(ctx, s.store.db, ref, d)
+	if err != nil {
+		return Entry{}, fmt.Errorf("files: stat %s: %w", at, err)
+	}
+	return Entry{Path: path, Kind: EntryDirectory, Directory: d}, nil
 }
 
 // Resolve returns the row of the directory ref names, on the pool. The
