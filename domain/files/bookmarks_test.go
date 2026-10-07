@@ -58,9 +58,9 @@ func TestAddBookmark_MapsTheBookmarkTablesConstraints(t *testing.T) {
 		violation sqltest.Response
 		want      error
 	}{
-		{"a second active bookmark of the unit", violation(files.ConstraintUniqueBookmarkActive, sqlate.ErrUniqueViolation), files.ErrActiveBookmark},
-		{"a file the unit bookmarked already", violation(files.ConstraintPrimaryKeyBookmark, sqlate.ErrUniqueViolation), files.ErrAlreadyBookmarked},
-		{"a file removed since its lookup", violation(files.ConstraintForeignKeyBookmarkFile, sqlate.ErrForeignKeyViolation), blobfs.ErrNotFound},
+		{"a second active bookmark of the unit", violation("uq_bookmark_active", sqlate.ErrUniqueViolation), files.ErrActiveBookmark},
+		{"a file the unit bookmarked already", violation("pk_bookmark", sqlate.ErrUniqueViolation), files.ErrAlreadyBookmarked},
+		{"a file removed since its lookup", violation("fk_bookmark_file", sqlate.ErrForeignKeyViolation), blobfs.ErrNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

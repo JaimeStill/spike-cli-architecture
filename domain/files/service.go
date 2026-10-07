@@ -1,0 +1,597 @@
+package files
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/standards-lab/blobfs"
+	bfdata "github.com/standards-lab/blobfs/data"
+	"github.com/standards-lab/sqlate"
+)
+
+// Service is the domain's API over the database alone: the directory and
+// bookmark operations, composed from blobfs's methods and the domain's
+// statements. It holds no object store, so the directory and bookmark
+// commands run with the store's configuration unread and the store
+// unreachable; the object operations are the [Storage]'s.
+type Service struct {
+	store *store
+}
+
+// New builds the Service over db: the catalog from the query library's
+// patterns and blobfs's published namespace, and blobfs's statements, and
+// then the domain's, compiled against it for db's dialect. opts reach
+// blobfs's store as they are: the composition root fixes blobfs's engine
+// with bfdata.WithEngine, and without one the store runs blobfs's baseline.
+// No I/O happens here; [Service.Verify] checks the statements against the
+// database.
+func New(db *sqlate.DB, opts ...bfdata.Option) (*Service, error) {
+	st, err := newStore(db, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("files: %w", err)
+	}
+	return &Service{store: st}, nil
+}
+
+// Start runs [Service.Verify], so the Service takes part in a lifecycle's
+// startup as a start-only participant: a schema that is not applied fails
+// the command at start, before its body runs. The Service holds nothing to
+// shut down.
+func (s *Service) Start(ctx context.Context) error {
+	return s.Verify(ctx)
+}
+
+// Verify prepares every statement of blobfs's, its engine's included, and
+// of the domain's, and probes every listing's field contract against the
+// database, so a schema that is not applied, or no longer matches the
+// statements, fails before a command does any work. A failure wraps
+// ErrVerify and the causes.
+func (s *Service) Verify(ctx context.Context) error {
+	if err := s.store.verify(ctx); err != nil {
+		return fmt.Errorf("%w: %w", ErrVerify, err)
+	}
+	return nil
+}
+
+// The form rules: which forms of Ref each operation takes. Each operation
+// runs its rule before any I/O, and a command runs the same rule in its
+// Validate, so a refusal is a usage error before anything is built.
+
+// checkList refuses a listing under a unit of a directory named by id:
+// the unit's scope is derived from the path's top-level directory, and an
+// id carries no path.
+func checkList(ref Ref, l Listing) error {
+	if ref.ID != "" && l.Unit != "" {
+		return &FormError{Reason: "a listing by id has no path to derive the unit's scope from"}
+	}
+	return nil
+}
+
+// checkMkdir refuses a directory's create named by id: the directory does
+// not exist yet, so it has no id.
+func checkMkdir(ref Ref) error {
+	if ref.ID != "" {
+		return &FormError{Reason: "a directory is created by path, not by id"}
+	}
+	return nil
+}
+
+// checkRemoveTree refuses a branch's delete named by id.
+func checkRemoveTree(ref Ref) error {
+	if ref.ID != "" {
+		return &FormError{Reason: "a branch is removed by path, not by id"}
+	}
+	return nil
+}
+
+// checkPair refuses a move or a copy whose source and destination are not
+// of one form: by path, the destination is an existing directory or a new
+// path; by id, it is the directory the source goes into under its own
+// name, so the two forms do not mix.
+func checkPair(src, dst Ref) error {
+	if (src.ID == "") != (dst.ID == "") {
+		return &FormError{Reason: "a move or a copy takes two paths, or two ids: the source's and the destination directory's"}
+	}
+	return nil
+}
+
+// label renders ref for an error's label: the path, or the id after kind,
+// which names what the id is taken to be.
+func label(ref Ref, kind string) string {
+	if ref.ID != "" {
+		return kind + " " + ref.ID
+	}
+	return ref.Path
+}
+
+// List returns the contents of the directory ref names under l: the
+// directories under it and the files in it, each one page of l's size
+// with its total when l asks for one, each continued from its own cursor
+// in l.After when one is given. The directory is found and both halves
+// read in one read-only repeatable-read transaction, so they see one
+// snapshot and agree with each other. A directory that does not exist is
+// blobfs.ErrNotFound, and a path that does not start with a slash
+// blobfs.ErrInvalidPath. A directory named by id is read first, since
+// blobfs lists a directory that does not exist as empty, and its contents'
+// Path is empty: no path is computed for a listing by id.
+//
+// A unit in l scopes the listing to what the unit owns, and takes a path
+// alone (a [FormError] otherwise, before any I/O). Below the root, the
+// path's top-level directory is resolved first and its owner row read,
+// and a unit that does not own it is refused with ErrNotOwned before the
+// rest of the path is resolved. At the root, the listing is the unit's own
+// top-level directories, read through the owner read model under the
+// terms that name a directory field, and no files: a file in the root has
+// no top-level directory and belongs to no unit. That read model pages by
+// number only, so a cursor there is ErrNoCursorAtRoot, before any I/O.
+func (s *Service) List(ctx context.Context, ref Ref, l Listing) (Contents, error) {
+	at := label(ref, "directory")
+	if l.Unit != "" {
+		at += " as unit " + l.Unit
+	}
+	if err := checkList(ref, l); err != nil {
+		return Contents{}, fmt.Errorf("files: ls %s: %w", at, err)
+	}
+	if ref.Path == "/" && l.Unit != "" && l.After != (After{}) {
+		return Contents{}, fmt.Errorf("files: ls %s: %w", at, ErrNoCursorAtRoot)
+	}
+	c, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (Contents, error) {
+		switch {
+		case l.Unit == "":
+			dir, err := s.store.directory(ctx, tx, ref)
+			if err != nil {
+				return Contents{}, err
+			}
+			return s.store.contents(ctx, tx, ref.Path, dir.ID, l)
+		case ref.Path == "/":
+			return s.topLevel(ctx, tx, l)
+		}
+		dir, err := s.resolveOwned(ctx, tx, ref.Path, l.Unit)
+		if err != nil {
+			return Contents{}, err
+		}
+		return s.store.contents(ctx, tx, ref.Path, dir.ID, l)
+	}, sqlate.ReadOnly(), sqlate.Isolation(sql.LevelRepeatableRead))
+	if err != nil {
+		return Contents{}, fmt.Errorf("files: ls %s: %w", at, err)
+	}
+	return c, nil
+}
+
+// resolveOwned resolves the directory at path, below the root, through
+// sess for the unit: the path's top-level directory first, then its owner
+// row, and the rest of the path only once the unit is known to own it, so
+// a unit learns nothing of a branch it does not own. A unit that does not
+// own the top-level directory is ErrNotOwned.
+func (s *Service) resolveOwned(ctx context.Context, sess sqlate.Session, path, unit string) (blobfs.Directory, error) {
+	top := topLevelOf(path)
+	dir, err := s.store.resolve(ctx, sess, top)
+	if err != nil {
+		return blobfs.Directory{}, err
+	}
+	owned, err := s.store.owns(ctx, sess, unit, dir.ID)
+	if err != nil {
+		return blobfs.Directory{}, err
+	}
+	if !owned {
+		return blobfs.Directory{}, fmt.Errorf("%s: %w", top, ErrNotOwned)
+	}
+	if top == path {
+		return dir, nil
+	}
+	return s.store.resolve(ctx, sess, path)
+}
+
+// topLevel is the listing of the root as the unit l names: the unit's
+// top-level directories through the owner read model, one page by number,
+// and an empty file half, whose total is 0 when l counts and NoTotal when
+// it does not.
+func (s *Service) topLevel(ctx context.Context, sess sqlate.Session, l Listing) (Contents, error) {
+	dirs, err := s.store.ownedBy(ctx, sess, l.Unit, l)
+	if err != nil {
+		return Contents{}, err
+	}
+	files := Page[blobfs.File]{Total: 0}
+	if l.Total == TotalNone {
+		files.Total = NoTotal
+	}
+	return Contents{Path: "/", Directories: dirs, Files: files}, nil
+}
+
+// Stat returns the row ref names, on the pool: the file at the path or
+// with the id, whatever its status, or the directory when no file is
+// there, so a directory and a file that share a path report the file.
+// Entry's Kind says which. The root, which is no file, is its directory's
+// row. A path or an id neither a file nor a directory holds is
+// blobfs.ErrNotFound.
+func (s *Service) Stat(ctx context.Context, ref Ref) (Entry, error) {
+	f, err := s.store.file(ctx, s.store.db, ref)
+	switch {
+	case err == nil:
+		return Entry{Kind: EntryFile, File: f}, nil
+	case !errors.Is(err, blobfs.ErrNotFound) && !errors.Is(err, blobfs.ErrRootDirectory):
+		return Entry{}, fmt.Errorf("files: stat %s: %w", label(ref, "id"), err)
+	}
+	d, err := s.store.directory(ctx, s.store.db, ref)
+	switch {
+	case errors.Is(err, blobfs.ErrNotFound):
+		return Entry{}, fmt.Errorf("files: stat %s: no file or directory has it: %w", label(ref, "id"), blobfs.ErrNotFound)
+	case err != nil:
+		return Entry{}, fmt.Errorf("files: stat %s: %w", label(ref, "id"), err)
+	}
+	return Entry{Kind: EntryDirectory, Directory: d}, nil
+}
+
+// Resolve returns the row of the directory ref names, on the pool. The
+// root is the seeded root row. A directory that does not exist is
+// blobfs.ErrNotFound, and a path that does not start with a slash, or that
+// has an empty segment or a trailing slash, blobfs.ErrInvalidPath.
+func (s *Service) Resolve(ctx context.Context, ref Ref) (blobfs.Directory, error) {
+	d, err := s.store.directory(ctx, s.store.db, ref)
+	if err != nil {
+		return blobfs.Directory{}, fmt.Errorf("files: stat %s: %w", label(ref, "directory"), err)
+	}
+	return d, nil
+}
+
+// Mkdir creates the directory at ref's path under its parent, which must
+// exist. A directory is created by path alone (a [FormError] for an id,
+// before any I/O). There is no -p: a missing parent is blobfs.ErrNotFound.
+// The root is blobfs.ErrRootDirectory before any I/O, and a name an active
+// directory holds in the parent is blobfs.ErrNameTaken.
+//
+// Without a unit the parent is resolved and the directory created on the
+// pool. With one, the path must name a top-level directory (ErrUnitDepth
+// otherwise, before any I/O), and the directory and the owner row that
+// binds it to the unit are written in one transaction, so a directory
+// created with a unit never exists without its owner.
+func (s *Service) Mkdir(ctx context.Context, ref Ref, unit string) (blobfs.Directory, error) {
+	at := label(ref, "id")
+	if err := checkMkdir(ref); err != nil {
+		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", at, err)
+	}
+	parent, name, err := splitParent(ref.Path)
+	if err != nil {
+		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", at, err)
+	}
+	if unit != "" && parent != "/" {
+		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", at, ErrUnitDepth)
+	}
+	create := func(sess sqlate.Session) (blobfs.Directory, error) {
+		dir, err := s.store.resolve(ctx, sess, parent)
+		if err != nil {
+			return blobfs.Directory{}, err
+		}
+		return s.store.blobfs.Directories.Create(ctx, sess, dir.ID, name)
+	}
+	var made blobfs.Directory
+	if unit == "" {
+		made, err = create(s.store.db)
+	} else {
+		made, err = s.store.db.Transact(ctx, func(tx *sqlate.Tx) (blobfs.Directory, error) {
+			made, err := create(tx)
+			if err != nil {
+				return blobfs.Directory{}, err
+			}
+			return made, s.store.insertOwner(ctx, tx, made.ID, unit)
+		})
+	}
+	if err != nil {
+		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", at, err)
+	}
+	return made, nil
+}
+
+// RemoveDirectory removes the empty directory at path, with its owner row
+// when it has one, in one transaction: the path is resolved, the owner row
+// removed, and the directory removed through blobfs, whose refusal rolls
+// the owner row back with it. A directory that still has directories or
+// files under it is blobfs.ErrNotEmpty, and the root is
+// blobfs.ErrRootDirectory before any I/O.
+func (s *Service) RemoveDirectory(ctx context.Context, path string) (blobfs.Directory, error) {
+	if _, _, err := splitParent(path); err != nil {
+		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", path, err)
+	}
+	dir, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (blobfs.Directory, error) {
+		dir, err := s.store.resolve(ctx, tx, path)
+		if err != nil {
+			return blobfs.Directory{}, err
+		}
+		if err := s.store.deleteOwner(ctx, tx, dir.ID); err != nil {
+			return blobfs.Directory{}, err
+		}
+		return dir, s.store.blobfs.Directories.Delete(ctx, tx, dir.ID)
+	})
+	if err != nil {
+		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", path, err)
+	}
+	return dir, nil
+}
+
+// Move moves the directory or file src names, in one transaction. src and
+// dst are two paths or two ids (a [FormError] otherwise, before any I/O).
+//
+// By path, dst is read the way Unix reads it: when it names an existing
+// directory the source moves into it under its own name, and otherwise dst
+// is the new path, whose parent must exist and whose last segment is the
+// new name, so a move to a new name under the same parent is a rename. src
+// is resolved as a directory first and as a file when no directory is at
+// the path; a directory and a file may share a name, and the directory
+// wins. By id, src is the file with the id, or the directory when no file
+// has it, and dst is the directory it moves into under its own name; the
+// paths of the source's parent and of the destination are computed by
+// blobfs's Directories.Path before anything changes, so a move by id
+// reports what a move by path does.
+//
+// A directory moves through blobfs's Directories.Move, which takes the
+// tree lock and runs the cycle check inside this transaction, so a move
+// into the directory itself or one of its descendants is blobfs.ErrCycle.
+// A file moves through Files.Move. The directory's contents and the file's
+// object follow by id: no key encodes a path, so nothing moves in the
+// store.
+//
+// The move stays under one top-level directory (ErrMoveAcrossScopes
+// otherwise), checked once both sides resolve and before anything
+// changes. The root as the source is blobfs.ErrRootDirectory before any
+// I/O. A source that does not exist, or a destination whose parent does
+// not, is blobfs.ErrNotFound; a name already held in the destination by an
+// entry of the same kind is blobfs.ErrNameTaken.
+func (s *Service) Move(ctx context.Context, src, dst Ref) (MoveResult, error) {
+	at := label(src, "id") + " " + label(dst, "directory")
+	if err := checkPair(src, dst); err != nil {
+		return MoveResult{}, fmt.Errorf("files: mv %s: %w", at, err)
+	}
+	if src.ID == blobfs.RootID {
+		return MoveResult{}, fmt.Errorf("files: mv %s: %w", at, blobfs.ErrRootDirectory)
+	}
+	move := s.moveID
+	if src.ID == "" {
+		move = s.movePath
+		if _, _, err := splitParent(src.Path); err != nil {
+			return MoveResult{}, fmt.Errorf("files: mv %s: %w", at, err)
+		}
+		if !strings.HasPrefix(dst.Path, "/") {
+			return MoveResult{}, fmt.Errorf("files: mv %s: %w: %q does not start with /", at, blobfs.ErrInvalidPath, dst.Path)
+		}
+	}
+	res, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (MoveResult, error) {
+		return move(ctx, tx, src, dst)
+	})
+	if err != nil {
+		return MoveResult{}, fmt.Errorf("files: mv %s: %w", at, err)
+	}
+	return res, nil
+}
+
+// movePath is Move by path inside tx, its errors unlabelled.
+func (s *Service) movePath(ctx context.Context, tx *sqlate.Tx, src, dst Ref) (MoveResult, error) {
+	srcParent, srcName, _ := splitParent(src.Path)
+	parent, parentPath, name, err := s.store.destination(ctx, tx, dst.Path, srcName)
+	if err != nil {
+		return MoveResult{}, err
+	}
+	if err := sameScope(src.Path, join(parentPath, name)); err != nil {
+		return MoveResult{}, err
+	}
+	dir, err := s.store.resolve(ctx, tx, src.Path)
+	switch {
+	case err == nil:
+		moved, err := s.store.blobfs.Directories.Move(ctx, tx, dir.ID, parent.ID, name, dir.Version)
+		if err != nil {
+			return MoveResult{}, err
+		}
+		return MoveResult{Kind: EntryDirectory, ID: moved.ID, From: src.Path, To: join(parentPath, moved.Name)}, nil
+	case !errors.Is(err, blobfs.ErrNotFound):
+		return MoveResult{}, err
+	}
+	srcDir, err := s.store.resolve(ctx, tx, srcParent)
+	if err != nil {
+		return MoveResult{}, err
+	}
+	f, err := s.store.blobfs.Files.FindByName(ctx, tx, srcDir.ID, srcName)
+	if err != nil {
+		return MoveResult{}, err
+	}
+	moved, err := s.store.blobfs.Files.Move(ctx, tx, f.ID, parent.ID, name, f.Version)
+	if err != nil {
+		return MoveResult{}, err
+	}
+	return MoveResult{Kind: EntryFile, ID: moved.ID, From: src.Path, To: join(parentPath, moved.Name)}, nil
+}
+
+// moveID is Move by id inside tx, its errors unlabelled: the row is read
+// first, the file with the id or else the directory, for its kind, its
+// name, its parent, and the version that guards the move.
+func (s *Service) moveID(ctx context.Context, tx *sqlate.Tx, src, dst Ref) (MoveResult, error) {
+	res := MoveResult{ID: src.ID}
+	var parentID, name string
+	var version int64
+	f, err := s.store.blobfs.Files.Find(ctx, tx, src.ID)
+	switch {
+	case err == nil:
+		res.Kind, parentID, name, version = EntryFile, f.DirectoryID, f.Name, f.Version
+	case !errors.Is(err, blobfs.ErrNotFound):
+		return MoveResult{}, err
+	default:
+		d, err := s.store.blobfs.Directories.Find(ctx, tx, src.ID)
+		switch {
+		case errors.Is(err, blobfs.ErrNotFound):
+			return MoveResult{}, fmt.Errorf("no file or directory has it: %w", blobfs.ErrNotFound)
+		case err != nil:
+			return MoveResult{}, err
+		case d.ParentID == nil:
+			return MoveResult{}, blobfs.ErrRootDirectory
+		}
+		res.Kind, parentID, name, version = EntryDirectory, *d.ParentID, d.Name, d.Version
+	}
+	fromDir, err := s.store.blobfs.Directories.Path(ctx, tx, parentID)
+	if err != nil {
+		return MoveResult{}, err
+	}
+	toDir, err := s.store.blobfs.Directories.Path(ctx, tx, dst.ID)
+	if err != nil {
+		return MoveResult{}, err
+	}
+	res.From = join(fromDir, name)
+	if err := sameScope(res.From, join(toDir, name)); err != nil {
+		return MoveResult{}, err
+	}
+	var moved string
+	if res.Kind == EntryFile {
+		m, err := s.store.blobfs.Files.Move(ctx, tx, src.ID, dst.ID, name, version)
+		if err != nil {
+			return MoveResult{}, err
+		}
+		moved = m.Name
+	} else {
+		m, err := s.store.blobfs.Directories.Move(ctx, tx, src.ID, dst.ID, name, version)
+		if err != nil {
+			return MoveResult{}, err
+		}
+		moved = m.Name
+	}
+	res.To = join(toDir, moved)
+	return res, nil
+}
+
+// AddBookmark records that the unit bookmarks the file at path and returns
+// the file's row. With active, the bookmark becomes the unit's one active
+// bookmark, and the add is refused with ErrActiveBookmark while another
+// bookmark of the unit is active; the other one is left as it is. The
+// parent's resolution, the file's lookup, the hold of the file, and the
+// insert run in one transaction.
+//
+// The hold is blobfs's reference-then-delete rule: Files.Hold locks the
+// file's row until the transaction ends, so a delete that begins meanwhile
+// waits and then sees the bookmark, and a delete that began first makes
+// the hold refuse. A file that does not exist, or a parent that does not,
+// is blobfs.ErrNotFound, and so is a file removed between its lookup and
+// the insert. A pending file can be bookmarked. A deleting file is refused
+// with ErrNotAvailable over blobfs's DeletingError, because its delete is
+// under way. A file the unit has bookmarked already is
+// ErrAlreadyBookmarked, active or not. The root is blobfs.ErrRootDirectory
+// before any I/O.
+func (s *Service) AddBookmark(ctx context.Context, path, unit string, active bool) (blobfs.File, error) {
+	if _, _, err := splitParent(path); err != nil {
+		return blobfs.File{}, fmt.Errorf("files: bookmark add %s: %w", path, err)
+	}
+	f, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (blobfs.File, error) {
+		f, err := s.store.file(ctx, tx, Ref{Path: path})
+		if err != nil {
+			return blobfs.File{}, err
+		}
+		if err := s.store.blobfs.Files.Hold(ctx, tx, f.ID); err != nil {
+			if errors.Is(err, blobfs.ErrDeleting) {
+				return blobfs.File{}, fmt.Errorf("%w: %w", ErrNotAvailable, err)
+			}
+			return blobfs.File{}, err
+		}
+		return f, s.store.insertBookmark(ctx, tx, unit, f.ID, active)
+	})
+	if err != nil {
+		return blobfs.File{}, fmt.Errorf("files: bookmark add %s as unit %s: %w", path, unit, err)
+	}
+	return f, nil
+}
+
+// RemoveBookmark removes the unit's bookmark of the file at path, active or
+// not, and returns the file's row. The path is resolved and the row deleted
+// on the pool: the delete is keyed by the unit and the file's id, so the two
+// need not share a snapshot. A file that does not exist is
+// blobfs.ErrNotFound; a file the unit has not bookmarked is ErrNoBookmark.
+// Removing the active bookmark leaves the unit with none, which a later add
+// with active may fill.
+func (s *Service) RemoveBookmark(ctx context.Context, path, unit string) (blobfs.File, error) {
+	f, err := s.store.file(ctx, s.store.db, Ref{Path: path})
+	if err == nil {
+		err = s.store.deleteBookmark(ctx, s.store.db, unit, f.ID)
+	}
+	if err != nil {
+		return blobfs.File{}, fmt.Errorf("files: bookmark rm %s as unit %s: %w", path, unit, err)
+	}
+	return f, nil
+}
+
+// ListBookmarks returns one page, by number, of the unit's bookmarks under
+// l's page, size, sort terms, and total mode, each with its file's full
+// path, in path order unless l sorts otherwise. The read model pages by
+// number only, so the page carries no cursor, and l's filters and cursors
+// are not read. The page and its total are read in one read-only
+// repeatable-read transaction.
+func (s *Service) ListBookmarks(ctx context.Context, unit string, l Listing) (Page[Bookmark], error) {
+	p, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (Page[Bookmark], error) {
+		return s.store.bookmarksOf(ctx, tx, unit, Listing{Page: l.Page, Size: l.Size, Sort: l.Sort, Total: l.Total})
+	}, sqlate.ReadOnly(), sqlate.Isolation(sql.LevelRepeatableRead))
+	if err != nil {
+		return Page[Bookmark]{}, fmt.Errorf("files: bookmark ls as unit %s: %w", unit, err)
+	}
+	return p, nil
+}
+
+// splitParent splits the path of an entry into its parent's path and its
+// name. The root itself is blobfs.ErrRootDirectory, and a relative path or
+// one ending with a slash blobfs.ErrInvalidPath. The parent's segments are
+// validated when the parent is resolved and the name when the row is
+// written.
+func splitParent(path string) (parent, name string, err error) {
+	if !strings.HasPrefix(path, "/") {
+		return "", "", fmt.Errorf("%w: %q does not start with /", blobfs.ErrInvalidPath, path)
+	}
+	if path == "/" {
+		return "", "", blobfs.ErrRootDirectory
+	}
+	at := strings.LastIndex(path, "/")
+	parent, name = path[:at], path[at+1:]
+	if name == "" {
+		return "", "", fmt.Errorf("%w: %q ends with a slash", blobfs.ErrInvalidPath, path)
+	}
+	if parent == "" {
+		parent = "/"
+	}
+	return parent, name, nil
+}
+
+// join returns the path of name in the directory at dir.
+func join(dir, name string) string {
+	return strings.TrimSuffix(dir, "/") + "/" + name
+}
+
+// sameScope refuses a move from the path from to the path to unless both
+// lie under one top-level directory, where an entry at the top level
+// counts as lying under the root, with ErrMoveAcrossScopes.
+func sameScope(from, to string) error {
+	if scopeOf(from) == scopeOf(to) {
+		return nil
+	}
+	return fmt.Errorf("%s is under %s and %s under %s: %w", from, scopePath(from), to, scopePath(to), ErrMoveAcrossScopes)
+}
+
+// topLevelOf returns the path of the top-level directory that contains the
+// entry at path, the path itself for a top-level entry.
+func topLevelOf(path string) string {
+	first, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	return "/" + first
+}
+
+// scopeOf returns the normalized name of the top-level directory that
+// contains the entry at path, or the empty string when the entry is itself
+// at the top level, so that the root contains it.
+func scopeOf(path string) string {
+	first, _, below := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	if !below {
+		return ""
+	}
+	return blobfs.NormalizeName(first)
+}
+
+// scopePath renders scopeOf(path) for a message: the top-level directory's
+// path, or / for the root.
+func scopePath(path string) string {
+	if scope := scopeOf(path); scope != "" {
+		return "/" + scope
+	}
+	return "/"
+}

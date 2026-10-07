@@ -42,12 +42,12 @@ func WriteContents(w io.Writer, l Listing, c Contents, cursors bool) error {
 	return writePage(w, "files", "next-files", files)
 }
 
-// WriteBookmarks writes p, the page of a unit's bookmarks l listed, as
+// writeBookmarks writes p, the page of a unit's bookmarks l listed, as
 // bookmark ls prints it: the bookmarks as aligned columns under PATH SIZE
 // STATUS ACTIVE UPDATED, in the order the page holds them, the active one
 // marked active, then the page's lines as writePage writes them. The
 // listing pages by number only, so no cursor line is written.
-func WriteBookmarks(w io.Writer, l Listing, p Page[Bookmark]) error {
+func writeBookmarks(w io.Writer, l Listing, p Page[Bookmark]) error {
 	rows := make([][]string, 0, len(p.Rows))
 	for _, b := range p.Rows {
 		active := "-"

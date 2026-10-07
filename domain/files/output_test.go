@@ -2,10 +2,13 @@ package files_test
 
 import (
 	"bytes"
+	"database/sql/driver"
 	"testing"
 	"time"
 
 	"github.com/standards-lab/blobfs"
+	"github.com/standards-lab/go-core/process"
+	"github.com/standards-lab/sqlate/sqltest"
 
 	"github.com/JaimeStill/spike-cli-architecture/domain/files"
 )
@@ -101,22 +104,17 @@ func TestWriteContents_NoEntriesWritesTheHeader(t *testing.T) {
 	}
 }
 
-func TestWriteBookmarks_WritesTheEntriesThenThePage(t *testing.T) {
-	updated := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+func TestBookmarkLs_WritesTheEntriesThenThePage(t *testing.T) {
+	// The read model's page carries no cursor, and the listing writes
+	// none.
 	size := int64(12)
-	var b bytes.Buffer
+	r := runCommand(t, []sqltest.Response{sqltest.WithTotal(sqltest.Response{Columns: bookmarkColumns, Rows: [][]driver.Value{
+		{fileID, dirID, true, "/reports/plan.txt", "plan.txt", "available", size, "text/plain", stamp, stamp},
+		{otherID, blobfs.RootID, false, "/draft.bin", "draft.bin", "pending", nil, "application/octet-stream", stamp, stamp},
+	}}, 2)}, "bookmark", "ls", "--unit", unitID)
 
-	err := files.WriteBookmarks(&b, files.Listing{Page: 1, Size: 20, Total: files.TotalExact}, files.Page[files.Bookmark]{
-		Rows: []files.Bookmark{
-			{Path: "/reports/plan.txt", Size: &size, Status: "available", Active: true, UpdatedAt: updated},
-			{Path: "/draft.bin", Status: "pending", UpdatedAt: updated},
-		},
-		Total: 2,
-		Next:  "ignored",
-	})
-
-	if err != nil {
-		t.Fatalf("WriteBookmarks() = %v", err)
+	if r.code != process.ExitOK {
+		t.Fatalf("code = %d, stderr = %q", r.code, r.stderr)
 	}
 	want := "" +
 		"PATH               SIZE  STATUS     ACTIVE  UPDATED\n" +
@@ -124,19 +122,19 @@ func TestWriteBookmarks_WritesTheEntriesThenThePage(t *testing.T) {
 		"/draft.bin         -     pending    -       2026-10-06 12:00:00\n" +
 		"bookmarks: 2 on page 1 of size 20, total 2\n" +
 		"more: no\n"
-	if b.String() != want {
-		t.Errorf("WriteBookmarks() wrote\n%s\nwant\n%s", b.String(), want)
+	if r.stdout != want {
+		t.Errorf("bookmark ls wrote\n%s\nwant\n%s", r.stdout, want)
 	}
 }
 
-func TestWriteBookmarks_NoEntriesWritesTheHeader(t *testing.T) {
-	var b bytes.Buffer
+func TestBookmarkLs_NoEntriesWritesTheHeader(t *testing.T) {
+	r := runCommand(t, []sqltest.Response{{Columns: bookmarkColumns}}, "bookmark", "ls", "--unit", unitID, "--total", "none")
 
-	if err := files.WriteBookmarks(&b, files.Listing{Page: 1, Size: 20, Total: files.TotalNone}, files.Page[files.Bookmark]{}); err != nil {
-		t.Fatalf("WriteBookmarks() = %v", err)
+	if r.code != process.ExitOK {
+		t.Fatalf("code = %d, stderr = %q", r.code, r.stderr)
 	}
 	want := "PATH  SIZE  STATUS  ACTIVE  UPDATED\nbookmarks: 0 on page 1 of size 20, total not counted\nmore: no\n"
-	if b.String() != want {
-		t.Errorf("WriteBookmarks() wrote\n%q\nwant\n%q", b.String(), want)
+	if r.stdout != want {
+		t.Errorf("bookmark ls wrote\n%q\nwant\n%q", r.stdout, want)
 	}
 }

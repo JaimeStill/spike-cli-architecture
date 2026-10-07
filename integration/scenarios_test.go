@@ -60,7 +60,7 @@ func TestList(t *testing.T) {
 		"  directories  Tour the directory commands on Postgres alone: mkdir, ls, stat, mv, rmdir\n" +
 		"               uses files\n" +
 		"  files        Tour the object commands on Postgres and the store: put, cat, cp, rm, rm --recursive\n" +
-		"               uses files, objects\n"
+		"               uses files, storage\n"
 	if out != want {
 		t.Errorf("list stdout:\n%s\nwant:\n%s", out, want)
 	}

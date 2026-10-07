@@ -295,7 +295,7 @@ func TestFiles_MalformedArgumentsAreUsageErrors(t *testing.T) {
 	}{
 		{"an id that is not a UUID", []string{"ls", "id:nope"}, "blobfs ls: blobfs: invalid id \"nope\": must be a UUID\n"},
 		{"the root's id", []string{"stat", "id:" + blobfs.RootID}, "the nil UUID is the root's"},
-		{"a path and an id", []string{"mv", "/a", "id:" + reportsID}, "give two paths, or two ids"},
+		{"a path and an id", []string{"mv", "/a", "id:" + reportsID}, "two paths, or two ids"},
 		{"a total mode", []string{"ls", "/", "--total", "some"}, "--total \"some\": the mode is exact or none"},
 		{"a filter with no operator", []string{"ls", "/", "--filter", "name"}, "write <field>:<op>:<value>"},
 		{"a sort direction", []string{"ls", "/", "--sort", "name:up"}, "the direction is asc or desc"},

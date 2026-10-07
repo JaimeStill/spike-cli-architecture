@@ -48,7 +48,7 @@ func TestObjects_CommandsBuildTheDatabaseAndTheStore(t *testing.T) {
 			// The production constructors run but the store's, which is
 			// built over a Fake, and none does I/O; the lifecycle
 			// configuration, the Build's last root, is halted, so the Build
-			// constructs the objects node and everything it reaches, and
+			// constructs the storage node and everything it reaches, and
 			// stops before anything starts.
 			a, built := haltedApp(&out, &errOut)
 			apptest.FakeStore(t, a, storagetest.NewFake())
@@ -61,7 +61,7 @@ func TestObjects_CommandsBuildTheDatabaseAndTheStore(t *testing.T) {
 			if want := "blobfs " + args[0] + ": lifecycle config: halted\n"; errOut.String() != want {
 				t.Errorf("stderr = %q, want %q", errOut.String(), want)
 			}
-			wantBuilt := []string{"objects", "files", "database", "database config", "store", "lifecycle config"}
+			wantBuilt := []string{"storage", "files", "database", "database config", "store", "lifecycle config"}
 			if got := built.Log(); !slices.Equal(got, wantBuilt) {
 				t.Errorf("nodes built = %q, want %q", got, wantBuilt)
 			}
@@ -167,7 +167,7 @@ func TestObjects_UsageErrorsBuildNothing(t *testing.T) {
 		{"put - into a directory id", []string{"put", "-", "id:" + reportsID}, "stdin has no name to store under"},
 		{"rm --recursive by id", []string{"rm", "--recursive", "id:" + reportsID}, "a branch is removed by path, not by id"},
 		{"rm -r", []string{"rm", "-r", "/reports"}, "flag provided but not defined: -r"},
-		{"cp a path and an id", []string{"cp", "/a.txt", "id:" + reportsID}, "give two paths, or two ids"},
+		{"cp a path and an id", []string{"cp", "/a.txt", "id:" + reportsID}, "two paths, or two ids"},
 		{"cat with no argument", []string{"cat"}, "accepts 1 argument, got 0"},
 		{"put with one argument", []string{"put", "-"}, "accepts 2 arguments, got 1"},
 	}

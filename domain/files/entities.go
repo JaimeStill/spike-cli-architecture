@@ -7,6 +7,17 @@ import (
 	"github.com/standards-lab/blobfs"
 )
 
+// Ref names one entry of the tree in one of two forms: an absolute path,
+// or a row's id. Exactly one of Path and ID is set; an operation reads ID
+// when it is set and Path otherwise. A path starts with /, so the two
+// forms never collide. Every operation that names an entry takes a Ref,
+// and the operations that take one form alone, or two Refs of one form,
+// refuse any other with a [FormError] before any I/O.
+type Ref struct {
+	Path string
+	ID   string
+}
+
 // TotalMode says whether a listing asks for its total.
 type TotalMode int
 
@@ -107,26 +118,13 @@ const (
 	EntryFile EntryKind = "file"
 )
 
-// Entry is the row an id names, as stat and mv find it by id: a file, or a
-// directory when no file has the id. Kind says which of the two rows is
-// set.
+// Entry is the row a Ref names, as Stat finds it: a file, or a directory
+// when no file is at the path or has the id. Kind says which of the two
+// rows is set.
 type Entry struct {
 	Kind      EntryKind
 	File      blobfs.File
 	Directory blobfs.Directory
-}
-
-// MoveRequest is one move by id, as MoveEntry takes it: the kind and id of
-// the entry to move, the id of the directory it moves into, the name it
-// takes there (empty keeps its name), and the version the caller read (0
-// when none was read, in which case the row's current version guards the
-// move).
-type MoveRequest struct {
-	Kind        EntryKind
-	ID          string
-	DirectoryID string
-	Name        string
-	Version     int64
 }
 
 // MoveResult is what mv returns: what kind of entry moved, its id, the
@@ -142,8 +140,11 @@ type MoveResult struct {
 
 // Content is what a put writes: the body, its length in bytes when known
 // (0 when it is not, as for standard input, so the store takes the body
-// to its end), and the content type the file declares.
+// to its end), the content type the file declares, and the name the file
+// takes when the put names its directory by id. A put to a path takes the
+// path's last segment as the name and does not read Name.
 type Content struct {
+	Name        string
 	Body        io.Reader
 	Size        int64
 	ContentType string

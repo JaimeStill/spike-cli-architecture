@@ -30,18 +30,18 @@ var children = []string{"alpha", "bravo", "charlie", "delta", "echo"}
 // directories is the directories tour's handle on the files node, the
 // one node it declares.
 type directories struct {
-	store *graph.Node[*files.Store]
+	store *graph.Node[*files.Service]
 }
 
-// storeOf returns the Store the dispatcher built for the run.
-func (d directories) storeOf(inv *cli.Invocation) *files.Store { return inv.Get(d.store) }
+// storeOf returns the Service the dispatcher built for the run.
+func (d directories) storeOf(inv *cli.Invocation) *files.Service { return inv.Get(d.store) }
 
 // Directories is the directories tour over store, the files node: mkdir,
 // ls with its paging, sorting, and filtering, stat, mv, and rmdir, with
 // the working area created and listed as a unit's. It declares the files
 // node alone, so a run builds Postgres and never the object store, and it
 // runs with the store unreachable.
-func Directories(store *graph.Node[*files.Store]) scenario.Scenario {
+func Directories(store *graph.Node[*files.Service]) scenario.Scenario {
 	d := directories{store: store}
 	return scenario.Scenario{
 		Name:    "directories",
@@ -65,7 +65,7 @@ func Directories(store *graph.Node[*files.Store]) scenario.Scenario {
 
 func (d directories) clear(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	s := d.storeOf(inv)
-	_, err := s.Resolve(ctx, DirectoriesArea)
+	_, err := s.Resolve(ctx, files.Ref{Path: DirectoriesArea})
 	if errors.Is(err, blobfs.ErrNotFound) {
 		r.Note("Nothing to clear: %s does not exist, so this run starts clean.", DirectoriesArea)
 		return nil
@@ -79,7 +79,7 @@ func (d directories) clear(ctx context.Context, inv *cli.Invocation, r *scenario
 
 func (d directories) mkdirArea(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	r.Note("A directory created with a unit is top-level, and its owner row is written in the same transaction, so the unit's scope starts here.")
-	dir, err := d.storeOf(inv).Mkdir(ctx, DirectoriesArea, Unit)
+	dir, err := d.storeOf(inv).Mkdir(ctx, files.Ref{Path: DirectoriesArea}, Unit)
 	if err != nil {
 		return err
 	}
@@ -92,7 +92,7 @@ func (d directories) mkdirArea(ctx context.Context, inv *cli.Invocation, r *scen
 func (d directories) listUnit(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	r.Note("At the root, a unit's listing is its own top-level directories, read through the owner rows.")
 	l := files.Listing{Page: 1, Size: 20, Unit: Unit}
-	c, err := d.storeOf(inv).List(ctx, "/", l)
+	c, err := d.storeOf(inv).List(ctx, files.Ref{Path: "/"}, l)
 	if err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func (d directories) mkdirChildren(ctx context.Context, inv *cli.Invocation, r *
 	s := d.storeOf(inv)
 	for _, name := range children {
 		path := DirectoriesArea + "/" + name
-		dir, err := s.Mkdir(ctx, path, "")
+		dir, err := s.Mkdir(ctx, files.Ref{Path: path}, "")
 		if err != nil {
 			return err
 		}
@@ -119,21 +119,14 @@ func (d directories) mkdirChildren(ctx context.Context, inv *cli.Invocation, r *
 
 // firstPage is the listing of the paging steps: two rows a page, by name
 // descending.
-func firstPage() (files.Listing, error) {
-	sort, err := files.ParseSort("name:desc")
-	if err != nil {
-		return files.Listing{}, err
-	}
-	return files.Listing{Page: 1, Size: 2, Sort: []files.Sort{sort}}, nil
+func firstPage() files.Listing {
+	return files.Listing{Page: 1, Size: 2, Sort: []files.Sort{{Field: "name", Descending: true}}}
 }
 
 func (d directories) listFirstPage(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	r.Note("A page by number counts the total; the next-dirs line is the cursor that continues the directory half.")
-	l, err := firstPage()
-	if err != nil {
-		return err
-	}
-	c, err := d.storeOf(inv).List(ctx, DirectoriesArea, l)
+	l := firstPage()
+	c, err := d.storeOf(inv).List(ctx, files.Ref{Path: DirectoriesArea}, l)
 	if err != nil {
 		return err
 	}
@@ -142,12 +135,9 @@ func (d directories) listFirstPage(ctx context.Context, inv *cli.Invocation, r *
 
 func (d directories) listNextPage(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	r.Note("The cursor continues after the last row the first page showed, under the same sort; a continued half counts nothing.")
-	l, err := firstPage()
-	if err != nil {
-		return err
-	}
+	l := firstPage()
 	s := d.storeOf(inv)
-	first, err := s.List(ctx, DirectoriesArea, l)
+	first, err := s.List(ctx, files.Ref{Path: DirectoriesArea}, l)
 	if err != nil {
 		return err
 	}
@@ -155,7 +145,7 @@ func (d directories) listNextPage(ctx context.Context, inv *cli.Invocation, r *s
 		return fmt.Errorf("the first page of %s has no cursor to continue after", DirectoriesArea)
 	}
 	l.After = files.After{Directories: first.Directories.Next}
-	c, err := s.List(ctx, DirectoriesArea, l)
+	c, err := s.List(ctx, files.Ref{Path: DirectoriesArea}, l)
 	if err != nil {
 		return err
 	}
@@ -163,12 +153,10 @@ func (d directories) listNextPage(ctx context.Context, inv *cli.Invocation, r *s
 }
 
 func (d directories) listFiltered(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
-	filter, err := files.ParseFilter("name:in:alpha,charlie,echo")
-	if err != nil {
-		return err
-	}
-	l := files.Listing{Page: 1, Size: 20, Filters: []files.Filter{filter}}
-	c, err := d.storeOf(inv).List(ctx, DirectoriesArea, l)
+	l := files.Listing{Page: 1, Size: 20, Filters: []files.Filter{
+		{Field: "name", Op: "in", Value: []any{"alpha", "charlie", "echo"}},
+	}}
+	c, err := d.storeOf(inv).List(ctx, files.Ref{Path: DirectoriesArea}, l)
 	if err != nil {
 		return err
 	}
@@ -177,7 +165,7 @@ func (d directories) listFiltered(ctx context.Context, inv *cli.Invocation, r *s
 
 func (d directories) stat(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	path := DirectoriesArea + "/alpha"
-	dir, err := d.storeOf(inv).Resolve(ctx, path)
+	dir, err := d.storeOf(inv).Resolve(ctx, files.Ref{Path: path})
 	if err != nil {
 		return err
 	}
@@ -191,7 +179,7 @@ func (d directories) move(ctx context.Context, inv *cli.Invocation, r *scenario.
 		{DirectoriesArea + "/echo", DirectoriesArea + "/alpha"},
 		{DirectoriesArea + "/bravo", DirectoriesArea + "/foxtrot"},
 	} {
-		res, err := s.Move(ctx, mv[0], mv[1])
+		res, err := s.Move(ctx, files.Ref{Path: mv[0]}, files.Ref{Path: mv[1]})
 		if err != nil {
 			return err
 		}
@@ -209,7 +197,7 @@ func (d directories) listMoved(ctx context.Context, inv *cli.Invocation, r *scen
 	s := d.storeOf(inv)
 	l := files.Listing{Page: 1, Size: 20}
 	for _, path := range []string{DirectoriesArea, DirectoriesArea + "/alpha"} {
-		c, err := s.List(ctx, path, l)
+		c, err := s.List(ctx, files.Ref{Path: path}, l)
 		if err != nil {
 			return err
 		}
@@ -230,10 +218,10 @@ func (d directories) removeArea(ctx context.Context, inv *cli.Invocation, r *sce
 // under it with rmdir, deepest first, showing each removal. A directory
 // that holds a file is refused by rmdir, and the refusal is returned: the
 // directories tour creates none.
-func removeDirectories(ctx context.Context, s *files.Store, r *scenario.Reporter, path string) error {
+func removeDirectories(ctx context.Context, s *files.Service, r *scenario.Reporter, path string) error {
 	l := files.Listing{Page: 1, Size: 100, Total: files.TotalNone}
 	for {
-		c, err := s.List(ctx, path, l)
+		c, err := s.List(ctx, files.Ref{Path: path}, l)
 		if err != nil {
 			return err
 		}

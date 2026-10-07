@@ -29,15 +29,23 @@ import (
 
 const earlierID = "00000000-0000-7000-8000-000000000004"
 
-// openObjects builds the Objects over a scripted pool that answers with
+// openStorage builds the Storage over a scripted pool that answers with
 // responses and a started Store over a fresh Fake.
-func openObjects(t *testing.T, responses ...sqltest.Response) (*files.Objects, *sqltest.Recorder, *storagetest.Fake) {
+func openStorage(t *testing.T, responses ...sqltest.Response) (*files.Storage, *sqltest.Recorder, *storagetest.Fake) {
 	t.Helper()
 	pool, rec := sqltest.Open(t, responses...)
 	s, err := files.New(sqlate.Wrap(pool, sqltest.ReturningDialect{}), bfdata.WithEngine(blobfspg.Engine))
 	if err != nil {
 		t.Fatal(err)
 	}
+	st, fake := startedStore(t)
+	return files.NewStorage(s, st), rec, fake
+}
+
+// startedStore returns a started go-storage Store over a fresh Fake, and
+// the Fake.
+func startedStore(t *testing.T) (*storage.Store, *storagetest.Fake) {
+	t.Helper()
 	fake := storagetest.NewFake()
 	cfg := storage.Config{Container: "objects"}
 	if err := cfg.Finalize("FILES_TEST"); err != nil {
@@ -47,7 +55,7 @@ func openObjects(t *testing.T, responses ...sqltest.Response) (*files.Objects, *
 	if err := st.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	return files.NewObjects(s, st), rec, fake
+	return st, fake
 }
 
 // pendingRow is one pending blobfs_file row at version 1, as a write's
@@ -117,14 +125,14 @@ func store(t *testing.T, fake *storagetest.Fake, key, content string) {
 }
 
 func TestPut_CommitsThePendingRowThenPutsThenCompletes(t *testing.T) {
-	o, rec, fake := openObjects(t,
+	o, rec, fake := openStorage(t,
 		resolvedRoot(),
 		fileRows(),
 		fileRows(pendingRow(fileID, blobfs.RootID, "a.txt")),
 		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
 	)
 
-	res, err := o.Put(context.Background(), "/a.txt", files.Content{Body: strings.NewReader("hello"), ContentType: "text/plain"})
+	res, err := o.Put(context.Background(), files.Ref{Path: "/a.txt"}, files.Content{Body: strings.NewReader("hello"), ContentType: "text/plain"})
 
 	if err != nil {
 		t.Fatalf("Put() = %v", err)
@@ -148,14 +156,14 @@ func TestPut_ResumesAPendingRowUnderItsOwnKey(t *testing.T) {
 	// The lookup finds a pending row a stopped put left; EnsureFile's
 	// Files.Ensure finds it again under its id and inserts nothing, and the
 	// object is put under the row's key and the row completed.
-	o, rec, fake := openObjects(t,
+	o, rec, fake := openStorage(t,
 		resolvedRoot(),
 		fileRows(pendingRow(fileID, blobfs.RootID, "a.txt")),
 		fileRows(pendingRow(fileID, blobfs.RootID, "a.txt")),
 		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
 	)
 
-	res, err := o.Put(context.Background(), "/a.txt", files.Content{Body: strings.NewReader("again"), ContentType: "text/plain"})
+	res, err := o.Put(context.Background(), files.Ref{Path: "/a.txt"}, files.Content{Body: strings.NewReader("again"), ContentType: "text/plain"})
 
 	if err != nil {
 		t.Fatalf("Put() = %v", err)
@@ -176,13 +184,13 @@ func TestPut_ResumesAPendingRowUnderItsOwnKey(t *testing.T) {
 }
 
 func TestPut_RefusesANameAnAvailableFileHolds(t *testing.T) {
-	o, rec, fake := openObjects(t,
+	o, rec, fake := openStorage(t,
 		resolvedRoot(),
 		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
 		nameTaken(),
 	)
 
-	_, err := o.Put(context.Background(), "/a.txt", files.Content{Body: strings.NewReader("hello"), ContentType: "text/plain"})
+	_, err := o.Put(context.Background(), files.Ref{Path: "/a.txt"}, files.Content{Body: strings.NewReader("hello"), ContentType: "text/plain"})
 
 	if !errors.Is(err, blobfs.ErrNameTaken) {
 		t.Fatalf("Put() = %v, want ErrNameTaken", err)
@@ -196,9 +204,9 @@ func TestPut_RefusesANameAnAvailableFileHolds(t *testing.T) {
 }
 
 func TestPut_TheRootIsRefusedBeforeAnyIO(t *testing.T) {
-	o, rec, fake := openObjects(t)
+	o, rec, fake := openStorage(t)
 
-	_, err := o.Put(context.Background(), "/", files.Content{Body: strings.NewReader("x")})
+	_, err := o.Put(context.Background(), files.Ref{Path: "/"}, files.Content{Body: strings.NewReader("x")})
 
 	if !errors.Is(err, blobfs.ErrRootDirectory) {
 		t.Errorf("Put(/) = %v, want ErrRootDirectory", err)
@@ -209,10 +217,10 @@ func TestPut_TheRootIsRefusedBeforeAnyIO(t *testing.T) {
 }
 
 func TestOpen_StreamsAnAvailableFilesObject(t *testing.T) {
-	o, _, fake := openObjects(t, resolvedRoot(), fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)))
+	o, _, fake := openStorage(t, resolvedRoot(), fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)))
 	store(t, fake, fileID+"/a.txt", "hello")
 
-	body, f, err := o.Open(context.Background(), "/a.txt")
+	body, f, err := o.Open(context.Background(), files.Ref{Path: "/a.txt"})
 
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
@@ -225,9 +233,9 @@ func TestOpen_StreamsAnAvailableFilesObject(t *testing.T) {
 }
 
 func TestOpen_APendingFileIsNotAvailable(t *testing.T) {
-	o, _, _ := openObjects(t, resolvedRoot(), fileRows(pendingRow(fileID, blobfs.RootID, "a.txt")))
+	o, _, _ := openStorage(t, resolvedRoot(), fileRows(pendingRow(fileID, blobfs.RootID, "a.txt")))
 
-	_, _, err := o.Open(context.Background(), "/a.txt")
+	_, _, err := o.Open(context.Background(), files.Ref{Path: "/a.txt"})
 
 	if !errors.Is(err, files.ErrNotAvailable) || !strings.Contains(err.Error(), "it is pending") {
 		t.Errorf("Open() = %v, want ErrNotAvailable naming the status", err)
@@ -241,25 +249,25 @@ func TestMissingSources_AreLabelledOnceByTheOperation(t *testing.T) {
 	tests := []struct {
 		name      string
 		responses []sqltest.Response
-		call      func(*files.Objects) error
+		call      func(*files.Storage) error
 		want      string
 	}{
-		{"cat by path", []sqltest.Response{resolvedRoot(), fileRows()}, func(o *files.Objects) error {
-			_, _, err := o.Open(context.Background(), "/a.txt")
+		{"cat by path", []sqltest.Response{resolvedRoot(), fileRows()}, func(o *files.Storage) error {
+			_, _, err := o.Open(context.Background(), files.Ref{Path: "/a.txt"})
 			return err
 		}, "files: cat /a.txt: "},
-		{"cat by id", []sqltest.Response{fileRows()}, func(o *files.Objects) error {
-			_, _, err := o.OpenFile(context.Background(), fileID)
+		{"cat by id", []sqltest.Response{fileRows()}, func(o *files.Storage) error {
+			_, _, err := o.Open(context.Background(), files.Ref{ID: fileID})
 			return err
 		}, "files: cat file " + fileID + ": "},
-		{"cp by path", []sqltest.Response{resolvedRoot(), fileRows()}, func(o *files.Objects) error {
-			_, err := o.Copy(context.Background(), "/a.txt", "/b.txt")
+		{"cp by path", []sqltest.Response{resolvedRoot(), fileRows()}, func(o *files.Storage) error {
+			_, err := o.Copy(context.Background(), files.Ref{Path: "/a.txt"}, files.Ref{Path: "/b.txt"})
 			return err
 		}, "files: cp /a.txt /b.txt: "},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			o, _, _ := openObjects(t, tt.responses...)
+			o, _, _ := openStorage(t, tt.responses...)
 
 			err := tt.call(o)
 
@@ -277,7 +285,7 @@ func TestCopy_RefusesANameAlreadyTakenBeforeTheStore(t *testing.T) {
 	// The source is read, the destination /b.txt names no directory, so
 	// its parent is resolved, and the copy's create meets the name taken:
 	// the source's object is never opened and nothing is put.
-	o, rec, fake := openObjects(t,
+	o, rec, fake := openStorage(t,
 		resolvedRoot(),
 		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
 		resolvedRoot(),
@@ -285,7 +293,7 @@ func TestCopy_RefusesANameAlreadyTakenBeforeTheStore(t *testing.T) {
 		nameTaken(),
 	)
 
-	_, err := o.Copy(context.Background(), "/a.txt", "/b.txt")
+	_, err := o.Copy(context.Background(), files.Ref{Path: "/a.txt"}, files.Ref{Path: "/b.txt"})
 
 	if !errors.Is(err, blobfs.ErrNameTaken) {
 		t.Fatalf("Copy() = %v, want ErrNameTaken", err)
@@ -299,9 +307,9 @@ func TestCopy_RefusesANameAlreadyTakenBeforeTheStore(t *testing.T) {
 }
 
 func TestCopy_RefusesASourceThatIsNotAvailable(t *testing.T) {
-	o, rec, _ := openObjects(t, resolvedRoot(), fileRows(pendingRow(fileID, blobfs.RootID, "a.txt")))
+	o, rec, _ := openStorage(t, resolvedRoot(), fileRows(pendingRow(fileID, blobfs.RootID, "a.txt")))
 
-	_, err := o.Copy(context.Background(), "/a.txt", "/b.txt")
+	_, err := o.Copy(context.Background(), files.Ref{Path: "/a.txt"}, files.Ref{Path: "/b.txt"})
 
 	if !errors.Is(err, files.ErrNotAvailable) {
 		t.Fatalf("Copy() = %v, want ErrNotAvailable", err)
@@ -312,7 +320,7 @@ func TestCopy_RefusesASourceThatIsNotAvailable(t *testing.T) {
 }
 
 func TestCopy_StreamsTheSourceUnderTheCopysKey(t *testing.T) {
-	o, _, fake := openObjects(t,
+	o, _, fake := openStorage(t,
 		resolvedRoot(),
 		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
 		resolved(dirID, blobfs.RootID, "reports", 1),
@@ -321,7 +329,7 @@ func TestCopy_StreamsTheSourceUnderTheCopysKey(t *testing.T) {
 	)
 	store(t, fake, fileID+"/a.txt", "hello")
 
-	res, err := o.Copy(context.Background(), "/a.txt", "/reports")
+	res, err := o.Copy(context.Background(), files.Ref{Path: "/a.txt"}, files.Ref{Path: "/reports"})
 
 	if err != nil {
 		t.Fatalf("Copy() = %v", err)
@@ -340,7 +348,7 @@ func TestCopy_StreamsTheSourceUnderTheCopysKey(t *testing.T) {
 func TestRemove_AMissingObjectIsNoRefusal(t *testing.T) {
 	// The store holds no object under the file's key; its delete is
 	// success, so the row is purged.
-	o, rec, _ := openObjects(t,
+	o, rec, _ := openStorage(t,
 		resolvedRoot(),
 		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
 		held(fileID),
@@ -349,7 +357,7 @@ func TestRemove_AMissingObjectIsNoRefusal(t *testing.T) {
 		purged(),
 	)
 
-	f, err := o.Remove(context.Background(), "/a.txt")
+	f, err := o.Remove(context.Background(), files.Ref{Path: "/a.txt"})
 
 	if err != nil || f.ID != fileID {
 		t.Fatalf("Remove() = %+v, %v", f, err)
@@ -364,7 +372,7 @@ func TestRemove_RefusesABookmarkedFileBeforeTouchingAnything(t *testing.T) {
 	// The file is held, its bookmarks counted, and the count refuses the
 	// delete before Files.Delete runs: the transaction rolls back with the
 	// row available, and the store is never reached.
-	o, rec, fake := openObjects(t,
+	o, rec, fake := openStorage(t,
 		resolvedRoot(),
 		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
 		held(fileID),
@@ -373,7 +381,7 @@ func TestRemove_RefusesABookmarkedFileBeforeTouchingAnything(t *testing.T) {
 	store(t, fake, fileID+"/a.txt", "hello")
 	puts := fake.Puts()
 
-	_, err := o.Remove(context.Background(), "/a.txt")
+	_, err := o.Remove(context.Background(), files.Ref{Path: "/a.txt"})
 
 	if !errors.Is(err, files.ErrBookmarked) || !strings.Contains(err.Error(), "2 unit(s) bookmark the file") {
 		t.Fatalf("Remove() = %v, want ErrBookmarked naming the count", err)
@@ -394,7 +402,7 @@ func TestRemove_RefusesABookmarkedFileBeforeTouchingAnything(t *testing.T) {
 }
 
 func TestRemove_DeletesTheObject(t *testing.T) {
-	o, _, fake := openObjects(t,
+	o, _, fake := openStorage(t,
 		resolvedRoot(),
 		fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 5)),
 		held(fileID),
@@ -404,7 +412,7 @@ func TestRemove_DeletesTheObject(t *testing.T) {
 	)
 	store(t, fake, fileID+"/a.txt", "hello")
 
-	if _, err := o.Remove(context.Background(), "/a.txt"); err != nil {
+	if _, err := o.Remove(context.Background(), files.Ref{Path: "/a.txt"}); err != nil {
 		t.Fatalf("Remove() = %v", err)
 	}
 	if _, err := fake.Stat(context.Background(), fileID+"/a.txt"); !errors.Is(err, storage.ErrNotFound) {
@@ -418,7 +426,7 @@ func TestRemoveTree_MarksTheBranchAndSweepsEveryMarkedBranch(t *testing.T) {
 	// tree lock and is followed by the branch's bookmark count, and the
 	// sweep's one pass finishes both branches: d's file, then s, then d,
 	// then e, each directory's owner row removed before the directory.
-	o, rec, fake := openObjects(t,
+	o, rec, fake := openStorage(t,
 		resolved(dirID, blobfs.RootID, "d", 1),
 		sqltest.Response{}, // the tree lock
 		sqltest.Response{Affected: 2},
@@ -441,7 +449,7 @@ func TestRemoveTree_MarksTheBranchAndSweepsEveryMarkedBranch(t *testing.T) {
 	)
 	store(t, fake, fileID+"/f.txt", "hello")
 
-	res, err := o.RemoveTree(context.Background(), "/d")
+	res, err := o.RemoveTree(context.Background(), files.Ref{Path: "/d"})
 
 	if err != nil {
 		t.Fatalf("RemoveTree() = %v", err)
@@ -479,7 +487,7 @@ func TestRemoveTree_RefusesABranchWithABookmarkedFileBeforeTouchingAnything(t *t
 	// The mark runs, the count finds two bookmarks in the branch, and the
 	// refusal rolls the mark back: no sweep runs and the store is never
 	// reached.
-	o, rec, fake := openObjects(t,
+	o, rec, fake := openStorage(t,
 		resolved(dirID, blobfs.RootID, "d", 1),
 		sqltest.Response{},
 		sqltest.Response{Affected: 1},
@@ -489,7 +497,7 @@ func TestRemoveTree_RefusesABranchWithABookmarkedFileBeforeTouchingAnything(t *t
 	store(t, fake, fileID+"/f.txt", "hello")
 	puts := fake.Puts()
 
-	_, err := o.RemoveTree(context.Background(), "/d")
+	_, err := o.RemoveTree(context.Background(), files.Ref{Path: "/d"})
 
 	if !errors.Is(err, files.ErrBookmarked) || !strings.Contains(err.Error(), "2 bookmark(s) hold files in the branch") {
 		t.Fatalf("RemoveTree() = %v, want ErrBookmarked naming the count", err)
@@ -513,7 +521,7 @@ func TestRemoveTree_ReportsWhatItRemovedBeforeARefusal(t *testing.T) {
 	// The store is down once the branch is marked: the file's object
 	// delete is refused, so its row and the directory stay for a rerun,
 	// and the error carries the counts.
-	o, _, fake := openObjects(t,
+	o, _, fake := openStorage(t,
 		resolved(dirID, blobfs.RootID, "d", 1),
 		sqltest.Response{},
 		sqltest.Response{Affected: 1},
@@ -525,7 +533,7 @@ func TestRemoveTree_ReportsWhatItRemovedBeforeARefusal(t *testing.T) {
 	)
 	fake.SetDown(true)
 
-	_, err := o.RemoveTree(context.Background(), "/d")
+	_, err := o.RemoveTree(context.Background(), files.Ref{Path: "/d"})
 
 	if !errors.Is(err, storage.ErrUnavailable) || !strings.Contains(err.Error(), "removed 0 files and 0 directories, then") {
 		t.Errorf("RemoveTree() = %v, want the store's refusal after the counts", err)
@@ -533,9 +541,9 @@ func TestRemoveTree_ReportsWhatItRemovedBeforeARefusal(t *testing.T) {
 }
 
 func TestRemoveTree_TheRootIsRefusedBeforeAnyIO(t *testing.T) {
-	o, rec, _ := openObjects(t)
+	o, rec, _ := openStorage(t)
 
-	_, err := o.RemoveTree(context.Background(), "/")
+	_, err := o.RemoveTree(context.Background(), files.Ref{Path: "/"})
 
 	if !errors.Is(err, blobfs.ErrRootDirectory) {
 		t.Errorf("RemoveTree(/) = %v, want ErrRootDirectory", err)

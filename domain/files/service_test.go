@@ -19,7 +19,7 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/domain/files"
 )
 
-// The Store's directory operations over the scripted driver, built as the
+// The Service's directory operations over the scripted driver, built as the
 // composition root builds it: blobfs's Postgres engine, and a dialect that
 // renders the returning commands as single statements, as Postgres's does.
 // No test here reaches a network.
@@ -30,8 +30,8 @@ const (
 	fileID  = "00000000-0000-7000-8000-000000000003"
 )
 
-// open builds the Store over a scripted pool that answers with responses.
-func open(t *testing.T, responses ...sqltest.Response) (*files.Store, *sqltest.Recorder) {
+// open builds the Service over a scripted pool that answers with responses.
+func open(t *testing.T, responses ...sqltest.Response) (*files.Service, *sqltest.Recorder) {
 	t.Helper()
 	pool, rec := sqltest.Open(t, responses...)
 	s, err := files.New(sqlate.Wrap(pool, sqltest.ReturningDialect{}), bfdata.WithEngine(blobfspg.Engine))
@@ -134,7 +134,7 @@ func TestList_ResolvesAndReadsBothHalvesInOneReadOnlySnapshot(t *testing.T) {
 		listed(dirID),
 	)
 
-	c, err := s.List(context.Background(), "/reports", files.Listing{Page: 1, Size: 20})
+	c, err := s.List(context.Background(), files.Ref{Path: "/reports"}, files.Listing{Page: 1, Size: 20})
 
 	if err != nil {
 		t.Fatalf("List() = %v", err)
@@ -173,7 +173,7 @@ func TestList_FileTermsLeaveTheDirectoryHalf(t *testing.T) {
 		Filters: []files.Filter{{Field: "status", Op: "in", Value: []any{"available"}}, {Field: "name", Op: "like", Value: "a%"}},
 	}
 
-	if _, err := s.List(context.Background(), "/", l); err != nil {
+	if _, err := s.List(context.Background(), files.Ref{Path: "/"}, l); err != nil {
 		t.Fatalf("List() = %v", err)
 	}
 
@@ -192,7 +192,7 @@ func TestList_FileTermsLeaveTheDirectoryHalf(t *testing.T) {
 func TestList_TotalNoneCountsNothing(t *testing.T) {
 	s, _ := open(t, resolvedRoot(), directories(), listed(blobfs.RootID), fileRows(), listed(blobfs.RootID))
 
-	c, err := s.List(context.Background(), "/", files.Listing{Page: 1, Size: 20, Total: files.TotalNone})
+	c, err := s.List(context.Background(), files.Ref{Path: "/"}, files.Listing{Page: 1, Size: 20, Total: files.TotalNone})
 
 	if err != nil {
 		t.Fatalf("List() = %v", err)
@@ -213,7 +213,7 @@ func TestList_ContinuesAHalfFromItsCursorWithoutACount(t *testing.T) {
 		sqltest.WithTotal(fileRows(fileRow(fileID, blobfs.RootID, "a.txt", 1), fileRow(otherID, blobfs.RootID, "b.txt", 2)), 2),
 		listed(blobfs.RootID),
 	)
-	first, err := s.List(context.Background(), "/", files.Listing{Page: 1, Size: 1})
+	first, err := s.List(context.Background(), files.Ref{Path: "/"}, files.Listing{Page: 1, Size: 1})
 	if err != nil {
 		t.Fatalf("List() = %v", err)
 	}
@@ -228,7 +228,7 @@ func TestList_ContinuesAHalfFromItsCursorWithoutACount(t *testing.T) {
 		fileRows(fileRow(otherID, blobfs.RootID, "b.txt", 2)),
 		listed(blobfs.RootID),
 	)
-	next, err := s.List(context.Background(), "/", files.Listing{Page: 1, Size: 1, After: files.After{Files: first.Files.Next}})
+	next, err := s.List(context.Background(), files.Ref{Path: "/"}, files.Listing{Page: 1, Size: 1, After: files.After{Files: first.Files.Next}})
 
 	if err != nil {
 		t.Fatalf("List() after the cursor = %v", err)
@@ -256,7 +256,7 @@ func TestList_RefusesAPathBeforeAnyIO(t *testing.T) {
 		t.Run(tt.path, func(t *testing.T) {
 			s, rec := open(t)
 
-			_, err := s.List(context.Background(), tt.path, files.Listing{Page: 1, Size: 20})
+			_, err := s.List(context.Background(), files.Ref{Path: tt.path}, files.Listing{Page: 1, Size: 20})
 
 			if !errors.Is(err, tt.want) {
 				t.Errorf("List(%q) = %v, want %v", tt.path, err, tt.want)
@@ -268,13 +268,13 @@ func TestList_RefusesAPathBeforeAnyIO(t *testing.T) {
 	}
 }
 
-func TestListDirectory_ReadsTheDirectoryFirst(t *testing.T) {
+func TestList_ByIDReadsTheDirectoryFirst(t *testing.T) {
 	s, rec := open(t, directories())
 
-	_, err := s.ListDirectory(context.Background(), dirID, files.Listing{Page: 1, Size: 20})
+	_, err := s.List(context.Background(), files.Ref{ID: dirID}, files.Listing{Page: 1, Size: 20})
 
 	if !errors.Is(err, blobfs.ErrNotFound) {
-		t.Fatalf("ListDirectory() = %v, want ErrNotFound", err)
+		t.Fatalf("List(id) = %v, want ErrNotFound", err)
 	}
 	if want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpRollback}; !slices.Equal(rec.Ops(), want) {
 		t.Errorf("ops = %v, want %v: no listing after the missing directory", rec.Ops(), want)
@@ -287,65 +287,79 @@ func TestListDirectory_ReadsTheDirectoryFirst(t *testing.T) {
 		sqltest.WithTotal(fileRows(fileRow(fileID, dirID, "a.txt", 3)), 1),
 		listed(dirID),
 	)
-	c, err := s.ListDirectory(context.Background(), dirID, files.Listing{Page: 1, Size: 20})
+	c, err := s.List(context.Background(), files.Ref{ID: dirID}, files.Listing{Page: 1, Size: 20})
 	if err != nil {
-		t.Fatalf("ListDirectory() = %v", err)
+		t.Fatalf("List(id) = %v", err)
 	}
 	if c.Path != "" || len(c.Files.Rows) != 1 {
-		t.Errorf("ListDirectory() = %+v, want no path and the file", c)
+		t.Errorf("List(id) = %+v, want no path and the file", c)
 	}
 }
 
 func TestStat_ResolvesTheParentAndFindsTheFileByName(t *testing.T) {
 	s, rec := open(t, resolved(dirID, blobfs.RootID, "reports", 1), fileRows(fileRow(fileID, dirID, "a.txt", 3)))
 
-	f, err := s.Stat(context.Background(), "/reports/a.txt")
+	e, err := s.Stat(context.Background(), files.Ref{Path: "/reports/a.txt"})
 
-	if err != nil || f.ID != fileID {
-		t.Fatalf("Stat() = %+v, %v", f, err)
+	if err != nil || e.Kind != files.EntryFile || e.File.ID != fileID {
+		t.Fatalf("Stat() = %+v, %v", e, err)
 	}
 	if args := rec.Calls()[1].Args; len(args) != 2 || args[0] != dirID || args[1] != "a.txt" {
 		t.Errorf("the lookup bound %v, want the parent's id and the name", args)
 	}
 }
 
-func TestStat_TheRootIsNoFile(t *testing.T) {
-	s, rec := open(t)
+func TestStat_TheRootIsItsDirectorysRow(t *testing.T) {
+	// The root is no file, which is known before any I/O, so the one
+	// query is the directory's resolution.
+	s, rec := open(t, resolvedRoot())
 
-	_, err := s.Stat(context.Background(), "/")
+	e, err := s.Stat(context.Background(), files.Ref{Path: "/"})
 
-	if !errors.Is(err, blobfs.ErrRootDirectory) {
-		t.Errorf("Stat(/) = %v, want ErrRootDirectory", err)
+	if err != nil || e.Kind != files.EntryDirectory || e.Directory.ID != blobfs.RootID {
+		t.Errorf("Stat(/) = %+v, %v, want the root's row", e, err)
 	}
-	if len(rec.Calls()) != 0 {
-		t.Errorf("calls = %v, want none", rec.Ops())
+	if n := len(rec.SQL(sqltest.OpQuery)); n != 1 {
+		t.Errorf("queries = %d, want the root's resolution alone", n)
 	}
 }
 
-func TestFind_FileFirstThenDirectory(t *testing.T) {
-	s, _ := open(t, fileRows(fileRow(fileID, dirID, "a.txt", 3)))
-	e, err := s.Find(context.Background(), fileID)
-	if err != nil || e.Kind != files.EntryFile || e.File.ID != fileID {
-		t.Errorf("Find(file) = %+v, %v", e, err)
+func TestStat_FileFirstThenDirectory(t *testing.T) {
+	tests := []struct {
+		name string
+		ref  files.Ref
+		// responses answer the file's lookup, then the directory's.
+		responses []sqltest.Response
+	}{
+		{"by id", files.Ref{ID: dirID}, []sqltest.Response{fileRows(), directories(directoryRow(dirID, blobfs.RootID, "reports"))}},
+		{"by path", files.Ref{Path: "/reports"}, []sqltest.Response{resolvedRoot(), fileRows(), resolved(dirID, blobfs.RootID, "reports", 1)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, _ := open(t, fileRows(fileRow(fileID, dirID, "a.txt", 3)))
+			if e, err := s.Stat(context.Background(), files.Ref{ID: fileID}); err != nil || e.Kind != files.EntryFile || e.File.ID != fileID {
+				t.Errorf("Stat(file) = %+v, %v", e, err)
+			}
+
+			s, _ = open(t, tt.responses...)
+			e, err := s.Stat(context.Background(), tt.ref)
+			if err != nil || e.Kind != files.EntryDirectory || e.Directory.Name != "reports" {
+				t.Errorf("Stat(directory) = %+v, %v", e, err)
+			}
+		})
 	}
 
-	s, _ = open(t, fileRows(), directories(directoryRow(dirID, blobfs.RootID, "reports")))
-	e, err = s.Find(context.Background(), dirID)
-	if err != nil || e.Kind != files.EntryDirectory || e.Directory.Name != "reports" {
-		t.Errorf("Find(directory) = %+v, %v", e, err)
-	}
-
-	s, _ = open(t, fileRows(), directories())
-	_, err = s.Find(context.Background(), otherID)
+	s, _ := open(t, fileRows(), directories())
+	_, err := s.Stat(context.Background(), files.Ref{ID: otherID})
 	if !errors.Is(err, blobfs.ErrNotFound) || !strings.Contains(err.Error(), "no file or directory has it") {
-		t.Errorf("Find(missing) = %v, want ErrNotFound saying neither has it", err)
+		t.Errorf("Stat(missing) = %v, want ErrNotFound saying neither has it", err)
 	}
 }
 
 func TestMkdir_CreatesUnderTheResolvedParent(t *testing.T) {
 	s, rec := open(t, resolved(dirID, blobfs.RootID, "reports", 1), directories(directoryRow(otherID, dirID, "2026")))
 
-	d, err := s.Mkdir(context.Background(), "/reports/2026", "")
+	d, err := s.Mkdir(context.Background(), files.Ref{Path: "/reports/2026"}, "")
 
 	if err != nil || d.ID != otherID {
 		t.Fatalf("Mkdir() = %+v, %v", d, err)
@@ -369,7 +383,7 @@ func TestMkdir_RefusesBeforeAnyIO(t *testing.T) {
 		t.Run(tt.path, func(t *testing.T) {
 			s, rec := open(t)
 
-			_, err := s.Mkdir(context.Background(), tt.path, "")
+			_, err := s.Mkdir(context.Background(), files.Ref{Path: tt.path}, "")
 
 			if !errors.Is(err, tt.want) {
 				t.Errorf("Mkdir(%q) = %v, want %v", tt.path, err, tt.want)
@@ -384,7 +398,7 @@ func TestMkdir_RefusesBeforeAnyIO(t *testing.T) {
 func TestMkdir_AMissingParentIsNotFound(t *testing.T) {
 	s, rec := open(t, resolvedRoot())
 
-	_, err := s.Mkdir(context.Background(), "/missing/child", "")
+	_, err := s.Mkdir(context.Background(), files.Ref{Path: "/missing/child"}, "")
 
 	if !errors.Is(err, blobfs.ErrNotFound) {
 		t.Errorf("Mkdir() = %v, want ErrNotFound", err)
@@ -423,7 +437,7 @@ func TestMove_StaysUnderOneTopLevelDirectory(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s, rec := open(t, resolved(tt.dstID, nil, "b", tt.dstDepth))
 
-			_, err := s.Move(context.Background(), tt.src, tt.dst)
+			_, err := s.Move(context.Background(), files.Ref{Path: tt.src}, files.Ref{Path: tt.dst})
 
 			if !errors.Is(err, files.ErrMoveAcrossScopes) {
 				t.Fatalf("Move(%s, %s) = %v, want ErrMoveAcrossScopes", tt.src, tt.dst, err)
@@ -442,7 +456,7 @@ func TestMove_StaysUnderOneTopLevelDirectory(t *testing.T) {
 func TestMove_TheRootIsRefusedBeforeAnyIO(t *testing.T) {
 	s, rec := open(t)
 
-	_, err := s.Move(context.Background(), "/", "/elsewhere")
+	_, err := s.Move(context.Background(), files.Ref{Path: "/"}, files.Ref{Path: "/elsewhere"})
 
 	if !errors.Is(err, blobfs.ErrRootDirectory) {
 		t.Errorf("Move(/) = %v, want ErrRootDirectory", err)
@@ -452,26 +466,106 @@ func TestMove_TheRootIsRefusedBeforeAnyIO(t *testing.T) {
 	}
 }
 
-func TestMoveEntry_RefusesBeforeAnyIO(t *testing.T) {
+func TestMove_ByIDTheRootIsRefusedBeforeAnyIO(t *testing.T) {
+	s, rec := open(t)
+
+	_, err := s.Move(context.Background(), files.Ref{ID: blobfs.RootID}, files.Ref{ID: dirID})
+
+	if !errors.Is(err, blobfs.ErrRootDirectory) {
+		t.Errorf("Move(root) = %v, want ErrRootDirectory", err)
+	}
+	if len(rec.Calls()) != 0 {
+		t.Errorf("calls = %v, want none", rec.Ops())
+	}
+}
+
+func TestMove_ByIDMovesTheFileWithTheIDIntoTheDirectory(t *testing.T) {
+	// The file is found first, then both directories' paths, so the
+	// one-top-level-directory rule reads paths, and the file moves under
+	// its own name, guarded by the version read.
+	s, rec := open(t,
+		fileRows(fileRow(fileID, dirID, "a.txt", 3)),
+		ancestors([]driver.Value{dirID, blobfs.RootID, "reports"}),
+		ancestors([]driver.Value{otherID, dirID, "2026"}, []driver.Value{dirID, blobfs.RootID, "reports"}),
+		fileRows(fileRow(fileID, otherID, "a.txt", 3)),
+	)
+
+	res, err := s.Move(context.Background(), files.Ref{ID: fileID}, files.Ref{ID: otherID})
+
+	if err != nil {
+		t.Fatalf("Move() = %v", err)
+	}
+	want := files.MoveResult{Kind: files.EntryFile, ID: fileID, From: "/reports/a.txt", To: "/reports/2026/a.txt"}
+	if res != want {
+		t.Errorf("Move() = %+v, want %+v", res, want)
+	}
+	if n := rec.Pending(); n != 0 {
+		t.Errorf("%d scripted responses unconsumed", n)
+	}
+}
+
+// ancestors is the engine's read of a directory's chain of parents, as
+// Directories.Path reads it: rows, from the directory up, ending below the
+// root, which the read appends.
+func ancestors(rows ...[]driver.Value) sqltest.Response {
+	return sqltest.Response{
+		Columns: []string{"id", "parent_id", "name"},
+		Rows:    append(rows, []driver.Value{blobfs.RootID, nil, "/"}),
+	}
+}
+
+func TestFormRules_RefuseBeforeAnyIO(t *testing.T) {
+	// Each operation that takes one form alone, or two Refs of one form,
+	// refuses any other with a FormError before it reaches the database
+	// or the object store.
+	byID, byPath := files.Ref{ID: dirID}, files.Ref{Path: "/reports"}
 	tests := []struct {
 		name string
-		req  files.MoveRequest
-		want error
+		call func(*files.Service, *files.Storage) error
+		want string
 	}{
-		{"the root", files.MoveRequest{Kind: files.EntryDirectory, ID: blobfs.RootID, DirectoryID: dirID}, blobfs.ErrRootDirectory},
-		{"an unknown kind", files.MoveRequest{Kind: "link", ID: dirID, DirectoryID: otherID}, nil},
+		{"mkdir by id", func(s *files.Service, _ *files.Storage) error {
+			_, err := s.Mkdir(context.Background(), byID, "")
+			return err
+		}, "a directory is created by path, not by id"},
+		{"a unit's listing by id", func(s *files.Service, _ *files.Storage) error {
+			_, err := s.List(context.Background(), byID, files.Listing{Page: 1, Size: 20, Unit: unitID})
+			return err
+		}, "a listing by id has no path to derive the unit's scope from"},
+		{"a move from a path to an id", func(s *files.Service, _ *files.Storage) error {
+			_, err := s.Move(context.Background(), byPath, byID)
+			return err
+		}, "two paths, or two ids"},
+		{"a move from an id to a path", func(s *files.Service, _ *files.Storage) error {
+			_, err := s.Move(context.Background(), byID, byPath)
+			return err
+		}, "two paths, or two ids"},
+		{"a copy from an id to a path", func(_ *files.Service, o *files.Storage) error {
+			_, err := o.Copy(context.Background(), byID, byPath)
+			return err
+		}, "two paths, or two ids"},
+		{"a branch's delete by id", func(_ *files.Service, o *files.Storage) error {
+			_, err := o.RemoveTree(context.Background(), byID)
+			return err
+		}, "a branch is removed by path, not by id"},
+		{"a put into a directory by id with no name", func(_ *files.Service, o *files.Storage) error {
+			_, err := o.Put(context.Background(), byID, files.Content{Body: strings.NewReader("x")})
+			return err
+		}, "a file put into a directory by id takes a name"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s, rec := open(t)
+			o, objRec, fake := openStorage(t)
 
-			_, err := s.MoveEntry(context.Background(), tt.req)
+			err := tt.call(s, o)
 
-			if err == nil || (tt.want != nil && !errors.Is(err, tt.want)) {
-				t.Errorf("MoveEntry() = %v, want %v", err, tt.want)
+			var form *files.FormError
+			if !errors.As(err, &form) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want a FormError saying %q", err, tt.want)
 			}
-			if len(rec.Calls()) != 0 {
-				t.Errorf("calls = %v, want none", rec.Ops())
+			if len(rec.Calls()) != 0 || len(nonPrepares(objRec)) != 0 || fake.Puts() != 0 {
+				t.Errorf("calls = %v, %v, puts %d, want none", rec.Ops(), nonPrepares(objRec), fake.Puts())
 			}
 		})
 	}

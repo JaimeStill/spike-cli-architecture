@@ -505,7 +505,7 @@ func interrupt(t *testing.T, tg target, r *faultRelay, path string) {
 	if code != 1 || out != "" {
 		t.Fatalf("rm --recursive %s with the store refusing deletes exited %d with stdout %q; want a refusal", path, code, out)
 	}
-	if want := fmt.Sprintf("rm --recursive %s: removed %d files and 1 directories, then: ", path, branchDeletes); !strings.Contains(errOut, want) {
+	if want := fmt.Sprintf("rm branch %s: removed %d files and 1 directories, then: ", path, branchDeletes); !strings.Contains(errOut, want) {
 		t.Errorf("rm --recursive %s stderr = %q, want %q", path, errOut, want)
 	}
 	if got := strings.Count(errOut, "delete the object of file "); got != branchFiles-branchDeletes {
@@ -1058,7 +1058,7 @@ func (s *script) units(t *testing.T) {
 	ok(t, s.tg, "mkdir", "/owned/sub")
 	ok(t, s.tg, "mkdir", "/theirs", "--unit", strings.ToUpper(other))
 	put(t, s.tg, "/owned/sub/f.txt", "f")
-	refused(t, s.tg, "--unit applies to a top-level directory only", "mkdir", "/owned/deeper", "--unit", unit)
+	refused(t, s.tg, "ownership applies to a top-level directory only; give --unit with a top-level path only", "mkdir", "/owned/deeper", "--unit", unit)
 	misused(t, s.tg, `--unit "nope" is not a UUID`, "mkdir", "/x", "--unit", "nope")
 
 	// ls --unit at the unit's top-level directory and below it.
@@ -1089,7 +1089,7 @@ func (s *script) units(t *testing.T) {
 	if got := names(ok(t, s.tg, "ls", "/", "--unit", unit, "--filter", "name:like:zzz%")); got != "" {
 		t.Errorf("ls / as the unit with a filter nothing matches names = %s", got)
 	}
-	refused(t, s.tg, "owner read model takes no cursor", "ls", "/", "--unit", unit, "--after-dirs", "x")
+	refused(t, s.tg, "the owner listing pages by number only; ls / --unit takes no --after-dirs or --after-files", "ls", "/", "--unit", unit, "--after-dirs", "x")
 	misused(t, s.tg, "a listing by id has no path to derive the unit's scope from", "ls", "id:"+ids(ok(t, s.tg, "ls", "/"))["owned"], "--unit", unit)
 	if got := names(ok(t, s.tg, "ls", "/")); got != "a c ids objects owned reports theirs" {
 		t.Errorf("ls / names = %s", got)
@@ -1179,7 +1179,7 @@ func (s *script) bookmarks(t *testing.T) {
 
 	// rm of a bookmarked file is refused before anything is touched, and
 	// so is rm --recursive of a branch holding one.
-	refused(t, s.tg, "2 unit(s) bookmark the file; remove the bookmarks and rerun rm", "rm", "/library/x.txt")
+	refused(t, s.tg, "2 unit(s) bookmark the file: the file is bookmarked; remove the bookmarks and rerun rm", "rm", "/library/x.txt")
 	refused(t, s.tg, "the file is bookmarked", "rm", "id:"+x)
 	if out := ok(t, s.tg, "stat", "/library/x.txt"); field(out, "status") != "available" || field(out, "version") != "2" {
 		t.Errorf("stat after the refused rm:\n%s\nwant the row untouched", out)
@@ -1187,7 +1187,7 @@ func (s *script) bookmarks(t *testing.T) {
 	if got := ok(t, s.tg, "cat", "/library/x.txt"); got != "x" {
 		t.Errorf("cat after the refused rm = %q", got)
 	}
-	refused(t, s.tg, "3 bookmark(s) hold files in the branch; remove the bookmarks and rerun rm --recursive", "rm", "--recursive", "/library")
+	refused(t, s.tg, "3 bookmark(s) hold files in the branch: the file is bookmarked; remove the bookmarks and rerun rm --recursive", "rm", "--recursive", "/library")
 	if got := names(ok(t, s.tg, "ls", "/library")); got != "deep x.txt y.txt" {
 		t.Errorf("ls /library after the refused rm --recursive = %s", got)
 	}

@@ -10,11 +10,11 @@ import (
 )
 
 // mountDemo builds the scenarios' commands at the root over the domain's
-// files and objects nodes: list, and the demo parent, in which each
+// files and storage nodes: list, and the demo parent, in which each
 // scenario's leaf declares the nodes its tour reads, so the dispatcher
 // builds only those when it runs.
 func mountDemo(d *domain) []*cli.Command {
-	return []*cli.Command{listCommand(d), demo.Commands(d.files, d.objects)}
+	return []*cli.Command{listCommand(d), demo.Commands(d.files, d.storage)}
 }
 
 // listCommand builds list, which prints each scenario, its summary, and the
@@ -43,7 +43,7 @@ func scenariosFooter(d *domain) func(w io.Writer) {
 }
 
 // writeScenarios writes the scenario listing over the domain's files and
-// objects nodes to w.
+// storage nodes to w.
 func writeScenarios(w io.Writer, d *domain) {
-	scenario.WriteListing(w, demo.Scenarios(d.files, d.objects))
+	scenario.WriteListing(w, demo.Scenarios(d.files, d.storage))
 }

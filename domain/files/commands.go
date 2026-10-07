@@ -17,52 +17,67 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
-// Commands builds the directory commands, mkdir, ls, stat, mv, and rmdir,
-// and the bookmark command with its add, ls, and rm subcommands, over
-// store, the composition root's node for the [Store]. Each declares store
-// with Use, the bookmark subcommands through their parent, so the
-// dispatcher builds and starts the database and the store's statement
-// check before the body runs, and shuts them down after; the body reads the
-// Store with the Invocation's Get. None declares the object store. Each
-// counts its arguments in Args and checks them and its flags in Validate,
-// so a malformed path-or-id, unit, filter, sort term, or total mode is a
-// usage error before anything is built, and each bookmark subcommand
-// requires --unit, so a run without it is a usage error too.
-func Commands(store *graph.Node[*Store]) []*cli.Command {
-	g := group{store: store}
+// Commands builds the domain's whole command surface over the composition
+// root's two nodes: svc, the [Service]'s, and st, the [Storage]'s. Each
+// command declares the one node it reads with Use, the bookmark
+// subcommands through their parent, so the dispatcher builds and starts
+// only what that command needs before the body runs, and shuts it down
+// after; the body reads the value with the Invocation's Get. The directory
+// commands, mkdir, ls, stat, mv, and rmdir, and the bookmark command with
+// add, ls, and rm, declare svc, so they build the database and the
+// Service's statement check and never the object store. The object
+// commands, put, cat, cp, and rm, declare st, so they build the object
+// store too, and a store that cannot be reached fails them at start,
+// naming the store's node, before anything is read or written.
+//
+// Each command counts its arguments in Args and checks them and its flags
+// in Validate, the domain's form rules included, so a malformed
+// path-or-id, an id where a path is needed, a unit, a filter, a sort term,
+// or a total mode is a usage error before anything is built; each bookmark
+// subcommand requires --unit, so a run without it is a usage error too.
+func Commands(svc *graph.Node[*Service], st *graph.Node[*Storage]) []*cli.Command {
 	return []*cli.Command{
-		g.mkdir().Use(store),
-		g.list().Use(store),
-		g.stat().Use(store),
-		g.move().Use(store),
-		g.removeDirectory().Use(store),
-		g.bookmark().Use(store),
+		mkdir(svc),
+		ls(svc),
+		stat(svc),
+		mv(svc),
+		rmdir(svc),
+		bookmark(svc),
+		put(st),
+		cat(st),
+		cp(st),
+		rm(st),
 	}
-}
-
-// group is the directory commands' handle on their Store node.
-type group struct {
-	store *graph.Node[*Store]
 }
 
 // mkdir is mkdir <path> [--unit <uuid>]: the last segment created under
 // its existing parent, and with --unit, at a top-level path, the owner row
 // that binds it to the unit, in the same transaction. There is no -p; a
 // missing parent is an error.
-func (g group) mkdir() *cli.Command {
+func mkdir(svc *graph.Node[*Service]) *cli.Command {
 	var unit string
+	var ref Ref
 	cmd := &cli.Command{
 		Name:     "mkdir",
 		Summary:  "Create a directory under an existing parent",
 		Synopsis: "<path>",
 		Args:     cli.ExactArgs(1),
-		Validate: func(*cli.Invocation) error {
+		Validate: func(inv *cli.Invocation) error {
 			var err error
+			if ref, err = ParseRef(inv.Args[0]); err != nil {
+				return err
+			}
+			if err := checkMkdir(ref); err != nil {
+				return err
+			}
 			unit, err = parseUnit(unit)
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			dir, err := inv.Get(g.store).Mkdir(ctx, inv.Args[0], unit)
+			dir, err := inv.Get(svc).Mkdir(ctx, ref, unit)
+			if errors.Is(err, ErrUnitDepth) {
+				return fmt.Errorf("%w; give --unit with a top-level path only", err)
+			}
 			if err != nil {
 				return err
 			}
@@ -75,15 +90,15 @@ func (g group) mkdir() *cli.Command {
 		},
 	}
 	cmd.Flags().StringVar(&unit, "unit", "", "the id of the unit that owns the directory, a UUID; top-level paths only")
-	return cmd
+	return cmd.Use(svc)
 }
 
-// list is ls <path|id:<uuid>>: the directories under the directory first,
+// ls is ls <path|id:<uuid>>: the directories under the directory first,
 // then its files, each one page, with a line per half stating the page and
 // the total, and the cursor lines only under --cursors. With --unit the
 // unit must own the path's top-level directory, and ls / lists the unit's
 // own top-level directories; a listing by id takes no unit.
-func (g group) list() *cli.Command {
+func ls(svc *graph.Node[*Service]) *cli.Command {
 	var f listingFlags
 	var ref Ref
 	var l Listing
@@ -94,25 +109,18 @@ func (g group) list() *cli.Command {
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if ref, err = parseRefArg(inv.Args[0]); err != nil {
+			if ref, err = ParseRef(inv.Args[0]); err != nil {
 				return err
 			}
 			if l, err = f.listing(); err != nil {
 				return err
 			}
-			if ref.ID != "" && l.Unit != "" {
-				return cli.Usagef("ls %s --unit: a listing by id has no path to derive the unit's scope from; list the path instead", inv.Args[0])
-			}
-			return nil
+			return checkList(ref, l)
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			s := inv.Get(g.store)
-			var c Contents
-			var err error
-			if ref.ID != "" {
-				c, err = s.ListDirectory(ctx, ref.ID, l)
-			} else {
-				c, err = s.List(ctx, ref.Path, l)
+			c, err := inv.Get(svc).List(ctx, ref, l)
+			if errors.Is(err, ErrNoCursorAtRoot) {
+				return fmt.Errorf("%w; ls / --unit takes no --after-dirs or --after-files", err)
 			}
 			if err != nil {
 				return err
@@ -121,125 +129,96 @@ func (g group) list() *cli.Command {
 		},
 	}
 	f.bind(cmd)
-	return cmd
+	return cmd.Use(svc)
 }
 
 // stat is stat <path|id:<uuid>>: the file's row, or the directory's when
 // no file is at the path or has the id, one field per line. A record by id
 // carries no path line.
-func (g group) stat() *cli.Command {
+func stat(svc *graph.Node[*Service]) *cli.Command {
 	var ref Ref
-	return &cli.Command{
+	return (&cli.Command{
 		Name:     "stat",
 		Summary:  "Show a file's or a directory's row, one field per line",
 		Synopsis: "<path|id:<uuid>>",
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			ref, err = parseRefArg(inv.Args[0])
+			ref, err = ParseRef(inv.Args[0])
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			s := inv.Get(g.store)
-			if ref.ID != "" {
-				e, err := s.Find(ctx, ref.ID)
-				if err != nil {
-					return err
-				}
-				if e.Kind == EntryFile {
-					return WriteFileRecord(inv.Stdout, "", e.File)
-				}
-				return WriteDirectoryRecord(inv.Stdout, "", e.Directory)
-			}
-			f, err := s.Stat(ctx, ref.Path)
-			if err == nil {
-				return WriteFileRecord(inv.Stdout, ref.Path, f)
-			}
-			if !errors.Is(err, blobfs.ErrNotFound) && !errors.Is(err, blobfs.ErrRootDirectory) {
+			e, err := inv.Get(svc).Stat(ctx, ref)
+			if err != nil {
 				return err
 			}
-			dir, dirErr := s.Resolve(ctx, ref.Path)
-			if errors.Is(dirErr, blobfs.ErrNotFound) {
-				return err
+			if e.Kind == EntryFile {
+				return WriteFileRecord(inv.Stdout, ref.Path, e.File)
 			}
-			if dirErr != nil {
-				return dirErr
-			}
-			return WriteDirectoryRecord(inv.Stdout, ref.Path, dir)
+			return WriteDirectoryRecord(inv.Stdout, ref.Path, e.Directory)
 		},
-	}
+	}).Use(svc)
 }
 
-// move is mv <src> <dst>: the directory or file at src moved into the
+// mv is mv <src> <dst>: the directory or file at src moved into the
 // existing directory dst, or to the new path dst, in one transaction. With
 // two ids, the entry with the first, a file or else a directory, moves
 // into the directory with the second and keeps its name.
-func (g group) move() *cli.Command {
+func mv(svc *graph.Node[*Service]) *cli.Command {
 	var src, dst Ref
-	return &cli.Command{
+	return (&cli.Command{
 		Name:     "mv",
 		Summary:  "Move or rename a directory or a file within its top-level directory",
 		Synopsis: "<src> <dst>",
 		Args:     cli.ExactArgs(2),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			src, dst, err = parsePair("mv", inv.Args[0], inv.Args[1])
+			src, dst, err = parsePair(inv.Args)
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			s := inv.Get(g.store)
-			var res MoveResult
-			var err error
-			if src.ID != "" {
-				e, findErr := s.Find(ctx, src.ID)
-				if findErr != nil {
-					return findErr
-				}
-				res, err = s.MoveEntry(ctx, MoveRequest{Kind: e.Kind, ID: src.ID, DirectoryID: dst.ID})
-			} else {
-				res, err = s.Move(ctx, src.Path, dst.Path)
-			}
+			res, err := inv.Get(svc).Move(ctx, src, dst)
 			if err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(inv.Stdout, "mv: %s -> %s (id %s)\n", res.From, res.To, res.ID)
 			return err
 		},
-	}
+	}).Use(svc)
 }
 
-// removeDirectory is rmdir <path>: an empty directory removed. A directory
-// that still has contents is refused, and so is the root.
-func (g group) removeDirectory() *cli.Command {
-	return &cli.Command{
+// rmdir is rmdir <path>: an empty directory removed. A directory that
+// still has contents is refused, and so is the root.
+func rmdir(svc *graph.Node[*Service]) *cli.Command {
+	return (&cli.Command{
 		Name:     "rmdir",
 		Summary:  "Remove an empty directory",
 		Synopsis: "<path>",
 		Args:     cli.ExactArgs(1),
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			dir, err := inv.Get(g.store).RemoveDirectory(ctx, inv.Args[0])
+			dir, err := inv.Get(svc).RemoveDirectory(ctx, inv.Args[0])
 			if err != nil {
 				return err
 			}
 			_, err = fmt.Fprintf(inv.Stdout, "rmdir: %s (id %s)\n", inv.Args[0], dir.ID)
 			return err
 		},
-	}
+	}).Use(svc)
 }
 
 // bookmark is the bookmark command: add, ls, and rm, each under the unit
-// its required --unit names.
-func (g group) bookmark() *cli.Command {
+// its required --unit names. The parent declares svc for the three.
+func bookmark(svc *graph.Node[*Service]) *cli.Command {
 	return (&cli.Command{
 		Name:    "bookmark",
 		Summary: "Bookmark files for a unit, at most one of them active: add, ls, rm",
-	}).Add(g.bookmarkAdd(), g.bookmarkList(), g.bookmarkRemove())
+	}).Add(bookmarkAdd(svc), bookmarkLs(svc), bookmarkRm(svc)).Use(svc)
 }
 
 // bookmarkAdd is bookmark add <path> --unit <uuid> [--active]: the unit's
 // bookmark of the file at the path, active when asked, and refused while
 // another bookmark of the unit is active.
-func (g group) bookmarkAdd() *cli.Command {
+func bookmarkAdd(svc *graph.Node[*Service]) *cli.Command {
 	var unit string
 	var active bool
 	cmd := &cli.Command{
@@ -253,7 +232,7 @@ func (g group) bookmarkAdd() *cli.Command {
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			f, err := inv.Get(g.store).AddBookmark(ctx, inv.Args[0], unit, active)
+			f, err := inv.Get(svc).AddBookmark(ctx, inv.Args[0], unit, active)
 			if err != nil {
 				return err
 			}
@@ -271,10 +250,10 @@ func (g group) bookmarkAdd() *cli.Command {
 	return cmd
 }
 
-// bookmarkList is bookmark ls --unit <uuid>: the unit's bookmarks with
-// their files' full paths, one page by number, and a line stating the page
-// and the total.
-func (g group) bookmarkList() *cli.Command {
+// bookmarkLs is bookmark ls --unit <uuid>: the unit's bookmarks with their
+// files' full paths, one page by number, and a line stating the page and
+// the total.
+func bookmarkLs(svc *graph.Node[*Service]) *cli.Command {
 	var f pageFlags
 	var unit string
 	var l Listing
@@ -291,11 +270,11 @@ func (g group) bookmarkList() *cli.Command {
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			p, err := inv.Get(g.store).ListBookmarks(ctx, unit, l)
+			p, err := inv.Get(svc).ListBookmarks(ctx, unit, l)
 			if err != nil {
 				return err
 			}
-			return WriteBookmarks(inv.Stdout, l, p)
+			return writeBookmarks(inv.Stdout, l, p)
 		},
 	}
 	f.bind(cmd)
@@ -304,9 +283,9 @@ func (g group) bookmarkList() *cli.Command {
 	return cmd
 }
 
-// bookmarkRemove is bookmark rm <path> --unit <uuid>: the unit's bookmark
-// of the file at the path removed, active or not.
-func (g group) bookmarkRemove() *cli.Command {
+// bookmarkRm is bookmark rm <path> --unit <uuid>: the unit's bookmark of
+// the file at the path removed, active or not.
+func bookmarkRm(svc *graph.Node[*Service]) *cli.Command {
 	var unit string
 	cmd := &cli.Command{
 		Name:     "rm",
@@ -319,7 +298,7 @@ func (g group) bookmarkRemove() *cli.Command {
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			f, err := inv.Get(g.store).RemoveBookmark(ctx, inv.Args[0], unit)
+			f, err := inv.Get(svc).RemoveBookmark(ctx, inv.Args[0], unit)
 			if err != nil {
 				return err
 			}
@@ -332,35 +311,11 @@ func (g group) bookmarkRemove() *cli.Command {
 	return cmd
 }
 
-// ObjectCommands builds the object commands, put, cat, cp, and rm, over
-// objects, the composition root's node for [Objects]. Each declares
-// objects with Use, so the dispatcher builds and starts the database, the
-// Store's statement check, and the object store before the body runs; a
-// store that cannot be reached fails the command at start, naming the
-// store's node, before anything is read or written. Each counts its
-// arguments in Args and checks them and its flags in Validate, so a
-// malformed path-or-id, or an id where a path is needed, is a usage error
-// before anything is built.
-func ObjectCommands(objects *graph.Node[*Objects]) []*cli.Command {
-	g := objectGroup{objects: objects}
-	return []*cli.Command{
-		g.put().Use(objects),
-		g.cat().Use(objects),
-		g.copy().Use(objects),
-		g.remove().Use(objects),
-	}
-}
-
-// objectGroup is the object commands' handle on their Objects node.
-type objectGroup struct {
-	objects *graph.Node[*Objects]
-}
-
 // put is put <local-file|-> <path|id:<uuid>> [--content-type <type>]: the
 // local file, or standard input for -, written as the file at the path,
 // or into the directory with the id under the local file's base name.
 // Standard input has no name, so - takes a path.
-func (g objectGroup) put() *cli.Command {
+func put(st *graph.Node[*Storage]) *cli.Command {
 	var contentType string
 	var dst Ref
 	cmd := &cli.Command{
@@ -370,11 +325,11 @@ func (g objectGroup) put() *cli.Command {
 		Args:     cli.ExactArgs(2),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if dst, err = parseRefArg(inv.Args[1]); err != nil {
+			if dst, err = ParseRef(inv.Args[1]); err != nil {
 				return err
 			}
 			if dst.ID != "" && inv.Args[0] == "-" {
-				return cli.Usagef("put - %s: stdin has no name to store under; give the destination as a path", inv.Args[1])
+				return fmt.Errorf("put - %s: stdin has no name to store under; give the destination as a path", inv.Args[1])
 			}
 			return nil
 		},
@@ -386,16 +341,12 @@ func (g objectGroup) put() *cli.Command {
 			}
 			defer closeBody()
 			c := Content{Body: body, Size: size, ContentType: declaredType(contentType, src)}
-			o := inv.Get(g.objects)
 			label := inv.Args[1]
-			var res PutResult
 			if dst.ID != "" {
-				name := filepath.Base(src)
-				label = name + " in " + inv.Args[1]
-				res, err = o.PutFile(ctx, dst.ID, name, c)
-			} else {
-				res, err = o.Put(ctx, dst.Path, c)
+				c.Name = filepath.Base(src)
+				label = c.Name + " in " + inv.Args[1]
 			}
+			res, err := inv.Get(st).Put(ctx, dst, c)
 			if err != nil {
 				return err
 			}
@@ -409,32 +360,25 @@ func (g objectGroup) put() *cli.Command {
 		},
 	}
 	cmd.Flags().StringVar(&contentType, "content-type", "", "the media type to store with the object; the default comes from the local file's extension, else application/octet-stream")
-	return cmd
+	return cmd.Use(st)
 }
 
 // cat is cat <path|id:<uuid>>: the available file's content streamed to
 // stdout as it is.
-func (g objectGroup) cat() *cli.Command {
+func cat(st *graph.Node[*Storage]) *cli.Command {
 	var ref Ref
-	return &cli.Command{
+	return (&cli.Command{
 		Name:     "cat",
 		Summary:  "Write an available file's content to stdout",
 		Synopsis: "<path|id:<uuid>>",
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			ref, err = parseRefArg(inv.Args[0])
+			ref, err = ParseRef(inv.Args[0])
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			o := inv.Get(g.objects)
-			var body io.ReadCloser
-			var err error
-			if ref.ID != "" {
-				body, _, err = o.OpenFile(ctx, ref.ID)
-			} else {
-				body, _, err = o.Open(ctx, ref.Path)
-			}
+			body, _, err := inv.Get(st).Open(ctx, ref)
 			if err != nil {
 				return err
 			}
@@ -444,34 +388,27 @@ func (g objectGroup) cat() *cli.Command {
 			}
 			return nil
 		},
-	}
+	}).Use(st)
 }
 
-// copy is cp <src> <dst>: the available file at src copied into the
-// existing directory dst under its own name, or to the new path dst. With
-// two ids, the file with the first is copied into the directory with the
-// second under its own name. A name already taken is refused.
-func (g objectGroup) copy() *cli.Command {
+// cp is cp <src> <dst>: the available file at src copied into the existing
+// directory dst under its own name, or to the new path dst. With two ids,
+// the file with the first is copied into the directory with the second
+// under its own name. A name already taken is refused.
+func cp(st *graph.Node[*Storage]) *cli.Command {
 	var src, dst Ref
-	return &cli.Command{
+	return (&cli.Command{
 		Name:     "cp",
 		Summary:  "Copy an available file into a directory or to a new path",
 		Synopsis: "<src> <dst>",
 		Args:     cli.ExactArgs(2),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			src, dst, err = parsePair("cp", inv.Args[0], inv.Args[1])
+			src, dst, err = parsePair(inv.Args)
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			o := inv.Get(g.objects)
-			var res CopyResult
-			var err error
-			if src.ID != "" {
-				res, err = o.CopyFile(ctx, src.ID, dst.ID)
-			} else {
-				res, err = o.Copy(ctx, src.Path, dst.Path)
-			}
+			res, err := inv.Get(st).Copy(ctx, src, dst)
 			if err != nil {
 				return err
 			}
@@ -479,13 +416,13 @@ func (g objectGroup) copy() *cli.Command {
 			_, err = fmt.Fprintf(inv.Stdout, "cp: %s -> %s (id %s, %d bytes, etag %s)\n", res.From, res.To, f.ID, sizeOf(f), etagOf(f))
 			return err
 		},
-	}
+	}).Use(st)
 }
 
-// remove is rm <path|id:<uuid>>, a file deleted, and rm --recursive
-// <path>, a directory and everything beneath it deleted, reported as the
-// totals its sweep removed. There is no -r shorthand.
-func (g objectGroup) remove() *cli.Command {
+// rm is rm <path|id:<uuid>>, a file deleted, and rm --recursive <path>, a
+// directory and everything beneath it deleted, reported as the totals its
+// sweep removed. There is no -r shorthand.
+func rm(st *graph.Node[*Storage]) *cli.Command {
 	var recursive bool
 	var ref Ref
 	cmd := &cli.Command{
@@ -495,30 +432,30 @@ func (g objectGroup) remove() *cli.Command {
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if ref, err = parseRefArg(inv.Args[0]); err != nil {
+			if ref, err = ParseRef(inv.Args[0]); err != nil {
 				return err
 			}
-			if recursive && ref.ID != "" {
-				return cli.Usagef("rm --recursive %s: a branch is removed by path, not by id", inv.Args[0])
+			if recursive {
+				return checkRemoveTree(ref)
 			}
 			return nil
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			o := inv.Get(g.objects)
+			s := inv.Get(st)
 			if recursive {
-				res, err := o.RemoveTree(ctx, ref.Path)
+				res, err := s.RemoveTree(ctx, ref)
+				if errors.Is(err, ErrBookmarked) {
+					return fmt.Errorf("%w; remove the bookmarks and rerun rm --recursive", err)
+				}
 				if err != nil {
 					return err
 				}
 				_, err = fmt.Fprintf(inv.Stdout, "rm --recursive: %s (%d files, %d directories)\n", ref.Path, res.Files, res.Directories)
 				return err
 			}
-			var f blobfs.File
-			var err error
-			if ref.ID != "" {
-				f, err = o.RemoveFile(ctx, ref.ID)
-			} else {
-				f, err = o.Remove(ctx, ref.Path)
+			f, err := s.Remove(ctx, ref)
+			if errors.Is(err, ErrBookmarked) {
+				return fmt.Errorf("%w; remove the bookmarks and rerun rm", err)
 			}
 			if err != nil {
 				return err
@@ -528,7 +465,7 @@ func (g objectGroup) remove() *cli.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&recursive, "recursive", false, "delete the directory at the path and everything beneath it")
-	return cmd
+	return cmd.Use(st)
 }
 
 // openLocal opens the body put uploads: stdin for -, its length unknown,
@@ -581,18 +518,14 @@ func etagOf(f blobfs.File) string {
 	return *f.ETag
 }
 
-// Ref is one argument that names an entry: an absolute path, or a row's id
-// written as id:<uuid>. Exactly one of Path and ID is set. A path starts
-// with /, so the two forms never collide.
-type Ref struct {
-	Path string
-	ID   string
-}
+// The CLI-syntax parsers: each reads the command line's text into the
+// domain's shapes, and each runs in a command's Validate, which reports
+// any refusal as a usage error.
 
 // ParseRef reads one path-or-id argument. Text after an id: prefix must be
 // a UUID other than the root's, checked by blobfs.ParseID before any I/O,
 // and is returned in canonical form; anything else is taken as a path,
-// which the Store validates.
+// which the Service validates.
 func ParseRef(arg string) (Ref, error) {
 	rest, ok := strings.CutPrefix(arg, "id:")
 	if !ok {
@@ -605,33 +538,18 @@ func ParseRef(arg string) (Ref, error) {
 	return Ref{ID: id}, nil
 }
 
-// parseRefArg is ParseRef for a command's argument: a refused id is a
-// usage error.
-func parseRefArg(arg string) (Ref, error) {
-	ref, err := ParseRef(arg)
-	if err != nil {
-		return Ref{}, cli.Usagef("%w", err)
-	}
-	return ref, nil
-}
-
-// parsePair reads the two arguments of mv or cp, the command named, which
-// takes two paths or two ids and not one of each, since the id form takes
-// a source id and a destination directory id together. Every refusal is a
-// usage error.
-func parsePair(command, first, second string) (Ref, Ref, error) {
-	src, err := parseRefArg(first)
+// parsePair reads the two arguments of mv or cp, and runs the domain's
+// rule that the two are of one form.
+func parsePair(args []string) (Ref, Ref, error) {
+	src, err := ParseRef(args[0])
 	if err != nil {
 		return Ref{}, Ref{}, err
 	}
-	dst, err := parseRefArg(second)
+	dst, err := ParseRef(args[1])
 	if err != nil {
 		return Ref{}, Ref{}, err
 	}
-	if (src.ID != "") != (dst.ID != "") {
-		return Ref{}, Ref{}, cli.Usagef("%s %s %s: give two paths, or two ids as id:<uuid> for the source and the destination directory", command, first, second)
-	}
-	return src, dst, nil
+	return src, dst, checkPair(src, dst)
 }
 
 // pageFlags is the flag set every paged listing takes: the page and its
@@ -653,7 +571,8 @@ func (f *pageFlags) bind(cmd *cli.Command) {
 }
 
 // listing builds the Listing the paging flags state, validating the total
-// mode and parsing each sort term. Every refusal is a usage error.
+// mode and parsing each sort term. It runs in Validate, which reports any
+// refusal as a usage error.
 func (f *pageFlags) listing() (Listing, error) {
 	l := Listing{Page: f.page, Size: f.size}
 	switch f.total {
@@ -662,12 +581,12 @@ func (f *pageFlags) listing() (Listing, error) {
 	case "none":
 		l.Total = TotalNone
 	default:
-		return Listing{}, cli.Usagef("--total %q: the mode is exact or none", f.total)
+		return Listing{}, fmt.Errorf("--total %q: the mode is exact or none", f.total)
 	}
 	for _, term := range f.sort {
-		s, err := ParseSort(term)
+		s, err := parseSort(term)
 		if err != nil {
-			return Listing{}, cli.Usagef("%w", err)
+			return Listing{}, err
 		}
 		l.Sort = append(l.Sort, s)
 	}
@@ -697,8 +616,8 @@ func (f *listingFlags) bind(cmd *cli.Command) {
 }
 
 // listing builds the Listing the flags state, validating the unit and the
-// total mode and parsing each filter and sort term. Every refusal is a
-// usage error.
+// total mode and parsing each filter and sort term. It runs in Validate,
+// which reports any refusal as a usage error.
 func (f *listingFlags) listing() (Listing, error) {
 	unit, err := parseUnit(f.unit)
 	if err != nil {
@@ -709,9 +628,9 @@ func (f *listingFlags) listing() (Listing, error) {
 		return Listing{}, err
 	}
 	for _, term := range f.filter {
-		filter, err := ParseFilter(term)
+		filter, err := parseFilter(term)
 		if err != nil {
-			return Listing{}, cli.Usagef("%w", err)
+			return Listing{}, err
 		}
 		l.Filters = append(l.Filters, filter)
 	}
@@ -721,8 +640,8 @@ func (f *listingFlags) listing() (Listing, error) {
 }
 
 // parseUnit reads a --unit value: empty when the flag was not given, and
-// otherwise a UUID, returned in canonical form. A value that is not one is
-// a usage error. A required --unit that is missing is reported by the
+// otherwise a UUID, returned in canonical form; it runs in Validate, so a
+// value that is not one is a usage error. A required --unit that is missing is reported by the
 // dispatcher's Require, before Validate, so the empty value passes here
 // only for an optional --unit.
 func parseUnit(unit string) (string, error) {
@@ -731,19 +650,19 @@ func parseUnit(unit string) (string, error) {
 	}
 	id, err := uuid.Parse(unit)
 	if err != nil {
-		return "", cli.Usagef("--unit %q is not a UUID", unit)
+		return "", fmt.Errorf("--unit %q is not a UUID", unit)
 	}
 	return id.String(), nil
 }
 
-// ParseFilter reads one --filter term: <field>:<op>:<value>, where the
+// parseFilter reads one --filter term: <field>:<op>:<value>, where the
 // value is the rest of the term and may hold colons, as a timestamp does;
 // <field>:<op> alone for null and notnull; and for in, a value that is a
 // comma-separated list. The field and the operator are checked by blobfs
 // against the listing's declared fields and the query library's
 // operators, so an unknown one is refused there, before the statement
 // runs.
-func ParseFilter(term string) (Filter, error) {
+func parseFilter(term string) (Filter, error) {
 	field, rest, ok := strings.Cut(term, ":")
 	if field == "" || !ok {
 		return Filter{}, fmt.Errorf("--filter %q: write <field>:<op>:<value>, or <field>:null or <field>:notnull", term)
@@ -775,9 +694,9 @@ func ParseFilter(term string) (Filter, error) {
 	return Filter{Field: field, Op: op, Value: value}, nil
 }
 
-// ParseSort reads one --sort term: a field name, or a field name and :desc
+// parseSort reads one --sort term: a field name, or a field name and :desc
 // for descending order; :asc is accepted and means the default.
-func ParseSort(term string) (Sort, error) {
+func parseSort(term string) (Sort, error) {
 	field, direction, hasDirection := strings.Cut(term, ":")
 	if field == "" {
 		return Sort{}, fmt.Errorf("--sort %q: names no field; write <field> or <field>:desc", term)

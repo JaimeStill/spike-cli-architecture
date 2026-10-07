@@ -29,24 +29,24 @@ const (
 )
 
 // objects is the files tour's handle on the nodes it declares: the files
-// node for its directories and the objects node for its files.
+// node for its directories and the storage node for its files.
 type objects struct {
-	store   *graph.Node[*files.Store]
-	objects *graph.Node[*files.Objects]
+	store   *graph.Node[*files.Service]
+	objects *graph.Node[*files.Storage]
 }
 
 // storeOf and objectsOf return the values the dispatcher built for the
 // run.
-func (o objects) storeOf(inv *cli.Invocation) *files.Store     { return inv.Get(o.store) }
-func (o objects) objectsOf(inv *cli.Invocation) *files.Objects { return inv.Get(o.objects) }
+func (o objects) storeOf(inv *cli.Invocation) *files.Service   { return inv.Get(o.store) }
+func (o objects) objectsOf(inv *cli.Invocation) *files.Storage { return inv.Get(o.objects) }
 
 // Files is the files tour over store, the files node, and objs, the
-// objects node: put, from memory as put - reads standard input and with a
+// storage node: put, from memory as put - reads standard input and with a
 // stated size, cat, cp, rm, and rm --recursive, in a working area of its
 // own. It declares both nodes, since its steps read both, so a run builds
 // Postgres and the object store, and a store that cannot be reached fails
 // it at start, naming the store's node.
-func Files(store *graph.Node[*files.Store], objs *graph.Node[*files.Objects]) scenario.Scenario {
+func Files(store *graph.Node[*files.Service], objs *graph.Node[*files.Storage]) scenario.Scenario {
 	o := objects{store: store, objects: objs}
 	return scenario.Scenario{
 		Name:    "files",
@@ -67,7 +67,7 @@ func Files(store *graph.Node[*files.Store], objs *graph.Node[*files.Objects]) sc
 }
 
 func (o objects) clear(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
-	_, err := o.storeOf(inv).Resolve(ctx, FilesArea)
+	_, err := o.storeOf(inv).Resolve(ctx, files.Ref{Path: FilesArea})
 	if errors.Is(err, blobfs.ErrNotFound) {
 		r.Note("Nothing to clear: %s does not exist, so this run starts clean.", FilesArea)
 		return nil
@@ -82,7 +82,7 @@ func (o objects) clear(ctx context.Context, inv *cli.Invocation, r *scenario.Rep
 func (o objects) mkdir(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	s := o.storeOf(inv)
 	for _, path := range []string{FilesArea, FilesArea + "/docs"} {
-		dir, err := s.Mkdir(ctx, path, "")
+		dir, err := s.Mkdir(ctx, files.Ref{Path: path}, "")
 		if err != nil {
 			return err
 		}
@@ -98,7 +98,7 @@ func (o objects) mkdir(ctx context.Context, inv *cli.Invocation, r *scenario.Rep
 
 // put writes content to path and shows the result as put prints it.
 func (o objects) put(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter, path string, c files.Content) error {
-	res, err := o.objectsOf(inv).Put(ctx, path, c)
+	res, err := o.objectsOf(inv).Put(ctx, files.Ref{Path: path}, c)
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func (o objects) putSized(ctx context.Context, inv *cli.Invocation, r *scenario.
 // catFile shows the content of the available file at path, and checks it is
 // want, the bytes the tour put.
 func (o objects) catFile(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter, path, want string) error {
-	body, _, err := o.objectsOf(inv).Open(ctx, path)
+	body, _, err := o.objectsOf(inv).Open(ctx, files.Ref{Path: path})
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func (o objects) cat(ctx context.Context, inv *cli.Invocation, r *scenario.Repor
 
 func (o objects) copy(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	r.Note("A destination that names an existing directory takes the copy under the source's name; the copy is a new row over a new object.")
-	res, err := o.objectsOf(inv).Copy(ctx, FilesArea+"/docs/hello.txt", FilesArea)
+	res, err := o.objectsOf(inv).Copy(ctx, files.Ref{Path: FilesArea + "/docs/hello.txt"}, files.Ref{Path: FilesArea})
 	if err != nil {
 		return err
 	}
@@ -170,7 +170,7 @@ func (o objects) list(ctx context.Context, inv *cli.Invocation, r *scenario.Repo
 	s := o.storeOf(inv)
 	l := files.Listing{Page: 1, Size: 20}
 	for _, path := range []string{FilesArea, FilesArea + "/docs"} {
-		c, err := s.List(ctx, path, l)
+		c, err := s.List(ctx, files.Ref{Path: path}, l)
 		if err != nil {
 			return err
 		}
@@ -184,7 +184,7 @@ func (o objects) list(ctx context.Context, inv *cli.Invocation, r *scenario.Repo
 
 func (o objects) remove(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
 	path := FilesArea + "/hello.txt"
-	f, err := o.objectsOf(inv).Remove(ctx, path)
+	f, err := o.objectsOf(inv).Remove(ctx, files.Ref{Path: path})
 	if err != nil {
 		return err
 	}
@@ -202,7 +202,7 @@ func (o objects) removeTree(ctx context.Context, inv *cli.Invocation, r *scenari
 // removeArea removes the working area with rm --recursive and shows its
 // totals.
 func (o objects) removeArea(ctx context.Context, inv *cli.Invocation, r *scenario.Reporter) error {
-	res, err := o.objectsOf(inv).RemoveTree(ctx, FilesArea)
+	res, err := o.objectsOf(inv).RemoveTree(ctx, files.Ref{Path: FilesArea})
 	if err != nil {
 		return err
 	}

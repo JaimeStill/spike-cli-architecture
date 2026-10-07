@@ -37,7 +37,7 @@ func TestList_PrintsEachScenarioAndTheNodesItDeclaresAndBuildsNothing(t *testing
 		"  directories  Tour the directory commands on Postgres alone: mkdir, ls, stat, mv, rmdir\n" +
 		"               uses files\n" +
 		"  files        Tour the object commands on Postgres and the store: put, cat, cp, rm, rm --recursive\n" +
-		"               uses files, objects\n"
+		"               uses files, storage\n"
 	if out.String() != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", out.String(), want)
 	}
@@ -171,8 +171,8 @@ func TestDemo_EachTourBuildsTheNodesItDeclares(t *testing.T) {
 		// The files node alone: Postgres, and never the store or its
 		// configuration, which a reach of either would record.
 		{"directories", []string{"files", "database", "database config", "lifecycle config"}},
-		// The files and objects nodes: Postgres and the store.
-		{"files", []string{"files", "database", "database config", "objects", "store", "lifecycle config"}},
+		// The files and storage nodes: Postgres and the store.
+		{"files", []string{"files", "database", "database config", "storage", "store", "lifecycle config"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tour, func(t *testing.T) {

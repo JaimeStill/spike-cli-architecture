@@ -73,8 +73,8 @@ type Nodes struct {
 	Database        *graph.Node[*database.DB]      // "database"
 	Store           *graph.Node[*storage.Store]    // "store"
 	Migrator        *graph.Node[*migrate.Migrator] // "migrator"
-	Files           *graph.Node[*files.Store]      // "files"
-	Objects         *graph.Node[*files.Objects]    // "objects"
+	Files           *graph.Node[*files.Service]    // "files"
+	Storage         *graph.Node[*files.Storage]    // "storage"
 }
 
 // Graph returns the graph a's commands are built from, as [New] described
@@ -96,7 +96,7 @@ func (a *App) Nodes() Nodes {
 		Store:           a.infra.store,
 		Migrator:        a.admin.migrator,
 		Files:           a.domain.files,
-		Objects:         a.domain.objects,
+		Storage:         a.domain.storage,
 	}
 }
 
