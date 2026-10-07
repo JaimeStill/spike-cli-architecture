@@ -17,14 +17,19 @@
 //     held open on a pipe, so it commits the pending row and waits on the
 //     body; once stat in another run shows the row pending, the put is
 //     killed with SIGKILL, which it cannot catch.
-//   - An interrupted rm --recursive is a store outage mid-sweep: the store
-//     is reached through a processtest.Forward relay, its retries off
-//     through BLOBFS_STORAGE_OPTIONS_MAX_RETRIES, and the branch holds
-//     enough files that its sweep outlasts the notice that it has begun.
-//     Once stat in another run finds the branch's first file gone, the
-//     relay is severed, so every later delete is refused: the run exits 1,
-//     reporting the refusal and the counts it reached, and the branch stays
-//     deleting. The relay is restored before the rerun that finishes it.
+//   - An interrupted rm --recursive is a store outage mid-sweep, injected
+//     at an exact request rather than a moment: the store is reached
+//     through an HTTP relay over httputil.ReverseProxy, its retries off
+//     through BLOBFS_STORAGE_OPTIONS_MAX_RETRIES, since the provider
+//     retries the relay's 503. Armed, the relay lets a set number of blob
+//     deletes through and answers every later one 503. blobfs's sweep is
+//     sequential, walks a directory's files by name before its child
+//     directories, and deletes a file's object before its row, so the
+//     counts are exact: of a branch of three files and an empty directory,
+//     the run with one delete allowed removes one file and the directory,
+//     is refused the other two, and exits 1 reporting the refusal and
+//     those counts; the branch stays deleting. The relay is disarmed
+//     before the rerun, which removes the two files left and the branch.
 //   - An unreachable store is an endpoint on a port nothing listens on.
 //
 // TestScript is one ordered script over the directory, object, and

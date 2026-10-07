@@ -8,11 +8,15 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -77,14 +81,90 @@ func (tg target) with(env ...string) target {
 	return tg
 }
 
-// relayed returns tg with its object store reached through f, a relay to
-// the store the environment names, which the test severs to inject an
-// outage. The store's retries are off, so a refused request is refused at
-// once rather than after the provider's backoff.
-func relayed(t *testing.T, tg target, f *processtest.Forwarder) target {
+// faultRelay is an HTTP relay in front of the object store the environment
+// names, which injects a store outage at an exact request: once armed with
+// failDeletesAfter(n), it lets n blob deletes through and answers every
+// later one 503 Service Unavailable without forwarding it, while every
+// other request passes. Azurite is reached path-style, so a blob delete is
+// a DELETE whose query has no restype, which a container's delete carries.
+// Disarmed, the relay passes everything.
+type faultRelay struct {
+	addr string
+
+	mu sync.Mutex
+	// allow is how many more blob deletes pass, or -1 while disarmed.
+	allow int
+	// refusals counts the blob deletes answered 503 since the relay was
+	// last armed.
+	refusals int
+}
+
+// relay starts a faultRelay, disarmed, in front of the store, and closes
+// it when the test ends.
+func relay(t *testing.T) *faultRelay {
+	t.Helper()
+	store := storeEndpoint(t)
+	r := &faultRelay{allow: -1}
+	proxy := &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) {
+		pr.SetURL(&url.URL{Scheme: store.Scheme, Host: store.Host})
+	}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if r.refuse(req) {
+			http.Error(w, "the relay refuses the blob delete", http.StatusServiceUnavailable)
+			return
+		}
+		proxy.ServeHTTP(w, req)
+	}))
+	t.Cleanup(srv.Close)
+	r.addr = srv.Listener.Addr().String()
+	return r
+}
+
+// refuse reports whether req is a blob delete the armed relay refuses,
+// spending one of the deletes it lets through when it is not.
+func (r *faultRelay) refuse(req *http.Request) bool {
+	if req.Method != http.MethodDelete || req.URL.Query().Has("restype") {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch {
+	case r.allow < 0:
+		return false
+	case r.allow == 0:
+		r.refusals++
+		return true
+	default:
+		r.allow--
+		return false
+	}
+}
+
+// failDeletesAfter arms the relay: the next n blob deletes pass, and every
+// one after them is refused, until reset.
+func (r *faultRelay) failDeletesAfter(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.allow, r.refusals = n, 0
+}
+
+// reset disarms the relay, so every request passes again, and returns how
+// many blob deletes it refused while armed.
+func (r *faultRelay) reset() (refusals int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	refusals = r.refusals
+	r.allow, r.refusals = -1, 0
+	return refusals
+}
+
+// relayed returns tg with its object store reached through r. The store's
+// retries are off: the provider retries a 503, so with them on, a refused
+// delete would wait out its backoff before failing.
+func relayed(t *testing.T, tg target, r *faultRelay) target {
 	t.Helper()
 	endpoint := storeEndpoint(t)
-	endpoint.Host = f.Addr()
+	endpoint.Host = r.addr
 	return tg.with("BLOBFS_STORAGE_ENDPOINT="+endpoint.String(), "BLOBFS_STORAGE_OPTIONS_MAX_RETRIES=0")
 }
 
@@ -382,57 +462,58 @@ func pending(t *testing.T, tg target, path string) string {
 	return id
 }
 
-// branch makes the directory at path with an empty directory sub and n
-// one-byte files, f000.txt on, put through tg, and returns the id of
-// f000.txt, the first file the sweep finishes, which walks a directory's
-// files by name before its child directories.
-func branch(t *testing.T, tg target, path string, n int) string {
+// An interrupted branch holds branchFiles files, of which the store lets
+// branchDeletes be deleted before it refuses the rest: the smallest branch
+// whose interrupted sweep both removes a file and leaves more than one.
+const (
+	branchFiles   = 3
+	branchDeletes = 1
+)
+
+// branch makes the directory at path with an empty directory sub and
+// branchFiles one-byte files, f0.txt on, put through tg.
+func branch(t *testing.T, tg target, path string) {
 	t.Helper()
 	ok(t, tg, "mkdir", path)
 	ok(t, tg, "mkdir", path+"/sub")
-	first := put(t, tg, path+"/f000.txt", "f")
-	for i := 1; i < n; i++ {
-		put(t, tg, fmt.Sprintf("%s/f%03d.txt", path, i), "f")
+	for i := range branchFiles {
+		put(t, tg, fmt.Sprintf("%s/f%d.txt", path, i), "f")
 	}
-	return first
 }
 
-// interrupt runs rm --recursive of the branch at path, which branch made
-// with n files whose first is first, through tg, whose store is reached
-// through f, and severs f mid-sweep: once a stat in another run finds
-// first gone, the sweep has begun deleting objects, and every delete after
-// the sever is refused. The run exits one with the refusal and the counts
-// it reached, which interrupt checks and returns: the files removed before
-// the sever, and the one directory, sub, that the store's outage does not
-// hold back. The branch stays deleting, and f stays severed.
-func interrupt(t *testing.T, tg target, f *processtest.Forwarder, path, first string, n int) (files int) {
+// interrupt runs rm --recursive of the branch at path, which branch made,
+// through tg, whose store is reached through r, armed to let branchDeletes
+// blob deletes through and refuse every later one, and disarms r after
+// the run.
+//
+// The counts are exact because blobfs's sweep is sequential and ordered:
+// it walks a directory's files by name before its child directories, and
+// finishes a file by deleting its object before purging its row, so a
+// refused delete leaves the row, and the walk goes on to the next file.
+// The first branchDeletes files are removed; each later one is tried once
+// and refused; sub, empty and needing no store, is removed; and the
+// branch's root, which a refusal keeps, stays deleting. The run's one pass
+// leaves its budget unspent, so the pass is the run's last: it exits one,
+// reporting the refusal and the counts it reached.
+func interrupt(t *testing.T, tg target, r *faultRelay, path string) {
 	t.Helper()
-	p := start(t, tg, strings.NewReader(""), "$ blobfs rm --recursive "+path+" &", "rm", "--recursive", path)
-	processtest.WaitFor(t, "the sweep of "+path+" past its first file", func() bool {
-		if p.ended() {
-			return true
-		}
-		_, errOut, code := run(t, tg, "stat", "id:"+first)
-		return code == 1 && strings.Contains(errOut, "not found")
-	})
-	f.Sever()
-	t.Log("the store's relay is severed")
-	out, errOut, code := p.wait(t)
+	r.failDeletesAfter(branchDeletes)
+	t.Logf("the store's relay refuses every blob delete after %d", branchDeletes)
+	out, errOut, code := run(t, tg, "rm", "--recursive", path)
+	refusals := r.reset()
+	t.Log("the store's relay passes every request")
 	if code != 1 || out != "" {
-		t.Fatalf("rm --recursive %s severed mid-sweep exited %d with stdout %q; want a refusal (a sweep of %d files that finished before the sever needs more files)", path, code, out, n)
+		t.Fatalf("rm --recursive %s with the store refusing deletes exited %d with stdout %q; want a refusal", path, code, out)
 	}
-	_, counts, found := strings.Cut(errOut, "rm --recursive "+path+": removed ")
-	var dirs int
-	if _, err := fmt.Sscanf(counts, "%d files and %d directories, then: ", &files, &dirs); !found || err != nil {
-		t.Fatalf("rm --recursive %s stderr = %q, want the counts it reached", path, errOut)
+	if want := fmt.Sprintf("rm --recursive %s: removed %d files and 1 directories, then: ", path, branchDeletes); !strings.Contains(errOut, want) {
+		t.Errorf("rm --recursive %s stderr = %q, want %q", path, errOut, want)
 	}
-	if files < 1 || files >= n || dirs != 1 {
-		t.Errorf("rm --recursive %s removed %d files and %d directories; want 1 to %d files and sub", path, files, dirs, n-1)
+	if got := strings.Count(errOut, "delete the object of file "); got != branchFiles-branchDeletes {
+		t.Errorf("rm --recursive %s stderr = %q, want the store's refusal of %d files", path, errOut, branchFiles-branchDeletes)
 	}
-	if !strings.Contains(errOut, "delete the object of file ") {
-		t.Errorf("rm --recursive %s stderr = %q, want the store's refusal", path, errOut)
+	if refusals != branchFiles-branchDeletes {
+		t.Errorf("the store's relay refused %d blob deletes, want %d, one for each file left", refusals, branchFiles-branchDeletes)
 	}
-	return files
 }
 
 // script is one ordered run of the binary over one database, and what its
@@ -913,11 +994,6 @@ func (s *script) remove(t *testing.T) {
 	refused(t, s.tg, "the root directory", "rm", "/")
 }
 
-// branchFiles is how many files an interrupted branch holds: enough that
-// its sweep, a few milliseconds a file, outlasts a stat run's notice that
-// it has begun, so the relay is severed with files left to refuse.
-const branchFiles = 150
-
 // removeTree deletes a branch and prints its totals, finishes a branch
 // whose earlier run the store's outage interrupted, and, through its
 // sweep, a branch another interrupted run left; the root and an id are
@@ -934,26 +1010,26 @@ func (s *script) removeTree(t *testing.T) {
 	}
 	refused(t, s.tg, "not found", "ls", "/tree")
 
-	// An interrupted run: the store's relay is severed mid-sweep, so the
-	// run is refused partway and the branch stays deleting. A rerun finds
-	// the deleting directory at its path and finishes it.
-	f := processtest.Forward(t, storeEndpoint(t).Host)
-	rt := relayed(t, s.tg, f)
-	first := branch(t, rt, "/half", branchFiles)
-	removed := interrupt(t, rt, f, "/half", first, branchFiles)
+	// An interrupted run: the store refuses every delete past the first
+	// branchDeletes, so the run is refused partway and the branch stays
+	// deleting. A rerun finds the deleting directory at its path and
+	// finishes it: the files left, and the branch's root.
+	r := relay(t)
+	rt := relayed(t, s.tg, r)
+	branch(t, rt, "/half")
+	interrupt(t, rt, r, "/half")
 	refused(t, rt, "deleting", "ls", "/half")
-	f.Restore(t)
-	if out := ok(t, rt, "rm", "--recursive", "/half"); out != fmt.Sprintf("rm --recursive: /half (%d files, 1 directories)\n", branchFiles-removed) {
+	if out := ok(t, rt, "rm", "--recursive", "/half"); out != fmt.Sprintf("rm --recursive: /half (%d files, 1 directories)\n", branchFiles-branchDeletes) {
 		t.Errorf("rm --recursive of an interrupted branch stdout = %q", out)
 	}
 
 	// The sweep finishes every marked branch: /orphan, which an
-	// interrupted run left, goes with /other, and the totals count both.
-	first = branch(t, rt, "/orphan", branchFiles)
-	removed = interrupt(t, rt, f, "/orphan", first, branchFiles)
-	f.Restore(t)
+	// interrupted run left, goes with /other, and the totals count both:
+	// /orphan's files left, its root, and /other.
+	branch(t, rt, "/orphan")
+	interrupt(t, rt, r, "/orphan")
 	ok(t, rt, "mkdir", "/other")
-	if out := ok(t, rt, "rm", "--recursive", "/other"); out != fmt.Sprintf("rm --recursive: /other (%d files, 2 directories)\n", branchFiles-removed) {
+	if out := ok(t, rt, "rm", "--recursive", "/other"); out != fmt.Sprintf("rm --recursive: /other (%d files, 2 directories)\n", branchFiles-branchDeletes) {
 		t.Errorf("rm --recursive with another marked branch stdout = %q", out)
 	}
 	if got := names(ok(t, s.tg, "ls", "/")); got != "a c ids objects reports" {
