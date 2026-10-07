@@ -71,12 +71,12 @@ var (
 	ErrNoBookmark = errors.New("the unit has no bookmark of the file")
 )
 
-// FormError reports a Ref in a form an operation does not take: an id
-// where no id can name the target, as for a directory's create, whose
-// directory has no id yet, or a put into a directory by id with no name
-// for the file. The operation refuses it before any I/O,
-// from the request alone, so a caller may run the same check before it
-// builds anything; a command reports it as a usage error.
+// FormError reports a Ref in a form an operation does not take: an id where
+// no id can name the target, as for a directory's create, whose directory
+// has no id yet, or a put into a directory by id with no name for the file.
+// The operation refuses it before any I/O, from the request alone, so a
+// caller may run the same check before it builds anything; a command
+// reports it as a usage error.
 type FormError struct {
 	// Reason says which form the operation takes, in the domain's terms.
 	Reason string

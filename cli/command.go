@@ -77,13 +77,12 @@ type Command struct {
 
 	// PreRun is a hook on the root that runs once per dispatch to a leaf,
 	// after its flags parse and the leaf's checks, Validate last, pass, and
-	// before the Build and its Run, with
-	// the Invocation Run will receive. It suits work every command shares,
-	// such as validating root flags. An error it returns is reported as
-	// Run's would be, and Run is not called. It does not run when the
-	// dispatch ends earlier: on help, an unknown subcommand, or a usage
-	// error. Setting PreRun below the root panics when the tree is
-	// dispatched.
+	// before the Build and its Run, with the Invocation Run will receive.
+	// It suits work every command shares, such as validating root flags. An
+	// error it returns is reported as Run's would be, and Run is not
+	// called. It does not run when the dispatch ends earlier: on help, an
+	// unknown subcommand, or a usage error. Setting PreRun below the root
+	// panics when the tree is dispatched.
 	PreRun func(ctx context.Context, inv *Invocation) error
 
 	flags     *flag.FlagSet
@@ -150,9 +149,9 @@ func (c *Command) Add(subs ...*Command) *Command {
 // since nothing declared later can make it valid. A nil *graph.Node is not
 // caught here: it reaches [graph.Graph.Build], which panics on it when a
 // dispatch runs a leaf at or below c, after PreRun and before any node is
-// constructed. Use anywhere in a tree requires
-// Run's [WithGraph] option, which is checked when the tree is dispatched
-// and panics then, whichever command is selected.
+// constructed. Use anywhere in a tree requires Run's [WithGraph] option,
+// which is checked when the tree is dispatched and panics then, whichever
+// command is selected.
 func (c *Command) Use(refs ...graph.Ref) *Command {
 	if slices.Contains(refs, nil) {
 		panic(fmt.Sprintf("cli: %s: Use of a nil node", c.path()))

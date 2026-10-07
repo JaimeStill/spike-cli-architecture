@@ -498,9 +498,8 @@ func (s *Service) movingByID(ctx context.Context, tx *sqlate.Tx, id string) (mov
 // AddBookmark records that the unit bookmarks the file ref names, by path
 // or by id, and returns the file's row with its path, which for a file
 // named by id is computed in the add's transaction. With active, the
-// bookmark
-// becomes the unit's one active bookmark, and the add is refused with
-// ErrActiveBookmark while another bookmark of the unit is active; the
+// bookmark becomes the unit's one active bookmark, and the add is refused
+// with ErrActiveBookmark while another bookmark of the unit is active; the
 // other one is left as it is. The parent's resolution, the file's lookup,
 // the hold of the file, and the insert run in one transaction.
 //

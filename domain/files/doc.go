@@ -1,20 +1,20 @@
 // Package files is blobfs's file-system domain over the published blobfs
 // library: the directory commands, mkdir, ls, stat, mv, and rmdir, and the
-// bookmark command with add, ls, and rm, and the [Service] they run on;
-// and the object commands, put, cat, cp, and rm, and the [Storage] they
-// run on. It uses blobfs.Directory and blobfs.File as the library defines them and
+// bookmark command with add, ls, and rm, and the [Service] they run on; and
+// the object commands, put, cat, cp, and rm, and the [Storage] they run on.
+// It uses blobfs.Directory and blobfs.File as the library defines them and
 // does not restate them.
 //
 // Beside blobfs's tables the domain owns two of its own, which the app's
 // migration set creates. An owner row binds a top-level directory to a
 // unit: mkdir --unit writes it with the directory, ls --unit checks it at
 // the listed directory's top-level ancestor, whether a path or an id names
-// the directory, and lists a unit's own top-level directories at the root, and rmdir and rm --recursive remove it with the
-// directory. mv keeps a move under one top-level directory, so nothing
-// crosses from one owner's scope into another's. A bookmark binds a unit to
-// a file, at most one of a unit's bookmarks active; rm refuses a file a
-// unit bookmarks, and rm --recursive a branch holding one, before anything
-// is deleted.
+// the directory, and lists a unit's own top-level directories at the root,
+// and rmdir and rm --recursive remove it with the directory. mv keeps a
+// move under one top-level directory, so nothing crosses from one owner's
+// scope into another's. A bookmark binds a unit to a file, at most one of a
+// unit's bookmarks active; rm refuses a file a unit bookmarks, and rm
+// --recursive a branch holding one, before anything is deleted.
 //
 // The package has one file per role:
 //
@@ -55,19 +55,18 @@
 //     sentinels, worded in the domain's terms, and the [FormError] the
 //     form rules return.
 //   - commands.go holds the command functions, one per command over the
-//     node it reads, their flag structs, and the CLI-syntax parsers:
-//     the path-or-id argument, the filter and sort terms, and --unit. A
-//     command that
-//     changes state prints its one-line success there, and a command adds
-//     its flags' wording to the domain's refusals it reports. Every command
-//     that names an existing entry takes an argument written as id:<uuid>
-//     in place of a path: ls, with or without --unit, stat, mv, rmdir, put's
-//     destination, cat, cp, rm, rm --recursive, and bookmark add and rm.
-//     mkdir takes a path alone, since the directory it creates has
-//     no id yet; mv and cp take each argument in either form, so a path
+//     node it reads, their flag structs, and the CLI-syntax parsers: the
+//     path-or-id argument, the filter and sort terms, and --unit. A command
+//     that changes state prints its one-line success there, and a command
+//     adds its flags' wording to the domain's refusals it reports. Every
+//     command that names an existing entry takes an argument written as
+//     id:<uuid> in place of a path: ls, with or without --unit, stat, mv,
+//     rmdir, put's destination, cat, cp, rm, rm --recursive, and bookmark
+//     add and rm. mkdir takes a path alone, since the directory it creates
+//     has no id yet; mv and cp take each argument in either form, so a path
 //     and an id mix. A success line names an entry by its resolved path,
-//     whichever form the argument took.
-//     Each bookmark subcommand requires --unit.
+//     whichever form the argument took. Each bookmark subcommand requires
+//     --unit.
 //   - output.go renders the listings and the rows, over package output's
 //     Table and Record: ls's listing and each half's page, bookmark ls's
 //     listing, and stat's file and directory records.

@@ -66,8 +66,8 @@ func (s *Scope) Use[T any](n *Node[T]) T {
 // After orders the node under construction after r: it starts after r and
 // stops before it. It passes no value and never builds r; the edge holds
 // only when r is in the System, as a root or a node some Use reached, and
-// is dropped otherwise. After panics when r is nil
-// or was defined on another Graph, or after the constructor has returned.
+// is dropped otherwise. After panics when r is nil or was defined on
+// another Graph, or after the constructor has returned.
 func (s *Scope) After(r Ref) {
 	s.check("After")
 	core := s.build.resolve(r, "After")

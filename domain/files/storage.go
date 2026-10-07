@@ -13,14 +13,14 @@ import (
 	"github.com/standards-lab/sqlate"
 )
 
-// This file holds the Storage and the blob protocol: the object
-// operations, Put, Open, Copy, Remove, and RemoveTree, composed from
-// blobfs's protocols over the database and the object
-// store. Every write runs blobfs's two-phase write and every delete its
-// two-phase delete, so the steps, their transactions, and their cleanup
-// are the ones blobfs's conformance suite proves; the domain adds the path
-// resolution and the refusals of its own. It holds the adapter that is
-// blobfs's ObjectStore over go-storage's Store.
+// This file holds the Storage and the blob protocol: the object operations,
+// Put, Open, Copy, Remove, and RemoveTree, composed from blobfs's protocols
+// over the database and the object store. Every write runs blobfs's
+// two-phase write and every delete its two-phase delete, so the steps,
+// their transactions, and their cleanup are the ones blobfs's conformance
+// suite proves; the domain adds the path resolution and the refusals of its
+// own. It holds the adapter that is blobfs's ObjectStore over go-storage's
+// Store.
 
 // Storage is the domain's second API, over the database and the object
 // store: the [Service]'s data access, which it shares, and the object
@@ -82,11 +82,11 @@ func (o objectStore) open(ctx context.Context, key string) (io.ReadCloser, error
 }
 
 // Put writes c as a new file and returns the row available with its path:
-// the file at dst's path, whose parent must exist, or the file named
-// c.Name in the directory with dst's id, whose path blobfs computes before
-// the write. The parent is resolved on the pool. The root
-// is blobfs.ErrRootDirectory and a relative path blobfs.ErrInvalidPath,
-// and a directory id with no c.Name a [FormError], all before any I/O; a
+// the file at dst's path, whose parent must exist, or the file named c.Name
+// in the directory with dst's id, whose path blobfs computes before the
+// write. The parent is resolved on the pool. The root is
+// blobfs.ErrRootDirectory and a relative path blobfs.ErrInvalidPath, and a
+// directory id with no c.Name a [FormError], all before any I/O; a
 // directory that does not exist is blobfs.ErrNotFound.
 //
 // The name is looked up first. A pending row that holds it, which a put
@@ -302,17 +302,16 @@ func (b *deferredBody) close() {
 }
 
 // Remove deletes the file ref names, whatever its status, and returns its
-// row as the delete found it with its path, which for a file named by id
-// is computed in the delete's first transaction. It is blobfs's
-// RemoveFile: the file's
-// lookup, the domain's check that the file may be removed, and blobfs's
-// Files.Delete run in one transaction, which commits the row deleting; the
-// object is then deleted and the row purged. A file a unit has bookmarked
-// is refused with ErrBookmarked in that transaction, before anything is
-// touched. A delete that stopped after its first step left the row
-// deleting, and a later Remove finishes it. The root is
-// blobfs.ErrRootDirectory before any I/O, and a file that does not exist
-// is blobfs.ErrNotFound.
+// row as the delete found it with its path, which for a file named by id is
+// computed in the delete's first transaction. It is blobfs's RemoveFile:
+// the file's lookup, the domain's check that the file may be removed, and
+// blobfs's Files.Delete run in one transaction, which commits the row
+// deleting; the object is then deleted and the row purged. A file a unit
+// has bookmarked is refused with ErrBookmarked in that transaction, before
+// anything is touched. A delete that stopped after its first step left the
+// row deleting, and a later Remove finishes it. The root is
+// blobfs.ErrRootDirectory before any I/O, and a file that does not exist is
+// blobfs.ErrNotFound.
 func (s *Storage) Remove(ctx context.Context, ref Ref) (Located[blobfs.File], error) {
 	if ref.ID == "" {
 		if _, _, err := splitParent(ref.Path); err != nil {
@@ -380,16 +379,16 @@ func (s *Storage) removable(ctx context.Context, tx *sqlate.Tx, f blobfs.File) e
 }
 
 // RemoveTree deletes the directory ref names, by path or by id, and
-// everything beneath it, by blobfs's branch delete: Directories.MarkDeleting marks the branch
-// deleting in one transaction, after which the branch takes nothing new,
-// and blobfs's sweep then runs passes until no work remains, deleting each
-// file's object and purging its row, and removing each directory once it
-// is empty. The directory is read on the pool, and for a branch named by
-// id its path computed, before the mark. Each directory's owner row is
-// removed in the transaction that removes the directory, through the
-// sweep's OnRemoveDirectory hook, so an owned top-level directory goes
-// with its owner row. The result carries the branch's path and counts what
-// the passes removed.
+// everything beneath it, by blobfs's branch delete:
+// Directories.MarkDeleting marks the branch deleting in one transaction,
+// after which the branch takes nothing new, and blobfs's sweep then runs
+// passes until no work remains, deleting each file's object and purging its
+// row, and removing each directory once it is empty. The directory is read
+// on the pool, and for a branch named by id its path computed, before the
+// mark. Each directory's owner row is removed in the transaction that
+// removes the directory, through the sweep's OnRemoveDirectory hook, so an
+// owned top-level directory goes with its owner row. The result carries the
+// branch's path and counts what the passes removed.
 //
 // A branch that holds a file a unit has bookmarked is refused with
 // ErrBookmarked in the mark's transaction, after the mark and before it
