@@ -6,8 +6,9 @@
 //
 // The package exports:
 //
-//   - [Subsystem], the interface a dependency's value implements to take
-//     part in the lifecycle
+//   - [Starter] and [Stopper], the single-method interfaces a dependency's
+//     value implements to take part in startup and in shutdown, and
+//     [Subsystem], which embeds both
 //   - [Config], the Coordinator's configuration, and [Config.Finalize],
 //     which applies its default and environment override
 //   - [Coordinator], which runs one System once, and [New], which returns
@@ -19,11 +20,12 @@
 //
 // # Participation
 //
-// A [graph.Dependency] takes part when its Value implements [Subsystem], or
-// when its constructor recorded a hook. An OnStart or OnShutdown hook
-// overrides the matching method, and a hook with no method makes the
-// dependency a start-only or stop-only participant. A dependency with
-// neither takes no part.
+// A [graph.Dependency] takes part only through its Value's methods, in each
+// phase the Value implements: a [Starter] starts, a [Stopper] shuts down,
+// and a [Subsystem], which is both, does both. A Value that implements one
+// alone is a start-only or stop-only participant, and a Value that
+// implements neither takes no part. A node changes its part only by
+// changing its value, such as a test's substitute through graph's Replace.
 //
 // # Startup
 //
@@ -65,8 +67,10 @@
 //
 //   - Add(Service{Stage}) and the numbered stages give way to the System's
 //     computed layers
-//   - the Service struct gives way to the [Subsystem] interface and the
-//     graph's hooks
+//   - the Service struct, and its Start and Shutdown function fields, give
+//     way to the [Starter] and [Stopper] interfaces on the value itself,
+//     with [Subsystem] embedding both: a Service with one function is a
+//     value implementing one interface
 //   - Service.Check gives way to readiness inferred, at promotion, from a
 //     value implementing go-core's ReadinessChecker
 //   - Run keeps its serve-until-signal and its shutdown

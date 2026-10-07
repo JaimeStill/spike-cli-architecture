@@ -12,6 +12,7 @@ import (
 	godatabase "github.com/standards-lab/go-database"
 	"github.com/standards-lab/go-database/postgres"
 
+	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/internal/app"
 )
 
@@ -26,7 +27,7 @@ import (
 func schemaRun(t *testing.T, args ...string) string {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code := app.New(&out, &errOut).Run(context.Background(), append([]string{"schema"}, args...))
+	code := app.New(cli.Streams{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut}).Run(context.Background(), append([]string{"schema"}, args...))
 	if code != process.ExitOK || errOut.Len() != 0 {
 		t.Fatalf("schema %s: code = %d, stderr = %q", strings.Join(args, " "), code, errOut.String())
 	}

@@ -1,14 +1,13 @@
 package graph
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
 )
 
-// entry is one node in one Build: its state, its value once built, the
-// edges its constructor recorded, and its hooks.
+// entry is one node in one Build: its state, its value once built, and the
+// edges its constructor recorded.
 type entry struct {
 	node     *node
 	building bool
@@ -18,9 +17,7 @@ type entry struct {
 	uses []*node
 	// after are the order-only targets the constructor named; the ones not
 	// in the System are dropped when the layers are computed.
-	after      []*node
-	onStart    func(context.Context) error
-	onShutdown func(context.Context) error
+	after []*node
 }
 
 // build is the state of one [Graph.Build].
@@ -33,7 +30,9 @@ type build struct {
 }
 
 // abort carries a constructor's labelled error out of the dependents whose
-// Use reached it, up to Build, which recovers it and returns the error.
+// Use reached it, up to Build, which recovers it and returns the error. A
+// constructor that recovers it instead breaks that unwinding, which
+// construct detects and panics on.
 type abort struct {
 	err error
 }
@@ -47,6 +46,10 @@ type abort struct {
 // dependency cycle, among the nodes Use reaches or the ordering edges After
 // adds among them. It checks every root before it constructs any, so a
 // wiring mistake in one root panics before another root's constructor runs.
+// It also panics when a constructor returns after a Use it made aborted,
+// which only a recover in the constructor allows: a constructor must not
+// recover. The first Build freezes g: [Graph.Define] and [Graph.Replace]
+// panic after it.
 func (g *Graph) Build(roots ...Ref) (sys *System, err error) {
 	g.built = true
 	b := &build{graph: g, entries: make(map[*node]*entry)}
@@ -91,7 +94,10 @@ func (b *build) resolve(r Ref, op string) *node {
 
 // construct builds n unless it is built already, and returns its
 // constructor's labelled error. Reaching a node under construction is a
-// cycle, and panics with its path.
+// cycle, and panics with its path. A constructor that returns, with a value
+// or an error, after a Use it made aborted has recovered the abort, and
+// construct panics naming it, since the failure that aborted the Use would
+// otherwise be lost.
 func (b *build) construct(n *node) error {
 	if e, ok := b.entries[n]; ok {
 		if e.building {
@@ -102,12 +108,18 @@ func (b *build) construct(n *node) error {
 	e := &entry{node: n, building: true}
 	b.entries[n] = e
 	b.stack = append(b.stack, n)
+	for _, observe := range b.graph.observers {
+		observe(n.name)
+	}
 	s := &Scope{build: b, entry: e}
 	defer func() {
 		s.done = true
 		b.stack = b.stack[:len(b.stack)-1]
 	}()
 	v, err := n.ctor(s)
+	if s.aborted != "" {
+		panic(s.recovered())
+	}
 	if err != nil {
 		return fmt.Errorf("%s: %w", n.name, err)
 	}

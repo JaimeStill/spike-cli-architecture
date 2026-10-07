@@ -20,6 +20,12 @@ import (
 // Set the exported fields in a composite literal, then attach subcommands
 // with [Command.Add], declare graph dependencies with [Command.Use], and
 // define flags on [Command.Flags].
+//
+// A dispatch to a leaf runs its checks and hooks in one order, stopping at
+// the first that fails: Args, the flags named by [Command.Require], the
+// groups declared by [Command.Exclusive], Validate, the root's PreRun, the
+// Build of the nodes the path declares, and Run. Everything before the
+// Build is checked on the command line alone, so bad input builds nothing.
 type Command struct {
 	// Name is the word that selects the command under its parent. For the
 	// root it is the program name shown in usage lines.
@@ -33,11 +39,36 @@ type Command struct {
 	// as "<container> <path>". It is empty for a command that takes none.
 	Synopsis string
 
-	// Args validates a leaf's positional arguments before Run is called,
-	// such as [NoArgs] or [ExactArgs]. An error it returns is reported as a
-	// usage error, with ExitUsage, and Run is not called. A nil Args accepts
-	// any count. Setting Args on a parent panics when the tree is dispatched.
+	// Footer writes text the command appends to its own generated help,
+	// such as a listing the program generates: the help prints a blank line
+	// and then what Footer writes, after every standard section, or nothing
+	// more when Footer writes nothing. It applies wherever the command's
+	// full help prints, on -h or --help and when a parent runs with no
+	// subcommand or an unknown one, and not to the short usage a usage error
+	// prints. Descendants do not inherit it. The help is rendered in memory
+	// before it is printed, so a write to w cannot fail; a nil Footer
+	// appends nothing.
+	Footer func(w io.Writer)
+
+	// Args checks how many positional arguments a leaf was given, such as
+	// [NoArgs] or [ExactArgs], first of the leaf's checks; what the
+	// arguments say, and every flag value, is Validate's to check. An error
+	// it returns is reported as a usage error, with ExitUsage, and Run is
+	// not called. A nil Args accepts any count. Setting Args on a parent
+	// panics when the tree is dispatched.
 	Args func(args []string) error
+
+	// Validate checks a leaf's input as a whole, its positional arguments
+	// in inv.Args and its flag values, such as parsing a flag into the
+	// value Run uses or refusing a combination of them. It runs after Args
+	// and the Require and Exclusive checks, and before the root's PreRun
+	// and the Build, so input it refuses builds nothing; inv has no node
+	// values yet, and [Invocation.Get] panics in it. An error it returns
+	// is always a usage error, reported with the command's usage and
+	// ExitUsage whether or not it is a [UsageError], and Run is not
+	// called. A nil Validate accepts any input. Setting Validate on a
+	// parent panics when the tree is dispatched.
+	Validate func(inv *Invocation) error
 
 	// Run runs a leaf command. An error it returns is reported on stderr:
 	// a [UsageError] with the command's usage and ExitUsage, any other
@@ -45,13 +76,13 @@ type Command struct {
 	Run func(ctx context.Context, inv *Invocation) error
 
 	// PreRun is a hook on the root that runs once per dispatch to a leaf,
-	// after its flags parse and pass their checks and before its Run, with
-	// the Invocation Run will receive. It suits work every command shares,
-	// such as validating root flags. An error it returns is reported as
-	// Run's would be, and Run is not called. It does not run when the
-	// dispatch ends earlier: on help, an unknown subcommand, or a usage
-	// error. Setting PreRun below the root panics when the tree is
-	// dispatched.
+	// after its flags parse and the leaf's checks, Validate last, pass, and
+	// before the Build and its Run, with the Invocation Run will receive.
+	// It suits work every command shares, such as validating root flags. An
+	// error it returns is reported as Run's would be, and Run is not
+	// called. It does not run when the dispatch ends earlier: on help, an
+	// unknown subcommand, or a usage error. Setting PreRun below the root
+	// panics when the tree is dispatched.
 	PreRun func(ctx context.Context, inv *Invocation) error
 
 	flags     *flag.FlagSet
@@ -61,33 +92,6 @@ type Command struct {
 	required  []string    // flag names from Require, in order
 	exclusive [][]string  // flag groups from Exclusive, in order
 	uses      []graph.Ref // graph nodes from Use, in order
-}
-
-// Invocation is what a running command receives: its positional arguments
-// and the writers the dispatcher was given.
-type Invocation struct {
-	// Args holds the positional arguments left after flag parsing.
-	Args []string
-
-	// Stdout and Stderr are the writers passed to [Run].
-	Stdout io.Writer
-	Stderr io.Writer
-
-	// System is the System built for the nodes the leaf's path declares
-	// with [Command.Use], set when the path declares any; it is nil for a
-	// leaf whose path declares none, and while the root's PreRun runs,
-	// since PreRun runs before the Build.
-	System *graph.System
-
-	changed map[string]bool
-}
-
-// Changed reports whether the flag called name was set on the command
-// line, even to its default value, rather than left at its default. It
-// covers the command's own flags and the root flags, wherever in the
-// command line a root flag was given; it is false for any other name.
-func (inv *Invocation) Changed(name string) bool {
-	return inv.changed[name]
 }
 
 // Flags returns the command's flag set, creating it on first use. The set
@@ -137,16 +141,17 @@ func (c *Command) Add(subs ...*Command) *Command {
 // union of the nodes declared along its path, from the root to itself, so a
 // parent's nodes are inherited by every leaf below it, and a node declared
 // at several levels counts once. [Run] builds that union and runs the leaf
-// under it, with [Invocation].System set.
+// under it, and the leaf reads each declared node's value with
+// [Invocation.Get].
 //
 // Use with no refs declares nothing, as Require with no names requires
 // nothing. An untyped nil ref panics here, as Add's wiring mistakes do,
 // since nothing declared later can make it valid. A nil *graph.Node is not
 // caught here: it reaches [graph.Graph.Build], which panics on it when a
 // dispatch runs a leaf at or below c, after PreRun and before any node is
-// constructed. Use anywhere in a tree requires
-// Run's [WithGraph] option, which is checked when the tree is dispatched
-// and panics then, whichever command is selected.
+// constructed. Use anywhere in a tree requires Run's [WithGraph] option,
+// which is checked when the tree is dispatched and panics then, whichever
+// command is selected.
 func (c *Command) Use(refs ...graph.Ref) *Command {
 	if slices.Contains(refs, nil) {
 		panic(fmt.Sprintf("cli: %s: Use of a nil node", c.path()))

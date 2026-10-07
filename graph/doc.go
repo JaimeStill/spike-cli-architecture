@@ -2,7 +2,8 @@
 // values inertly, each a name and a constructor; [Graph.Build] constructs
 // what its roots reach and returns it as a [System] of [Dependency] values
 // in computed layers. The lifecycle package runs a System: it starts the
-// layers in order and stops them in reverse.
+// layers in order and stops them in reverse, each node taking part through
+// its value's own methods.
 //
 // The package exports:
 //
@@ -12,18 +13,19 @@
 //     nothing
 //   - [Graph.Replace], which swaps a node's constructor before Build, for a
 //     test's substitute
+//   - [Graph.Observe], which adds a function a Build calls with each node's
+//     name as it begins to construct it, for tracing what a Build reaches
 //   - [Graph.Build], which constructs what the roots reach into a System
 //   - [Node], a typed handle on one node, and [Node.Name], its name
-//   - [Ref], any Node whatever its type, sealed to Node
+//   - [Ref], any Node whatever its type, sealed to Node, and its Name
 //   - [Scope], what a constructor receives
 //   - [Scope.Use], which returns a dependency's value, building it if
 //     needed
 //   - [Scope.After], which orders the node after another without its value
-//   - [Scope.OnStart] and [Scope.OnShutdown], which record the node's hooks
 //   - [System], what one Build constructed
 //   - [System.Get], which returns a node's value
 //   - [System.Layers], which returns the built nodes in layers
-//   - [Dependency], one built node: its name, value, and hooks
+//   - [Dependency], one built node: its name and value
 //
 // # Discovery
 //
@@ -52,20 +54,27 @@
 //
 // A constructor's error fails the Build, labelled with its node's name and
 // wrapping the error; a failing dependency aborts every constructor whose
-// Use reached it, and Build reports the dependency's error. Wiring mistakes
-// panic with a "graph: " message, as each symbol's documentation states: a
-// dependency cycle, a node used on a Graph it was not defined on, a Scope
-// used after its constructor returned, a hook recorded twice, a Replace
-// after Build, a Get of a node not in the System, a nil constructor, and an
-// empty or duplicate name. Build checks its roots, for a nil node or one
-// defined on another Graph, before it constructs any of them, so a mistake
-// in any root panics before a constructor runs.
+// Use reached it, and Build reports the dependency's error.
+//
+// [Scope.Use] returns the dependency's value itself, so the abort unwinds
+// by panic, which Build recovers. A constructor must not recover it: one
+// that returns, with a value or an error, after a Use it made aborted would
+// lose the failure, so Build panics naming the constructor and the Use.
+//
+// Wiring mistakes panic with a "graph: " message, as each symbol's
+// documentation states: a dependency cycle, a node used on a Graph it was
+// not defined on, a Scope used after its constructor returned, a recovered
+// abort, a Define or Replace after Build, a Get of a node not in the
+// System, a nil constructor or observer, and an empty or duplicate name.
+// Build checks its roots, for a nil node or one defined on another Graph,
+// before it constructs any of them, so a mistake in any root panics before
+// a constructor runs.
 //
 // # Promotion
 //
 // The package is a candidate for go-core, shaped like the cli package is
 // shaped for go-cli-sdk: its API is standard-library-only and knows nothing
-// of lifecycles beyond carrying each node's hooks.
+// of lifecycles; a lifecycle reads each node's part from its value.
 //
 // The package imports only the standard library.
 package graph

@@ -10,13 +10,6 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
-// Subsystem is a value with a lifecycle. A [graph.Dependency] whose Value
-// implements it takes part in a [Coordinator]'s startup and shutdown.
-type Subsystem interface {
-	Start(ctx context.Context) error
-	Shutdown(ctx context.Context) error
-}
-
 // Coordinator runs one built [graph.System]: it starts the System's
 // subsystems layer by layer, runs or serves, and shuts them down in reverse.
 // A Coordinator runs once.
@@ -127,20 +120,18 @@ func cutShort(ctx context.Context, errs []error) bool {
 }
 
 // participants returns the engine steps for one layer's dependencies, in
-// layer order. A hook overrides the matching [Subsystem] method, and a hook
-// alone makes a start-only or stop-only participant; a dependency with
-// neither a method nor a hook is skipped.
+// layer order. A value takes part in each phase it implements: a [Starter]
+// in startup, a [Stopper] in shutdown, and a value that is neither is
+// skipped.
 func participants(layer []graph.Dependency) []step {
 	var steps []step
 	for _, d := range layer {
-		s := step{name: d.Name, start: d.OnStart, stop: d.OnShutdown}
-		if sub, ok := d.Value.(Subsystem); ok {
-			if s.start == nil {
-				s.start = sub.Start
-			}
-			if s.stop == nil {
-				s.stop = sub.Shutdown
-			}
+		s := step{name: d.Name}
+		if v, ok := d.Value.(Starter); ok {
+			s.start = v.Start
+		}
+		if v, ok := d.Value.(Stopper); ok {
+			s.stop = v.Shutdown
 		}
 		if s.start == nil && s.stop == nil {
 			continue

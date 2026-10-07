@@ -5,6 +5,8 @@ import (
 	"github.com/standards-lab/go-database/postgres"
 	"github.com/standards-lab/go-storage"
 	"github.com/standards-lab/go-storage/azureblob"
+	"github.com/standards-lab/sqlate"
+	sqlpostgres "github.com/standards-lab/sqlate/postgres"
 
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 	"github.com/JaimeStill/spike-cli-architecture/lifecycle"
@@ -15,34 +17,23 @@ import (
 // BLOBFS_DATABASE_HOST, BLOBFS_STORAGE_ENDPOINT, or BLOBFS_SHUTDOWN_TIMEOUT.
 const envPrefix = "BLOBFS"
 
-// infrastructure is the graph's infrastructure nodes: each configuration,
-// and the database and object store built from them. Every value is read or
+// defineInfrastructure defines the infrastructure nodes on g into n: each
+// configuration, and the database, its sqlate wrapping, and the object
+// store built from them. It constructs nothing. Every value is read or
 // constructed in its node's constructor, which runs only when a Build
-// reaches the node, so configuration is read only for a built System, never
-// in [New] and never for a run that builds nothing.
+// reaches the node, so configuration is read only for a built System,
+// never in [New] and never for a run that builds nothing.
 //
 // *database.DB and *storage.Store each implement lifecycle.Subsystem, a
 // Start (a ping, a probe) and a Shutdown, so the lifecycle starts and shuts
-// them down with no hooks recorded here.
-type infrastructure struct {
-	databaseConfig  *graph.Node[database.Config]
-	storageConfig   *graph.Node[storage.Config]
-	lifecycleConfig *graph.Node[lifecycle.Config]
-	database        *graph.Node[*database.DB]
-	store           *graph.Node[*storage.Store]
-}
-
-// defineInfrastructure defines the infrastructure nodes on g. It constructs
-// nothing.
-func defineInfrastructure(g *graph.Graph) *infrastructure {
-	in := &infrastructure{
-		databaseConfig:  g.Define("database config", finalized[database.Config]),
-		storageConfig:   g.Define("storage config", finalized[storage.Config]),
-		lifecycleConfig: g.Define("lifecycle config", finalized[lifecycle.Config]),
-	}
-	in.database = g.Define("database", in.newDatabase)
-	in.store = g.Define("store", in.newStore)
-	return in
+// them down through their own methods.
+func defineInfrastructure(g *graph.Graph, n *Nodes) {
+	n.DatabaseConfig = g.Define("database config", finalized[database.Config])
+	n.StorageConfig = g.Define("storage config", finalized[storage.Config])
+	n.LifecycleConfig = g.Define("lifecycle config", finalized[lifecycle.Config])
+	n.Database = g.Define("database", newDatabase(n))
+	n.SQL = g.Define("sql", newSQL(n))
+	n.Store = g.Define("store", newStore(n))
 }
 
 // finalizer is a configuration finalized from the environment under a
@@ -66,8 +57,21 @@ func finalized[T any, P finalizer[T]](*graph.Scope) (T, error) {
 // BLOBFS_DATABASE_HOST, _PORT, _NAME, _USER, _PASSWORD, and the pool and
 // timeout settings go-database names. It does no I/O: the pool first
 // connects in Start, the ping bounded by the configuration's conn_timeout.
-func (in *infrastructure) newDatabase(s *graph.Scope) (*database.DB, error) {
-	return postgres.New(s.Use(in.databaseConfig))
+func newDatabase(n *Nodes) func(*graph.Scope) (*database.DB, error) {
+	return func(s *graph.Scope) (*database.DB, error) {
+		return postgres.New(s.Use(n.DatabaseConfig))
+	}
+}
+
+// newSQL constructs the database's pool wrapped in sqlate's Postgres
+// dialect, the one *sqlate.DB the migrator and the files Service both use.
+// It does no I/O, and records no start of its own: the pool is the
+// database's, which the lifecycle starts and shuts down through the
+// database node.
+func newSQL(n *Nodes) func(*graph.Scope) (*sqlate.DB, error) {
+	return func(s *graph.Scope) (*sqlate.DB, error) {
+		return sqlate.Wrap(s.Use(n.Database).Conn(), sqlpostgres.Dialect{}), nil
+	}
 }
 
 // newStore constructs the object store over the Azure Blob provider from
@@ -76,11 +80,13 @@ func (in *infrastructure) newDatabase(s *graph.Scope) (*database.DB, error) {
 // under BLOBFS_STORAGE_OPTIONS_. It does no I/O: Start creates the
 // container when it is missing and probes the service, both bounded by the
 // configuration's request_timeout.
-func (in *infrastructure) newStore(s *graph.Scope) (*storage.Store, error) {
-	cfg := s.Use(in.storageConfig)
-	client, err := azureblob.New(cfg)
-	if err != nil {
-		return nil, err
+func newStore(n *Nodes) func(*graph.Scope) (*storage.Store, error) {
+	return func(s *graph.Scope) (*storage.Store, error) {
+		cfg := s.Use(n.StorageConfig)
+		client, err := azureblob.New(cfg)
+		if err != nil {
+			return nil, err
+		}
+		return storage.New(client, cfg), nil
 	}
-	return storage.New(client, cfg), nil
 }

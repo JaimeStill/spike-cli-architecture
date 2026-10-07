@@ -1,57 +1,29 @@
 package graph
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // Graph describes a set of nodes and their constructors. Describing is
 // inert: [Graph.Define] and [Graph.Replace] record constructors and run
-// none, and only [Graph.Build] constructs anything. A Graph is not safe for
-// concurrent use.
+// none, and only [Graph.Build] constructs anything. The first Build freezes
+// the description: Define and Replace panic after it. A Graph is not safe
+// for concurrent use.
 type Graph struct {
 	nodes []*node
-	names map[string]bool
+	// built is set by the first Build, which freezes the description:
+	// Define and Replace panic after it.
 	built bool
+	// observers are called, in the order added, as a Build begins each
+	// node.
+	observers []func(name string)
 }
 
 // New returns an empty Graph.
 func New() *Graph {
-	return &Graph{names: make(map[string]bool)}
+	return &Graph{}
 }
-
-// node is the untyped core of a [Node]: what a Build needs to construct it
-// without knowing its type.
-type node struct {
-	graph *Graph
-	name  string
-	// index is the node's position in definition order, the order of the
-	// nodes within one layer.
-	index int
-	// ctor is the typed constructor, wrapped to return its value as any.
-	ctor func(*Scope) (any, error)
-}
-
-// Node is one node of a [Graph], defined by [Graph.Define]: a name and a
-// constructor of a T. It is a handle, not a value; a constructor reaches
-// the value through [Scope.Use], and a program through [System.Get].
-type Node[T any] struct {
-	core *node
-}
-
-// Ref is any [Node], whatever its type: what [Graph.Build] takes as roots
-// and [Scope.After] as an ordering target. It is sealed; only *Node[T]
-// implements it.
-type Ref interface {
-	ref() *node
-}
-
-func (n *Node[T]) ref() *node {
-	if n == nil {
-		return nil
-	}
-	return n.core
-}
-
-// Name returns the name the node was defined with.
-func (n *Node[T]) Name() string { return n.core.name }
 
 // erase wraps a typed constructor to return its value as any.
 func erase[T any](ctor func(*Scope) (T, error)) func(*Scope) (any, error) {
@@ -63,19 +35,21 @@ func erase[T any](ctor func(*Scope) (T, error)) func(*Scope) (any, error) {
 
 // Define adds a node named name, constructed by ctor, and returns its
 // handle. It runs nothing: ctor runs only when a [Graph.Build] reaches the
-// node. Define panics when name is empty or already defined on g, or when
-// ctor is nil.
+// node. Define panics once g has run a Build, when name is empty or already
+// defined on g, or when ctor is nil.
 func (g *Graph) Define[T any](name string, ctor func(*Scope) (T, error)) *Node[T] {
+	if g.built {
+		panic(fmt.Sprintf("graph: Define of %q after Build", name))
+	}
 	if name == "" {
 		panic("graph: Define with an empty name")
 	}
-	if g.names[name] {
+	if slices.ContainsFunc(g.nodes, func(n *node) bool { return n.name == name }) {
 		panic(fmt.Sprintf("graph: Define of duplicate name %q", name))
 	}
 	if ctor == nil {
 		panic(fmt.Sprintf("graph: Define %q with a nil constructor", name))
 	}
-	g.names[name] = true
 	core := &node{graph: g, name: name, index: len(g.nodes), ctor: erase(ctor)}
 	g.nodes = append(g.nodes, core)
 	return &Node[T]{core: core}
@@ -95,4 +69,18 @@ func (g *Graph) Replace[T any](n *Node[T], ctor func(*Scope) (T, error)) {
 		panic(fmt.Sprintf("graph: Replace of %q with a nil constructor", n.core.name))
 	}
 	n.core.ctor = erase(ctor)
+}
+
+// Observe adds fn, which every later Build calls with a node's name as it
+// begins to construct the node, before the constructor runs: each node a
+// Build reaches, once, in the order it reaches them depth-first, the one
+// whose constructor fails included. It is for tracing what a Build
+// constructs, such as a test asserting which nodes a run brought up; fn
+// sees only the name and cannot change the Build. Observe panics on a nil
+// fn.
+func (g *Graph) Observe(fn func(name string)) {
+	if fn == nil {
+		panic("graph: Observe with a nil function")
+	}
+	g.observers = append(g.observers, fn)
 }

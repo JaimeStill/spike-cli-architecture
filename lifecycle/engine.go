@@ -24,13 +24,13 @@ type engine struct {
 	phases [][]step
 }
 
-// start runs one phase: steps concurrently (a single step runs on the
-// caller's goroutine), each under a child of ctx that the phase's first
-// failure cancels. It pushes the steps as one new phase for unwind, whether
-// their starts succeed or not, so a step whose start failed is still stopped,
-// and returns the failures, each labelled "name: err". An error wrapping
-// context.Canceled that arrives once a failure is on record is dropped: it is
-// that failure's consequence.
+// start runs one phase: steps concurrently, each on its own goroutine, even
+// when there is one, under a child of ctx that the phase's first failure
+// cancels. It pushes the steps as one new phase for unwind, whether their
+// starts succeed or not, so a step whose start failed is still stopped, and
+// returns the failures, each labelled "name: err". An error wrapping
+// context.Canceled that arrives once a failure is on record is dropped: it
+// is that failure's consequence.
 func (e *engine) start(ctx context.Context, steps []step) []error {
 	e.phases = append(e.phases, steps)
 
@@ -60,15 +60,11 @@ func (e *engine) start(ctx context.Context, steps []step) []error {
 		cancel()
 	}
 
-	if len(steps) == 1 {
-		run(steps[0])
-	} else {
-		var wg sync.WaitGroup
-		for _, s := range steps {
-			wg.Go(func() { run(s) })
-		}
-		wg.Wait()
+	var wg sync.WaitGroup
+	for _, s := range steps {
+		wg.Go(func() { run(s) })
 	}
+	wg.Wait()
 	return errs
 }
 

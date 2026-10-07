@@ -9,9 +9,6 @@ import (
 
 	"github.com/standards-lab/go-core/process"
 	godatabase "github.com/standards-lab/go-database"
-
-	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
-	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
 // The nodes the schema group declares with Use, driven through App.Run.
@@ -31,43 +28,26 @@ func TestSchema_VerbsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			clearEnv(t)
 			t.Setenv(godatabase.NewEnv("BLOBFS").Name, "app")
-			r := &recorder{}
 			var out, errOut bytes.Buffer
-			a := recordingApp(r, &out, &errOut)
-			// The real migrator, database, and database configuration
-			// constructors run, each recorded; none does I/O. The lifecycle
-			// configuration, the Build's last root, keeps its failing
-			// recorder, so the Build runs every constructor the nodes the
-			// verb's path declares reach and stops before anything starts: a
+			// The production constructors run, and none does I/O; the
+			// lifecycle configuration, the Build's last root, is halted, so
+			// the Build constructs the nodes the verb's path declares and
+			// everything they reach, and stops before anything starts: a
 			// store or storage configuration they reached would be recorded.
-			g, n := a.Graph(), a.Nodes()
-			g.Replace(n.Migrator, func(s *graph.Scope) (*schema.Client, error) {
-				r.record("migrator")
-				return a.NewMigrator(s)
-			})
-			g.Replace(n.Database, func(s *graph.Scope) (*godatabase.DB, error) {
-				r.record("database")
-				return a.NewDatabase(s)
-			})
-			g.Replace(n.DatabaseConfig, func(*graph.Scope) (godatabase.Config, error) {
-				r.record("database config")
-				var cfg godatabase.Config
-				err := cfg.Finalize("BLOBFS")
-				return cfg, err
-			})
+			a, built := haltedApp(&out, &errOut)
 
 			code := a.Run(context.Background(), args)
 
 			if code != process.ExitFailure {
 				t.Errorf("code = %d, want %d", code, process.ExitFailure)
 			}
-			want := "blobfs " + strings.Join(args[:2], " ") + ": lifecycle config: recorded\n"
+			want := "blobfs " + strings.Join(args[:2], " ") + ": lifecycle config: halted\n"
 			if errOut.String() != want {
 				t.Errorf("stderr = %q, want %q", errOut.String(), want)
 			}
-			wantRun := []string{"migrator", "database", "database config", "lifecycle config"}
-			if got := r.log(); !slices.Equal(got, wantRun) {
-				t.Errorf("constructors run = %q, want %q", got, wantRun)
+			wantBuilt := []string{"migrator", "sql", "database", "database config", "lifecycle config"}
+			if got := built.Log(); !slices.Equal(got, wantBuilt) {
+				t.Errorf("nodes built = %q, want %q", got, wantBuilt)
 			}
 		})
 	}
@@ -116,10 +96,10 @@ func TestSchema_ResetWithoutYesBuildsNothing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			clearEnv(t)
-			r := &recorder{}
 			var out, errOut bytes.Buffer
+			a, built := haltedApp(&out, &errOut)
 
-			code := recordingApp(r, &out, &errOut).Run(context.Background(), tt.args)
+			code := a.Run(context.Background(), tt.args)
 
 			if code != process.ExitUsage {
 				t.Errorf("code = %d, want %d", code, process.ExitUsage)
@@ -127,8 +107,8 @@ func TestSchema_ResetWithoutYesBuildsNothing(t *testing.T) {
 			if !strings.HasPrefix(errOut.String(), tt.wantStderr) {
 				t.Errorf("stderr = %q, want it to start with %q", errOut.String(), tt.wantStderr)
 			}
-			if got := r.log(); len(got) != 0 {
-				t.Errorf("constructors run = %q, want none", got)
+			if got := built.Log(); len(got) != 0 {
+				t.Errorf("nodes built = %q, want none", got)
 			}
 		})
 	}

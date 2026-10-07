@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -20,11 +21,17 @@ type result struct {
 	stderr string
 }
 
-// dispatch runs args over root with fresh buffers.
+// dispatch runs args over root with an empty stdin and fresh buffers.
 func dispatch(t *testing.T, root *cli.Command, args ...string) result {
 	t.Helper()
+	return dispatchIn(t, root, strings.NewReader(""), args...)
+}
+
+// dispatchIn runs args over root with stdin and fresh buffers.
+func dispatchIn(t *testing.T, root *cli.Command, stdin io.Reader, args ...string) result {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := cli.Run(context.Background(), root, args, &stdout, &stderr)
+	code := cli.Run(context.Background(), root, args, cli.Streams{Stdin: stdin, Stdout: &stdout, Stderr: &stderr})
 	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
 }
 
@@ -114,6 +121,27 @@ func TestRun_LeafReceivesFlagsAndArgs(t *testing.T) {
 	}
 	if r.stdout != "a b\n" || r.stderr != "" {
 		t.Errorf("stdout, stderr = %q, %q, want %q, empty", r.stdout, r.stderr, "a b\n")
+	}
+}
+
+func TestRun_LeafReadsStdinAndTheDispatcherDoesNot(t *testing.T) {
+	f := newFixture(nil)
+	stdin := strings.NewReader("piped")
+
+	r := dispatchIn(t, f.root, stdin, "echo", "a")
+
+	if r.code != process.ExitOK {
+		t.Fatalf("code = %d, want %d", r.code, process.ExitOK)
+	}
+	if f.inv.Stdin != io.Reader(stdin) {
+		t.Errorf("Invocation.Stdin = %v, want the reader passed to Run", f.inv.Stdin)
+	}
+	if stdin.Len() != len("piped") {
+		t.Errorf("stdin has %d bytes left, want all %d: the dispatcher read it", stdin.Len(), len("piped"))
+	}
+	got, err := io.ReadAll(f.inv.Stdin)
+	if err != nil || string(got) != "piped" {
+		t.Errorf("reading Invocation.Stdin = %q, %v, want %q", got, err, "piped")
 	}
 }
 

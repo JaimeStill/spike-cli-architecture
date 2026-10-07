@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 
+	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/internal/app"
 	"github.com/standards-lab/go-core/process"
 )
@@ -19,5 +20,5 @@ func main() {
 func run() int {
 	ctx, stop := process.SignalContext()
 	defer stop()
-	return app.New(os.Stdout, os.Stderr).Run(ctx, os.Args[1:])
+	return app.New(cli.Streams{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}).Run(ctx, os.Args[1:])
 }

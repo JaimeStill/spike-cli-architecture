@@ -3,11 +3,8 @@ package app_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
-	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/standards-lab/go-core/config"
@@ -15,10 +12,9 @@ import (
 	godatabase "github.com/standards-lab/go-database"
 	"github.com/standards-lab/go-storage"
 
-	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
-	"github.com/JaimeStill/spike-cli-architecture/graph"
+	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/internal/app"
-	"github.com/JaimeStill/spike-cli-architecture/lifecycle"
+	"github.com/JaimeStill/spike-cli-architecture/internal/apptest"
 )
 
 // These tests are hermetic. The ones that read configuration clear every
@@ -30,7 +26,7 @@ import (
 func run(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code = app.New(&out, &errOut).Run(context.Background(), args)
+	code = app.New(cli.Streams{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut}).Run(context.Background(), args)
 	return code, out.String(), errOut.String()
 }
 
@@ -58,50 +54,16 @@ func clearEnv(t *testing.T) {
 	}
 }
 
-// recorder records the constructors a Build runs, in order.
-type recorder struct {
-	mu     sync.Mutex
-	events []string
-}
-
-func (r *recorder) record(event string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, event)
-}
-
-func (r *recorder) log() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return slices.Clone(r.events)
-}
-
-// errRecorded is what a recording constructor fails with, so a Build that
-// reaches one stops there, before anything starts.
-var errRecorded = errors.New("recorded")
-
-// recording returns a constructor that records name on r and fails with
-// errRecorded.
-func recording[T any](r *recorder, name string) func(*graph.Scope) (T, error) {
-	return func(*graph.Scope) (T, error) {
-		r.record(name)
-		var zero T
-		return zero, errRecorded
-	}
-}
-
-// recordingApp returns blobfs with every node of its graph Replace-d by a
-// recording constructor, so r shows any constructor a run reaches.
-func recordingApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
-	a := app.New(stdout, stderr)
-	g, n := a.Graph(), a.Nodes()
-	g.Replace(n.DatabaseConfig, recording[godatabase.Config](r, "database config"))
-	g.Replace(n.StorageConfig, recording[storage.Config](r, "storage config"))
-	g.Replace(n.LifecycleConfig, recording[lifecycle.Config](r, "lifecycle config"))
-	g.Replace(n.Database, recording[*godatabase.DB](r, "database"))
-	g.Replace(n.Store, recording[*storage.Store](r, "store"))
-	g.Replace(n.Migrator, recording[*schema.Client](r, "migrator"))
-	return a
+// haltedApp returns blobfs over stdout and stderr with every run halted
+// before anything starts, by apptest.Halt, and a Recorder of the nodes its
+// runs build. Every other constructor is the production one, and none does
+// I/O, so a run of a command that declares nodes builds them, fails with
+// "lifecycle config: halted", and starts nothing.
+func haltedApp(stdout, stderr *bytes.Buffer) (*app.App, *apptest.Recorder) {
+	a := app.New(cli.Streams{Stdin: strings.NewReader(""), Stdout: stdout, Stderr: stderr})
+	built := apptest.Builds(a)
+	apptest.Halt(a)
+	return a, built
 }
 
 func TestRun_BuildsNothingWithoutALeafThatDeclaresNodes(t *testing.T) {
@@ -133,16 +95,16 @@ func TestRun_BuildsNothingWithoutALeafThatDeclaresNodes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			clearEnv(t)
-			r := &recorder{}
 			var out, errOut bytes.Buffer
+			a, built := haltedApp(&out, &errOut)
 
-			code := recordingApp(r, &out, &errOut).Run(context.Background(), tt.args)
+			code := a.Run(context.Background(), tt.args)
 
 			if code != tt.wantCode {
 				t.Errorf("code = %d, want %d; stderr = %q", code, tt.wantCode, errOut.String())
 			}
-			if got := r.log(); len(got) != 0 {
-				t.Errorf("constructors run = %q, want none", got)
+			if got := built.Log(); len(got) != 0 {
+				t.Errorf("nodes built = %q, want none", got)
 			}
 		})
 	}
@@ -214,7 +176,7 @@ func TestRun_ConfigurationReadOnlyOnRequest(t *testing.T) {
 func TestNew_IsCold(t *testing.T) {
 	var out, errOut bytes.Buffer
 
-	app.New(&out, &errOut)
+	app.New(cli.Streams{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut})
 
 	if out.Len() != 0 || errOut.Len() != 0 {
 		t.Errorf("New() wrote %q, %q, want nothing", out.String(), errOut.String())
@@ -244,7 +206,7 @@ func TestRun_NoArgumentsPrintsRootHelp(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Usage:\n  blobfs <command> [flags]\n",
-		"\nCommands:\n  version   Print the blobfs version\n  schema    Report, apply, revert, and reset the two migration sets\n",
+		"\nCommands:\n  version    Print the blobfs version\n  schema     Report, apply, revert, and reset the two migration sets\n",
 		"\nFlags:\n  --help   Show help for blobfs\n",
 	} {
 		if !strings.Contains(stdout, want) {
