@@ -159,25 +159,35 @@ func TestCommands_RefuseMalformedInputBeforeAnythingIsBuilt(t *testing.T) {
 }
 
 func TestCommands_AddFlagWordingToTheDomainsRefusals(t *testing.T) {
+	// The unit rules are the domain's, run in Validate: each refusal is a
+	// usage error worded with the command's flags, and nothing is built.
 	tests := []struct {
 		name string
 		args []string
 		want string
 	}{
 		{"mkdir --unit below the top level", []string{"mkdir", "/reports/2026", "--unit", unitID},
-			"ownership applies to a top-level directory only; give --unit with a top-level path only"},
-		{"ls / --unit after a cursor", []string{"ls", "/", "--unit", unitID, "--after-dirs", "c"},
-			"the owner listing pages by number only; ls / --unit takes no --after-dirs or --after-files"},
+			"blobfs mkdir: ownership applies to a top-level directory only; give --unit with a top-level path only\n"},
+		{"ls / --unit after a directory cursor", []string{"ls", "/", "--unit", unitID, "--after-dirs", "c"},
+			"blobfs ls: the owner listing pages by number only; ls / --unit takes no --after-dirs or --after-files\n"},
+		{"ls / --unit after a file cursor", []string{"ls", "/", "--unit", unitID, "--after-files", "c"},
+			"blobfs ls: the owner listing pages by number only; ls / --unit takes no --after-dirs or --after-files\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := runCommand(t, nil, tt.args...)
 
-			if r.code != process.ExitFailure {
-				t.Errorf("code = %d, want %d; stderr = %q", r.code, process.ExitFailure, r.stderr)
+			if r.code != process.ExitUsage {
+				t.Errorf("code = %d, want %d; stderr = %q", r.code, process.ExitUsage, r.stderr)
 			}
-			if !strings.Contains(r.stderr, tt.want) {
-				t.Errorf("stderr = %q, want %q", r.stderr, tt.want)
+			if !strings.Contains(r.stderr, tt.want) || !strings.Contains(r.stderr, "Usage:") {
+				t.Errorf("stderr = %q, want %q with the usage", r.stderr, tt.want)
+			}
+			if r.stdout != "" {
+				t.Errorf("stdout = %q, want empty", r.stdout)
+			}
+			if calls := r.rec.Calls(); len(calls) != 0 {
+				t.Errorf("calls = %v, want none: nothing is built", r.rec.Ops())
 			}
 		})
 	}

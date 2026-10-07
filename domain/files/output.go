@@ -64,10 +64,10 @@ func writeBookmarks(w io.Writer, l Listing, p Page[Bookmark]) error {
 	return writePage(w, "bookmarks", "", s)
 }
 
-// WriteFileRecord writes a file's row as stat prints it, one field per
+// writeFileRecord writes a file's row as stat prints it, one field per
 // line. The path line is left out when path is empty, as it is for a stat
 // by id.
-func WriteFileRecord(w io.Writer, path string, f blobfs.File) error {
+func writeFileRecord(w io.Writer, path string, f blobfs.File) error {
 	return output.Record(w, fileRecord(path, f))
 }
 

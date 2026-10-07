@@ -196,10 +196,10 @@ type Bookmark struct {
 // Ref's own path, or, for a Ref by id, the path computed from the row in
 // the operation's own read, so a caller reports a path whichever form
 // named the entry. It is the result of an operation whose result is a row
-// of blobfs's and nothing more: rmdir returns its directory's row so, and
-// rm, cat's open, and bookmark add and rm their file's. An operation with
-// a result type of its own carries the path there instead: a put's, a
-// copy's and a move's, and a branch's delete.
+// of blobfs's and nothing more: remove directory returns its directory's
+// row so, and remove, open, add bookmark, and remove bookmark their file's.
+// An operation with a result type of its own carries the path there
+// instead: put, copy, move, and remove tree.
 type Located[T any] struct {
 	Path string
 	Row  T

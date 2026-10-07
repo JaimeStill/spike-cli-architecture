@@ -50,11 +50,14 @@ func (s *Service) Start(ctx context.Context) error {
 	return nil
 }
 
-// The form rule: the one form of Ref an operation refuses because an id
-// cannot name its target. Every other operation takes either form, a move
-// and a copy each of their two Refs on its own. The operation runs the
-// rule before any I/O, and the command runs the same rule in its Validate,
-// so a refusal is a usage error before anything is built.
+// The request rules: the refusals an operation makes from its request
+// alone. The form rule is the one form of Ref an operation refuses because
+// an id cannot name its target; every other operation takes either form, a
+// move and a copy each of their two Refs on its own. The unit rules are
+// the requests a unit's ownership cannot serve: a unit bound below the top
+// level, and a cursor into the owner listing. The operation runs each rule
+// before any I/O, and the command runs the same rule in its Validate, so a
+// refusal is a usage error before anything is built.
 
 // checkMkdir refuses a directory's create named by id: the directory does
 // not exist yet, so it has no id.
@@ -63,6 +66,36 @@ func checkMkdir(ref Ref) error {
 		return &FormError{Reason: "a directory is created by path, not by id"}
 	}
 	return nil
+}
+
+// checkUnitDepth refuses a directory's create with a unit at a path below
+// the top level with ErrUnitDepth: an owner row binds a top-level
+// directory only. A path that does not split into a parent and a name
+// passes, since the create refuses it itself, and so does an id, which
+// checkMkdir refuses.
+func checkUnitDepth(ref Ref, unit string) error {
+	if unit == "" || ref.ID != "" {
+		return nil
+	}
+	if parent, _, err := splitParent(ref.Path); err == nil && parent != "/" {
+		return ErrUnitDepth
+	}
+	return nil
+}
+
+// checkRootCursor refuses a listing of the root under a unit that
+// continues from a cursor with ErrNoCursorAtRoot: that listing reads the
+// owner read model, which pages by number only.
+func checkRootCursor(ref Ref, l Listing) error {
+	if atRoot(ref) && l.Unit != "" && l.After != (After{}) {
+		return ErrNoCursorAtRoot
+	}
+	return nil
+}
+
+// atRoot reports whether ref names the root, by path or by the root's id.
+func atRoot(ref Ref) bool {
+	return ref.Path == "/" || ref.ID == blobfs.RootID
 }
 
 // label renders ref for an error's label: the path, or the id after kind,
@@ -102,9 +135,8 @@ func (s *Service) List(ctx context.Context, ref Ref, l Listing) (Contents, error
 	if l.Unit != "" {
 		at += " as unit " + l.Unit
 	}
-	atRoot := ref.Path == "/" || ref.ID == blobfs.RootID
-	if atRoot && l.Unit != "" && l.After != (After{}) {
-		return Contents{}, fmt.Errorf("files: ls %s: %w", at, ErrNoCursorAtRoot)
+	if err := checkRootCursor(ref, l); err != nil {
+		return Contents{}, fmt.Errorf("files: list %s: %w", at, err)
 	}
 	c, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (Contents, error) {
 		switch {
@@ -114,7 +146,7 @@ func (s *Service) List(ctx context.Context, ref Ref, l Listing) (Contents, error
 				return Contents{}, err
 			}
 			return s.store.contents(ctx, tx, ref.Path, dir.ID, l)
-		case atRoot:
+		case atRoot(ref):
 			return s.topLevel(ctx, tx, l)
 		case ref.ID != "":
 			dir, err := s.ownedByID(ctx, tx, ref.ID, l.Unit)
@@ -130,7 +162,7 @@ func (s *Service) List(ctx context.Context, ref Ref, l Listing) (Contents, error
 		return s.store.contents(ctx, tx, ref.Path, dir.ID, l)
 	}, sqlate.ReadOnly(), sqlate.Isolation(sql.LevelRepeatableRead))
 	if err != nil {
-		return Contents{}, fmt.Errorf("files: ls %s: %w", at, err)
+		return Contents{}, fmt.Errorf("files: list %s: %w", at, err)
 	}
 	return c, nil
 }
@@ -257,14 +289,14 @@ func (s *Service) Resolve(ctx context.Context, ref Ref) (blobfs.Directory, error
 func (s *Service) Mkdir(ctx context.Context, ref Ref, unit string) (blobfs.Directory, error) {
 	at := label(ref, "id")
 	if err := checkMkdir(ref); err != nil {
-		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", at, err)
+		return blobfs.Directory{}, fmt.Errorf("files: make directory %s: %w", at, err)
 	}
 	parent, name, err := splitParent(ref.Path)
 	if err != nil {
-		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", at, err)
+		return blobfs.Directory{}, fmt.Errorf("files: make directory %s: %w", at, err)
 	}
-	if unit != "" && parent != "/" {
-		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", at, ErrUnitDepth)
+	if err := checkUnitDepth(ref, unit); err != nil {
+		return blobfs.Directory{}, fmt.Errorf("files: make directory %s: %w", at, err)
 	}
 	create := func(sess sqlate.Session) (blobfs.Directory, error) {
 		dir, err := s.store.resolve(ctx, sess, parent)
@@ -286,7 +318,7 @@ func (s *Service) Mkdir(ctx context.Context, ref Ref, unit string) (blobfs.Direc
 		})
 	}
 	if err != nil {
-		return blobfs.Directory{}, fmt.Errorf("files: mkdir %s: %w", at, err)
+		return blobfs.Directory{}, fmt.Errorf("files: make directory %s: %w", at, err)
 	}
 	return made, nil
 }
@@ -303,7 +335,7 @@ func (s *Service) Mkdir(ctx context.Context, ref Ref, unit string) (blobfs.Direc
 func (s *Service) RemoveDirectory(ctx context.Context, ref Ref) (Located[blobfs.Directory], error) {
 	at := label(ref, "directory")
 	if err := refuseRoot(ref); err != nil {
-		return Located[blobfs.Directory]{}, fmt.Errorf("files: rmdir %s: %w", at, err)
+		return Located[blobfs.Directory]{}, fmt.Errorf("files: remove directory %s: %w", at, err)
 	}
 	removed, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (Located[blobfs.Directory], error) {
 		dir, err := s.store.directory(ctx, tx, ref)
@@ -320,7 +352,7 @@ func (s *Service) RemoveDirectory(ctx context.Context, ref Ref) (Located[blobfs.
 		return Located[blobfs.Directory]{Path: path, Row: dir}, s.store.blobfs.Directories.Delete(ctx, tx, dir.ID)
 	})
 	if err != nil {
-		return Located[blobfs.Directory]{}, fmt.Errorf("files: rmdir %s: %w", at, err)
+		return Located[blobfs.Directory]{}, fmt.Errorf("files: remove directory %s: %w", at, err)
 	}
 	return removed, nil
 }
@@ -374,21 +406,21 @@ func refuseRoot(ref Ref) error {
 func (s *Service) Move(ctx context.Context, src, dst Ref) (MoveResult, error) {
 	at := label(src, "id") + " " + label(dst, "directory")
 	if src.ID == blobfs.RootID {
-		return MoveResult{}, fmt.Errorf("files: mv %s: %w", at, blobfs.ErrRootDirectory)
+		return MoveResult{}, fmt.Errorf("files: move %s: %w", at, blobfs.ErrRootDirectory)
 	}
 	if src.ID == "" {
 		if _, _, err := splitParent(src.Path); err != nil {
-			return MoveResult{}, fmt.Errorf("files: mv %s: %w", at, err)
+			return MoveResult{}, fmt.Errorf("files: move %s: %w", at, err)
 		}
 	}
 	if dst.ID == "" && !strings.HasPrefix(dst.Path, "/") {
-		return MoveResult{}, fmt.Errorf("files: mv %s: %w: %q does not start with /", at, blobfs.ErrInvalidPath, dst.Path)
+		return MoveResult{}, fmt.Errorf("files: move %s: %w: %q does not start with /", at, blobfs.ErrInvalidPath, dst.Path)
 	}
 	res, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (MoveResult, error) {
 		return s.move(ctx, tx, src, dst)
 	})
 	if err != nil {
-		return MoveResult{}, fmt.Errorf("files: mv %s: %w", at, err)
+		return MoveResult{}, fmt.Errorf("files: move %s: %w", at, err)
 	}
 	return res, nil
 }
@@ -516,7 +548,7 @@ func (s *Service) movingByID(ctx context.Context, tx *sqlate.Tx, id string) (mov
 func (s *Service) AddBookmark(ctx context.Context, ref Ref, unit string, active bool) (Located[blobfs.File], error) {
 	at := label(ref, "file")
 	if err := refuseRoot(ref); err != nil {
-		return Located[blobfs.File]{}, fmt.Errorf("files: bookmark add %s: %w", at, err)
+		return Located[blobfs.File]{}, fmt.Errorf("files: add bookmark %s: %w", at, err)
 	}
 	f, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (Located[blobfs.File], error) {
 		f, err := s.store.file(ctx, tx, ref)
@@ -536,7 +568,7 @@ func (s *Service) AddBookmark(ctx context.Context, ref Ref, unit string, active 
 		return Located[blobfs.File]{Path: path, Row: f}, s.store.insertBookmark(ctx, tx, unit, f.ID, active)
 	})
 	if err != nil {
-		return Located[blobfs.File]{}, fmt.Errorf("files: bookmark add %s as unit %s: %w", at, unit, err)
+		return Located[blobfs.File]{}, fmt.Errorf("files: add bookmark %s as unit %s: %w", at, unit, err)
 	}
 	return f, nil
 }
@@ -560,7 +592,7 @@ func (s *Service) RemoveBookmark(ctx context.Context, ref Ref, unit string) (Loc
 		err = s.store.deleteBookmark(ctx, s.store.db, unit, f.ID)
 	}
 	if err != nil {
-		return Located[blobfs.File]{}, fmt.Errorf("files: bookmark rm %s as unit %s: %w", at, unit, err)
+		return Located[blobfs.File]{}, fmt.Errorf("files: remove bookmark %s as unit %s: %w", at, unit, err)
 	}
 	return Located[blobfs.File]{Path: path, Row: f}, nil
 }
@@ -576,7 +608,7 @@ func (s *Service) ListBookmarks(ctx context.Context, unit string, l Listing) (Pa
 		return s.store.bookmarksOf(ctx, tx, unit, Listing{Page: l.Page, Size: l.Size, Sort: l.Sort, Total: l.Total})
 	}, sqlate.ReadOnly(), sqlate.Isolation(sql.LevelRepeatableRead))
 	if err != nil {
-		return Page[Bookmark]{}, fmt.Errorf("files: bookmark ls as unit %s: %w", unit, err)
+		return Page[Bookmark]{}, fmt.Errorf("files: list bookmarks as unit %s: %w", unit, err)
 	}
 	return p, nil
 }

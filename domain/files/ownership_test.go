@@ -59,8 +59,10 @@ func TestMkdir_AUnitBindsATopLevelDirectoryOnly(t *testing.T) {
 
 	_, err := s.Mkdir(context.Background(), files.Ref{Path: "/reports/2026"}, unitID)
 
-	if !errors.Is(err, files.ErrUnitDepth) {
-		t.Errorf("Mkdir() = %v, want ErrUnitDepth", err)
+	// The Service enforces the rule the command's Validate runs, labelled
+	// with the operation's name.
+	if !errors.Is(err, files.ErrUnitDepth) || !strings.HasPrefix(err.Error(), "files: make directory /reports/2026: ") {
+		t.Errorf("Mkdir() = %v, want ErrUnitDepth labelled with the make directory", err)
 	}
 	if len(rec.Calls()) != 0 {
 		t.Errorf("calls = %v, want none", rec.Ops())
@@ -150,8 +152,10 @@ func TestList_TheRootAsAUnitTakesNoCursor(t *testing.T) {
 
 	_, err := s.List(context.Background(), files.Ref{Path: "/"}, files.Listing{Page: 1, Size: 20, Unit: unitID, After: files.After{Directories: "c"}})
 
-	if !errors.Is(err, files.ErrNoCursorAtRoot) {
-		t.Errorf("List() = %v, want ErrNoCursorAtRoot", err)
+	// The Service enforces the rule the command's Validate runs, labelled
+	// with the operation's name.
+	if !errors.Is(err, files.ErrNoCursorAtRoot) || !strings.HasPrefix(err.Error(), "files: list / as unit "+unitID+": ") {
+		t.Errorf("List() = %v, want ErrNoCursorAtRoot labelled with the list", err)
 	}
 	if len(rec.Calls()) != 0 {
 		t.Errorf("calls = %v, want none", rec.Ops())

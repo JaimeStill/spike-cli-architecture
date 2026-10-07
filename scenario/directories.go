@@ -15,7 +15,7 @@ import (
 // directoriesArea is the directories tour's working area: a top-level
 // directory the tour's unit owns, which the tour creates, works under, and
 // removes, and clears first when an earlier run left it behind.
-const directoriesArea = "/demo-directories"
+const directoriesArea = "/scenario-directories"
 
 // unit is the unit the directories tour creates its working area as, a
 // fixed UUID, so a rerun lists the same unit's directories.
@@ -41,7 +41,7 @@ func directoriesTour(svc *graph.Node[*files.Service]) Scenario {
 		Nodes:   []graph.Ref{svc},
 		Steps: []Step{
 			{Intent: "Clear " + directoriesArea + " if an earlier run left it behind", Action: clearDirectories(svc)},
-			{Intent: "Create " + directoriesArea + " as the demo unit's: mkdir --unit", Action: mkdirArea(svc)},
+			{Intent: "Create " + directoriesArea + " as the scenario unit's: mkdir --unit", Action: mkdirArea(svc)},
 			{Intent: "List the unit's top-level directories: ls / --unit", Action: listUnit(svc)},
 			{Intent: "Create five directories under the working area: mkdir", Action: mkdirChildren(svc)},
 			{Intent: "List the first page of two, by name descending: ls --size 2 --sort name:desc", Action: listFirstPage(svc)},

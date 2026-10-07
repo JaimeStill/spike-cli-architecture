@@ -172,18 +172,18 @@ func (s *Storage) Open(ctx context.Context, ref Ref) (io.ReadCloser, Located[blo
 	at := label(ref, "file")
 	f, err := s.store.file(ctx, s.store.db, ref)
 	if err != nil {
-		return nil, Located[blobfs.File]{}, fmt.Errorf("files: cat %s: %w", at, err)
+		return nil, Located[blobfs.File]{}, fmt.Errorf("files: open %s: %w", at, err)
 	}
 	if err := available(f); err != nil {
-		return nil, Located[blobfs.File]{}, fmt.Errorf("files: cat %s: %w", at, err)
+		return nil, Located[blobfs.File]{}, fmt.Errorf("files: open %s: %w", at, err)
 	}
 	path, err := s.store.filePath(ctx, s.store.db, ref, f)
 	if err != nil {
-		return nil, Located[blobfs.File]{}, fmt.Errorf("files: cat %s: %w", at, err)
+		return nil, Located[blobfs.File]{}, fmt.Errorf("files: open %s: %w", at, err)
 	}
 	body, err := s.objects.open(ctx, f.Key)
 	if err != nil {
-		return nil, Located[blobfs.File]{}, fmt.Errorf("files: cat %s: %w", path, err)
+		return nil, Located[blobfs.File]{}, fmt.Errorf("files: open %s: %w", path, err)
 	}
 	return body, Located[blobfs.File]{Path: path, Row: f}, nil
 }
@@ -223,11 +223,11 @@ func available(f blobfs.File) error {
 func (s *Storage) Copy(ctx context.Context, src, dst Ref) (CopyResult, error) {
 	at := label(src, "file") + " " + label(dst, "directory")
 	if dst.ID == "" && !strings.HasPrefix(dst.Path, "/") {
-		return CopyResult{}, fmt.Errorf("files: cp %s: %w: %q does not start with /", at, blobfs.ErrInvalidPath, dst.Path)
+		return CopyResult{}, fmt.Errorf("files: copy %s: %w: %q does not start with /", at, blobfs.ErrInvalidPath, dst.Path)
 	}
 	res, err := s.copyRef(ctx, src, dst)
 	if err != nil {
-		return CopyResult{}, fmt.Errorf("files: cp %s: %w", at, err)
+		return CopyResult{}, fmt.Errorf("files: copy %s: %w", at, err)
 	}
 	return res, nil
 }
@@ -315,7 +315,7 @@ func (b *deferredBody) close() {
 func (s *Storage) Remove(ctx context.Context, ref Ref) (Located[blobfs.File], error) {
 	if ref.ID == "" {
 		if _, _, err := splitParent(ref.Path); err != nil {
-			return Located[blobfs.File]{}, fmt.Errorf("files: rm %s: %w", ref.Path, err)
+			return Located[blobfs.File]{}, fmt.Errorf("files: remove %s: %w", ref.Path, err)
 		}
 	}
 	var path string
@@ -328,7 +328,7 @@ func (s *Storage) Remove(ctx context.Context, ref Ref) (Located[blobfs.File], er
 		return f, err
 	})
 	if err != nil {
-		return Located[blobfs.File]{}, fmt.Errorf("files: rm %s: %w", label(ref, "file"), err)
+		return Located[blobfs.File]{}, fmt.Errorf("files: remove %s: %w", label(ref, "file"), err)
 	}
 	return Located[blobfs.File]{Path: path, Row: f}, nil
 }
@@ -358,11 +358,11 @@ func (s *Storage) remove(ctx context.Context, find func(*sqlate.Tx) (blobfs.File
 //
 // blobfs's RemoveFile runs this check before its Files.Delete, whose
 // update would take the file's row lock, so the check takes the lock
-// itself first, with Files.Hold: bookmark add holds the row before it
+// itself first, with Files.Hold: add bookmark holds the row before it
 // inserts, so an add that held first has committed its bookmark before the
 // count reads, and one that arrives later waits for this transaction and
 // then refuses the deleting row. A row deleting already, which an earlier
-// rm left, cannot be held and needs no hold, since no add can reach it; its
+// remove left, cannot be held and needs no hold, since no add can reach it; its
 // bookmarks are counted all the same.
 func (s *Storage) removable(ctx context.Context, tx *sqlate.Tx, f blobfs.File) error {
 	if err := s.store.blobfs.Files.Hold(ctx, tx, f.ID); err != nil && !errors.Is(err, blobfs.ErrDeleting) {
@@ -408,16 +408,16 @@ func (s *Storage) removable(ctx context.Context, tx *sqlate.Tx, f blobfs.File) e
 func (s *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) {
 	at := label(ref, "directory")
 	if err := refuseRoot(ref); err != nil {
-		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", at, err)
+		return TreeRemoval{}, fmt.Errorf("files: remove tree %s: %w", at, err)
 	}
 	fs, db := s.store.blobfs, s.store.db
 	dir, err := s.store.directory(ctx, db, ref)
 	if err != nil {
-		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", at, err)
+		return TreeRemoval{}, fmt.Errorf("files: remove tree %s: %w", at, err)
 	}
 	var removed TreeRemoval
 	if removed.Path, err = s.store.directoryPath(ctx, db, ref, dir); err != nil {
-		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", at, err)
+		return TreeRemoval{}, fmt.Errorf("files: remove tree %s: %w", at, err)
 	}
 	_, err = db.Transact(ctx, func(tx *sqlate.Tx) (bfdata.Marked, error) {
 		marked, err := fs.Directories.MarkDeleting(ctx, tx, dir.ID)
@@ -434,7 +434,7 @@ func (s *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) 
 		return marked, nil
 	})
 	if err != nil {
-		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", at, err)
+		return TreeRemoval{}, fmt.Errorf("files: remove tree %s: %w", at, err)
 	}
 	removeOwner := bfdata.OnRemoveDirectory(func(ctx context.Context, tx *sqlate.Tx, dir blobfs.Directory) error {
 		return s.store.deleteOwner(ctx, tx, dir.ID)
@@ -453,7 +453,7 @@ func (s *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) 
 		err = last
 	}
 	if err != nil {
-		return removed, fmt.Errorf("files: rm branch %s: removed %d files and %d directories, then: %w", at, removed.Files, removed.Directories, err)
+		return removed, fmt.Errorf("files: remove tree %s: removed %d files and %d directories, then: %w", at, removed.Files, removed.Directories, err)
 	}
 	return removed, nil
 }

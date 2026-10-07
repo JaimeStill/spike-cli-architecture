@@ -17,8 +17,8 @@ import (
 
 // Ownership and the bookmark commands driven through App.Run over
 // buffers: their output over a scripted database, with the store and its
-// configuration never built, and the usage errors a missing or malformed
-// --unit makes before anything is built.
+// configuration never built, and the usage errors a missing, malformed, or
+// misapplied --unit makes before anything is built.
 
 // resolved is the Postgres engine's path resolution reaching the
 // top-level directory with id and name.
@@ -168,7 +168,7 @@ func TestBookmarks_ARefusalIsReportedOnce(t *testing.T) {
 	if code != process.ExitFailure {
 		t.Errorf("code = %d, want %d", code, process.ExitFailure)
 	}
-	if want := "blobfs bookmark add: files: bookmark add /reports/plan.txt as unit " + unitID + ": the unit has an active bookmark already (constraint uq_bookmark_active)\n"; errOut.String() != want {
+	if want := "blobfs bookmark add: files: add bookmark /reports/plan.txt as unit " + unitID + ": the unit has an active bookmark already (constraint uq_bookmark_active)\n"; errOut.String() != want {
 		t.Errorf("stderr = %q, want %q", errOut.String(), want)
 	}
 	if out.Len() != 0 {
@@ -176,7 +176,7 @@ func TestBookmarks_ARefusalIsReportedOnce(t *testing.T) {
 	}
 }
 
-func TestBookmarks_AMissingOrMalformedUnitIsAUsageErrorThatBuildsNothing(t *testing.T) {
+func TestBookmarks_AMissingMalformedOrMisappliedUnitIsAUsageErrorThatBuildsNothing(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
@@ -189,6 +189,8 @@ func TestBookmarks_AMissingOrMalformedUnitIsAUsageErrorThatBuildsNothing(t *test
 		{"bookmark ls with a malformed sort", []string{"bookmark", "ls", "--unit", unitID, "--sort", "path:up"}, "the direction is asc or desc"},
 		{"mkdir with a malformed unit", []string{"mkdir", "/reports", "--unit", "nope"}, `--unit "nope" is not a UUID`},
 		{"ls with a malformed unit", []string{"ls", "/", "--unit", "nope"}, `--unit "nope" is not a UUID`},
+		{"mkdir --unit below the top level", []string{"mkdir", "/reports/2026", "--unit", unitID}, "ownership applies to a top-level directory only; give --unit with a top-level path only"},
+		{"ls / --unit after a cursor", []string{"ls", "/", "--unit", unitID, "--after-dirs", "c"}, "the owner listing pages by number only; ls / --unit takes no --after-dirs or --after-files"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

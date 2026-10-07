@@ -31,9 +31,10 @@ import (
 // naming the store's node, before anything is read or written.
 //
 // Each command counts its arguments in Args and checks them and its flags
-// in Validate, the domain's form rules included, so a malformed path-or-id,
-// an id where no id can name the target, a unit, a filter, a sort term, or
-// a total mode is a usage error before anything is built; each bookmark
+// in Validate, the domain's request rules included, so a malformed
+// path-or-id, an id where no id can name the target, a unit, a unit below
+// the top level, a cursor into ls / --unit, a filter, a sort term, or a
+// total mode is a usage error before anything is built; each bookmark
 // subcommand requires --unit, so a run without it is a usage error too.
 func Commands(svc *graph.Node[*Service], st *graph.Node[*Storage]) []*cli.Command {
 	return []*cli.Command{
@@ -70,14 +71,16 @@ func mkdir(svc *graph.Node[*Service]) *cli.Command {
 			if err := checkMkdir(ref); err != nil {
 				return err
 			}
-			unit, err = parseUnit(unit)
-			return err
+			if unit, err = parseUnit(unit); err != nil {
+				return err
+			}
+			if err := checkUnitDepth(ref, unit); err != nil {
+				return fmt.Errorf("%w; give --unit with a top-level path only", err)
+			}
+			return nil
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
 			dir, err := inv.Get(svc).Mkdir(ctx, ref, unit)
-			if errors.Is(err, ErrUnitDepth) {
-				return fmt.Errorf("%w; give --unit with a top-level path only", err)
-			}
 			if err != nil {
 				return err
 			}
@@ -112,14 +115,16 @@ func ls(svc *graph.Node[*Service]) *cli.Command {
 			if ref, err = parseRef(inv.Args[0]); err != nil {
 				return err
 			}
-			l, err = f.listing()
-			return err
+			if l, err = f.listing(); err != nil {
+				return err
+			}
+			if err := checkRootCursor(ref, l); err != nil {
+				return fmt.Errorf("%w; ls / --unit takes no --after-dirs or --after-files", err)
+			}
+			return nil
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
 			c, err := inv.Get(svc).List(ctx, ref, l)
-			if errors.Is(err, ErrNoCursorAtRoot) {
-				return fmt.Errorf("%w; ls / --unit takes no --after-dirs or --after-files", err)
-			}
 			if err != nil {
 				return err
 			}
@@ -151,7 +156,7 @@ func stat(svc *graph.Node[*Service]) *cli.Command {
 				return err
 			}
 			if e.Kind == EntryFile {
-				return WriteFileRecord(inv.Stdout, ref.Path, e.File)
+				return writeFileRecord(inv.Stdout, ref.Path, e.File)
 			}
 			return WriteDirectoryRecord(inv.Stdout, ref.Path, e.Directory)
 		},
@@ -400,7 +405,7 @@ func cat(st *graph.Node[*Storage]) *cli.Command {
 			}
 			defer func() { _ = body.Close() }()
 			if _, err := io.Copy(inv.Stdout, body); err != nil {
-				return fmt.Errorf("files: cat %s: %w", f.Path, err)
+				return fmt.Errorf("files: read %s: %w", f.Path, err)
 			}
 			return nil
 		},

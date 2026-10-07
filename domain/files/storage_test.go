@@ -278,15 +278,15 @@ func TestMissingSources_AreLabelledOnceByTheOperation(t *testing.T) {
 		{"cat by path", []sqltest.Response{resolvedRoot(), fileRows()}, func(o *files.Storage) error {
 			_, _, err := o.Open(context.Background(), files.Ref{Path: "/a.txt"})
 			return err
-		}, "files: cat /a.txt: "},
+		}, "files: open /a.txt: "},
 		{"cat by id", []sqltest.Response{fileRows()}, func(o *files.Storage) error {
 			_, _, err := o.Open(context.Background(), files.Ref{ID: fileID})
 			return err
-		}, "files: cat file " + fileID + ": "},
+		}, "files: open file " + fileID + ": "},
 		{"cp by path", []sqltest.Response{resolvedRoot(), fileRows()}, func(o *files.Storage) error {
 			_, err := o.Copy(context.Background(), files.Ref{Path: "/a.txt"}, files.Ref{Path: "/b.txt"})
 			return err
-		}, "files: cp /a.txt /b.txt: "},
+		}, "files: copy /a.txt /b.txt: "},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

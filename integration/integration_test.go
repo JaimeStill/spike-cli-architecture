@@ -505,7 +505,7 @@ func interrupt(t *testing.T, tg target, r *faultRelay, path string) {
 	if code != 1 || out != "" {
 		t.Fatalf("rm --recursive %s with the store refusing deletes exited %d with stdout %q; want a refusal", path, code, out)
 	}
-	if want := fmt.Sprintf("rm branch %s: removed %d files and 1 directories, then: ", path, branchDeletes); !strings.Contains(errOut, want) {
+	if want := fmt.Sprintf("files: remove tree %s: removed %d files and 1 directories, then: ", path, branchDeletes); !strings.Contains(errOut, want) {
 		t.Errorf("rm --recursive %s stderr = %q, want %q", path, errOut, want)
 	}
 	if got := strings.Count(errOut, "delete the object of file "); got != branchFiles-branchDeletes {
@@ -1103,9 +1103,10 @@ func (s *script) removeTree(t *testing.T) {
 
 // units is mkdir and ls under --unit: the owner row mkdir writes for a
 // top-level directory, ls scoped to the unit's top-level directory and, at
-// the root, to the unit's own top-level directories, and the refusals;
-// then mv carrying the owner row with a renamed top-level directory, and
-// rmdir and rm --recursive removing the owner rows with their directories.
+// the root, to the unit's own top-level directories, and the refusals,
+// the unit rules among them as usage errors that build nothing; then mv
+// carrying the owner row with a renamed top-level directory, and rmdir
+// and rm --recursive removing the owner rows with their directories.
 // The owner row's foreign key to its directory has no cascade, so a row
 // left behind would refuse the directory's removal: a removal that
 // succeeds is the binary's proof that the row went with it.
@@ -1117,7 +1118,11 @@ func (s *script) units(t *testing.T) {
 	ok(t, s.tg, "mkdir", "/owned/sub")
 	ok(t, s.tg, "mkdir", "/theirs", "--unit", strings.ToUpper(other))
 	put(t, s.tg, "/owned/sub/f.txt", "f")
-	refused(t, s.tg, "ownership applies to a top-level directory only; give --unit with a top-level path only", "mkdir", "/owned/deeper", "--unit", unit)
+	// The unit rules are usage errors that build nothing: against a
+	// database on a port nothing listens on, a run that built the Service
+	// would fail its start and exit 1.
+	unreachable := s.tg.with(fmt.Sprintf("BLOBFS_DATABASE_PORT=%d", closedPort(t)))
+	misused(t, unreachable, "ownership applies to a top-level directory only; give --unit with a top-level path only", "mkdir", "/owned/deeper", "--unit", unit)
 	misused(t, s.tg, `--unit "nope" is not a UUID`, "mkdir", "/x", "--unit", "nope")
 
 	// ls --unit at the unit's top-level directory and below it.
@@ -1148,7 +1153,8 @@ func (s *script) units(t *testing.T) {
 	if got := names(ok(t, s.tg, "ls", "/", "--unit", unit, "--filter", "name:like:zzz%")); got != "" {
 		t.Errorf("ls / as the unit with a filter nothing matches names = %s", got)
 	}
-	refused(t, s.tg, "the owner listing pages by number only; ls / --unit takes no --after-dirs or --after-files", "ls", "/", "--unit", unit, "--after-dirs", "x")
+	misused(t, unreachable, "the owner listing pages by number only; ls / --unit takes no --after-dirs or --after-files", "ls", "/", "--unit", unit, "--after-dirs", "x")
+	misused(t, unreachable, "the owner listing pages by number only; ls / --unit takes no --after-dirs or --after-files", "ls", "/", "--unit", unit, "--after-files", "x")
 
 	// ls id: --unit: the directory's top-level ancestor is the scope the
 	// path form checks.

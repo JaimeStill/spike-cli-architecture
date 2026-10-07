@@ -99,9 +99,9 @@
 //   - the Storage's operations: [Storage.Put], [Storage.Open],
 //     [Storage.Copy], [Storage.Remove], and [Storage.RemoveTree]
 //   - the shapes they take and return
-//   - [WriteContents], [WriteFileRecord], and [WriteDirectoryRecord],
-//     which write a listing and a row as ls and stat print them, so the
-//     scenario package's tours show a result as the command does
+//   - [WriteContents] and [WriteDirectoryRecord], which write a listing
+//     and a directory's row as ls and stat print them, so the scenario
+//     package's tours show a result as the command does
 //   - [ErrVerify], [ErrMoveAcrossScopes], [ErrNotAvailable], [ErrUnitDepth],
 //     [ErrNotOwned], [ErrNoCursorAtRoot], [ErrBookmarked],
 //     [ErrAlreadyBookmarked], [ErrActiveBookmark], and [ErrNoBookmark], and

@@ -102,12 +102,12 @@ func TestScenarios(t *testing.T) {
 func TestScenariosClearWhatAnInterruptedRunLeft(t *testing.T) {
 	tg := open(t)
 	ok(t, tg, "schema", "up")
-	ok(t, tg, "mkdir", "/demo-directories")
-	ok(t, tg, "mkdir", "/demo-directories/alpha")
-	ok(t, tg, "mkdir", "/demo-directories/alpha/echo")
-	ok(t, tg, "mkdir", "/demo-files")
-	ok(t, tg, "mkdir", "/demo-files/docs")
-	put(t, tg, "/demo-files/docs/hello.txt", "left behind")
+	ok(t, tg, "mkdir", "/scenario-directories")
+	ok(t, tg, "mkdir", "/scenario-directories/alpha")
+	ok(t, tg, "mkdir", "/scenario-directories/alpha/echo")
+	ok(t, tg, "mkdir", "/scenario-files")
+	ok(t, tg, "mkdir", "/scenario-files/docs")
+	put(t, tg, "/scenario-files/docs/hello.txt", "left behind")
 
 	for _, name := range []string{"directories", "files"} {
 		out := ok(t, tg, "scenario", name)

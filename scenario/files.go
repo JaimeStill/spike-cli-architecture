@@ -17,7 +17,7 @@ import (
 // filesArea is the files tour's working area, a top-level directory the
 // tour creates, works under, and removes with rm --recursive, and clears
 // first when an earlier run left it behind.
-const filesArea = "/demo-files"
+const filesArea = "/scenario-files"
 
 // The files tour's content, held in memory: hello is put with no size, as
 // put - streams standard input, and notes with its size, as put of a local

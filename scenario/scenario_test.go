@@ -190,19 +190,20 @@ func TestDirectories_NarratesEachStepBeforeDoingItAndBuildsTheFilesNodeAlone(t *
 	if code != process.ExitFailure {
 		t.Errorf("code = %d, want %d", code, process.ExitFailure)
 	}
-	// The second step's note is wrapped at 80 columns, every line
-	// indented under its heading.
+	// Each step's note is wrapped at 80 columns, every line indented
+	// under its heading.
 	want := "" +
-		"[1/11] Clear /demo-directories if an earlier run left it behind\n" +
-		"  Nothing to clear: /demo-directories does not exist, so this run starts clean.\n" +
+		"[1/11] Clear /scenario-directories if an earlier run left it behind\n" +
+		"  Nothing to clear: /scenario-directories does not exist, so this run starts\n" +
+		"  clean.\n" +
 		"\n" +
-		"[2/11] Create /demo-directories as the demo unit's: mkdir --unit\n" +
+		"[2/11] Create /scenario-directories as the scenario unit's: mkdir --unit\n" +
 		"  A directory created with a unit is top-level, and its owner row is written in\n" +
 		"  the same transaction, so the unit's scope starts here.\n"
 	if out != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
 	}
-	prefix := "prog scenario directories: step 2 (Create /demo-directories as the demo unit's: mkdir --unit): "
+	prefix := "prog scenario directories: step 2 (Create /scenario-directories as the scenario unit's: mkdir --unit): "
 	if !strings.HasPrefix(errOut, prefix) || !strings.Contains(errOut, sqltest.ErrUnscripted.Error()) || strings.Count(errOut, "\n") != 1 {
 		t.Errorf("stderr = %q, want one line starting %q and carrying the failure", errOut, prefix)
 	}
@@ -226,7 +227,7 @@ func TestFiles_ShowsAStepsResultIndentedUnderItsProse(t *testing.T) {
 			Rows:    [][]driver.Value{{blobfs.RootID, nil, "/", "active", int64(1), time.Time{}, time.Time{}, int64(0)}},
 		},
 		sqltest.Response{Columns: directoryColumns, Rows: [][]driver.Value{
-			{areaID, blobfs.RootID, "demo-files", "active", int64(1), time.Time{}, time.Time{}},
+			{areaID, blobfs.RootID, "scenario-files", "active", int64(1), time.Time{}, time.Time{}},
 		}},
 	)
 
@@ -236,15 +237,15 @@ func TestFiles_ShowsAStepsResultIndentedUnderItsProse(t *testing.T) {
 		t.Errorf("code = %d, want %d", code, process.ExitFailure)
 	}
 	want := "" +
-		"[1/9] Clear /demo-files if an earlier run left it behind\n" +
-		"  Nothing to clear: /demo-files does not exist, so this run starts clean.\n" +
+		"[1/9] Clear /scenario-files if an earlier run left it behind\n" +
+		"  Nothing to clear: /scenario-files does not exist, so this run starts clean.\n" +
 		"\n" +
-		"[2/9] Create /demo-files and /demo-files/docs: mkdir\n" +
-		"    mkdir: /demo-files (id " + areaID + ")\n"
+		"[2/9] Create /scenario-files and /scenario-files/docs: mkdir\n" +
+		"    mkdir: /scenario-files (id " + areaID + ")\n"
 	if out != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", out, want)
 	}
-	if prefix := "prog scenario files: step 2 (Create /demo-files and /demo-files/docs: mkdir): "; !strings.HasPrefix(errOut, prefix) {
+	if prefix := "prog scenario files: step 2 (Create /scenario-files and /scenario-files/docs: mkdir): "; !strings.HasPrefix(errOut, prefix) {
 		t.Errorf("stderr = %q, want it to start %q", errOut, prefix)
 	}
 	if want := []string{"files", "storage", "store", "lifecycle config"}; !slices.Equal(s.built, want) {
