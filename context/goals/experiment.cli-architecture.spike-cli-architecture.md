@@ -107,7 +107,7 @@ Door          two-way: the spike repository only, no release
 
 ## Progress
 
-slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics ✓ · standards — · spec — · editor —
+slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics ✓ · standards ✓ · spec ✓ · editor ✓
 
 ## Decisions
 
@@ -240,10 +240,13 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
   Make's order-only prerequisite).
 - composition: a layer barrier on start; configuration is a node; lifecycle inferred from
   Start/Shutdown with Scope.OnStart/OnShutdown overrides; tests swap nodes with Graph.Replace.
+  *Superseded in part: the Scope hooks are gone; a value takes part only through Starter and
+  Stopper (files review).*
 - composition: names: package graph (Graph, Define, Node[T], Scope, Use, After, Build, System,
   Get, Replace, Ref); cli.Command.Uses, inherited as the union along the path;
   Invocation.System; cli.WithGraph(g, lifecycleConfig). *Superseded: `cli.Command.Uses` is now
-  the method `Use`; see the last composition decision.*
+  the method `Use`; see the last composition decision. Invocation.System is unexported; a
+  command reads a value with inv.Get (files review).*
 - composition: lifecycle: one Coordinator, New(sys, cfg), Exec (one-shot, architect's name over
   Do) and Run (long-running); the participant interface is Subsystem, rejected Service
   (overloaded), Process (go-core's process package and the OS process), Component and Unit.
@@ -258,6 +261,7 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
 
 - composition: a built node is a graph.Dependency (name, value, OnStart/OnShutdown hooks), returned
   by System.Layers() [][]Dependency; rejected Member (too generic), Instance, Built (architect).
+  *Superseded in part: Dependency is {Name, Value} (files review).*
 
 - composition: a long-running node that nothing Uses (go-web-service's reactors) is its own
   Build root, and the runtime root orders after it with After; layers for the stage table come
@@ -266,6 +270,7 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
 - composition: cli's Option is `func(*options)`; WithGraph panics on a nil graph or node; cli
   leaves the lifecycle Config to its node's constructor to finalize.
 - composition: Invocation.System is nil while PreRun runs, since PreRun precedes the Build.
+  *Superseded: Invocation.System is unexported, and inv.Get panics on a read before the Build.*
 - composition: a body's usage error stays a usage error (exit 2) when joined with a shutdown
   error.
 - composition: a failing start layer shuts down every participant whose Start was called.
@@ -273,11 +278,13 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
 - composition: Run treats any end of ctx, before, during, or after startup, as a clean stop.
 - composition: shutdown's context derives from context.Background.
 - composition: graph: a hook recorded twice panics; Define after Build is allowed; Replace is
-  locked after the first Build; nodes within a layer keep definition order.
+  locked after the first Build; nodes within a layer keep definition order. *Superseded in part:
+  the hooks are gone, and Define after the first Build panics (files review).*
 - composition: schema takes the migrator node itself, `schema.Commands(client)`, so one value
-  drives both Uses and Get.
+  drives both Uses and Get. *Superseded in part: schema.Client is gone; the node's value is
+  sqlate's *migrate.Migrator (files review).*
 - composition: `reset --yes=false` is refused in Args, since the System starts before the body
-  runs.
+  runs. *Superseded: it is refused in Validate, on inv.Changed (files review).*
 - composition: node names are "database config", "storage config", "lifecycle config",
   "database", "store", and "migrator"; they label errors.
 - composition: the integration test orders the store `After` the database to assert reverse
@@ -323,17 +330,21 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
 - files: --variant is dropped; the composition root fixes blobfs's Postgres engine, as
   go-web-service does, so the black-box script runs once (a deliberate difference, like --dsn).
 - files: stdin is a parameter of cli.Run and app.New beside stdout and stderr, exposed as
-  Invocation.Stdin, replacing cobra's InOrStdin; rejected a WithStdin option.
+  Invocation.Stdin, replacing cobra's InOrStdin; rejected a WithStdin option. *Superseded in
+  part: the three streams are one cli.Streams, embedded in Invocation (files review).*
 - files: two scenarios ship, `directories` (Postgres alone) and `files` (Postgres and the store), so
   the listing and a run show scenarios bringing up different subsets.
 - files: scenarios mount as leaves under `demo`, with `list` at the root, slab's shape; rejected a
-  `scenario` parent with `list` beside them.
+  `scenario` parent with `list` beside them. *Superseded: the surface is `blobfs scenario
+  <name>`, and `list` is gone (files review).*
 - files: a scenario drops slab's Needs; its dependencies come only from Use, the Coordinator reports
   an unreachable one naming its node, and `list` prints each scenario's declared node names.
+  *Superseded in part: the help footers of `blobfs scenario` and the root print the names.*
 
 - files: bad input exits 2 as a usage error, checked before anything is built: a malformed ref,
   sort or filter term, `--total`, or `--unit`; a path mixed with an id; `ls id: --unit`; and
-  `rm --recursive id:`. spike-blobfs exited 1.
+  `rm --recursive id:`. spike-blobfs exited 1. *Superseded in part: a path and an id mix in mv
+  and cp, and ls --unit and rm --recursive take an id (files ergonomics).*
 - files: a half continued from a cursor prints "total not counted"; sort and filter terms reach the
   directory half only for spike-blobfs's set; a directory's new blobfs `status` field is not
   printed.
@@ -342,6 +353,8 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
 - files: the domain is two graph nodes. `files`, a Store over the database, serves the directory
   and bookmark commands; its start checks blobfs's statements and the domain's own
   (domain/files/statements). `objects`, over `files` and the store, serves put, cat, cp, and rm.
+  *Superseded: the nodes are `files`, a files.Service whose Start runs the check, and
+  `storage`, a files.Storage (files review).*
 - files: put looks the name up first and resumes a pending row through EnsureFile under that row's
   id, keeping its first content type; any other put calls WriteFile with Files.Create.
 - files: cp calls WriteFile with Files.Create, so it refuses any taken name, a pending one included,
@@ -368,14 +381,21 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
 - files: scenarios: the runner is package `scenario` and the tours package `demo` (slab's split).
   scenario.Node is `graph.Ref` plus `Name()`, so one typed node drives Use, list's names, and
   System.Get. A step receives (ctx, *graph.System, *Reporter); a failed step reads
-  `step N (intent): err`.
+  `step N (intent): err`. *Superseded in part: demo folds into one package, `scenario`;
+  Scenario.Nodes is []graph.Ref; a step receives (ctx, *cli.Invocation, *Reporter) (files
+  review).*
 - files: `list` prints the nodes a scenario declares, not the transitive set, since finding
   dependencies needs construction and list builds nothing; `demo files` declares files and objects.
+  *Superseded in part: the help footers print the declared nodes; `scenario files` declares
+  files and storage (files review).*
 - files: the tours work in fixed areas (/demo-directories, /demo-files), clear leftovers first, and
   use a constant demo unit. They hold no bookmarks: a bookmark needs a file, and a file needs the
-  store.
+  store. *Superseded in part: the areas are /scenario-directories and /scenario-files, under
+  "the scenario unit" (files standards).*
 - files: each layer file in internal/app mounts its own commands; the demo renders through files'
-  exported WriteContents, WriteFileRecord, and WriteDirectoryRecord.
+  exported WriteContents, WriteFileRecord, and WriteDirectoryRecord. *Superseded in part: the
+  scenario package renders through WriteContents and WriteDirectoryRecord; WriteFileRecord is
+  unexported (files standards).*
 - files: the integration suite runs the binary bounded by go-core's processtest.Failsafe, with its
   own runner, since processtest.Launch takes no args or stdin and merges stdout with stderr. Each
   test gets its own database and container. The unreachable-store test runs two object commands,
@@ -418,7 +438,8 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
   into a buffer. Its text prints last, after the "Run … --help" pointer, where cobra's appended
   template printed. Descendants don't inherit it, and a footer that writes nothing adds nothing.
   The root's footer writes its own "Scenarios:" heading, and list and the footer write the
-  listing through one function.
+  listing through one function. *Superseded in part: `list` is gone; both footers call
+  scenario.WriteListing (files review).*
 - files: `graph.Graph.Observe(fn func(name string))` calls fn with each node's name as a Build
   begins constructing it, before its constructor runs: once per Build, depth-first, a node whose
   constructor fails included. It exists because a System is readable only after a successful
@@ -430,11 +451,14 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
 - files: the integration probe (internal/app/infrastructure_integration_test.go) builds the
   database and the store with the library constructors over the production configuration nodes,
   so its three tests no longer run newDatabase or newStore; the black-box suite does.
+  *Superseded: the probe defines test-only nodes over the production configuration nodes (see
+  the recorded-node decision below).*
 - files: the interrupted sweep runs on a 150-file branch, and the test severs the store relay
   once a polled stat shows the branch's first file gone. A sweep that finishes before the sever
   fails the test, and the failure names the fix: more files. The measured margin is about 7x:
   17 to 20 of the 150 files were deleted before the sever, across 11 runs. Relayed runs set
-  BLOBFS_STORAGE_OPTIONS_MAX_RETRIES=0, so a refused delete fails at once.
+  BLOBFS_STORAGE_OPTIONS_MAX_RETRIES=0, so a refused delete fails at once. *Superseded: a fault
+  relay refuses deletes at an exact request (architect, at the second redirect).*
 - files: the pending row comes from a `put -` whose stdin is held open, killed with SIGKILL once
   stat shows the row pending.
 - files: the integration tests prove owner-row removal through the binary: the owner row's
@@ -445,9 +469,11 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
 - files: only internal/app's tests use internal/apptest, but tests-and-docs.md hoists a helper
   into a `<pkg>test` package only once more than one test package needs it. Should the standard
   name fixtures over a composition root's published API, or should this be recorded as an
-  exception? Open question for the architect.
+  exception? Open question for the architect. *Superseded: the hoisting rule is standardized
+  (architect, at the second redirect).*
 - files: the interrupted sweep depends on a timing margin. Accept it, or require a deterministic
   hold point, which needs a production surface the spike lacks? Open question for the architect.
+  *Superseded: the test runs deterministically (architect, at the second redirect).*
 
 - files: redirected at the second session brief (architect): the hoisting rule is standardized,
   so fixtures over a composition root's published API live in an internal `<app>test` package
@@ -601,6 +627,43 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
   directory", "remove tree", "add bookmark"), not CLI command words (architect).
 - files standards: the scenario working areas and wording drop "demo": /scenario-directories,
   /scenario-files, "the scenario unit" (architect).
+
+- files: the interrupted sweep runs through an HTTP fault relay over httputil.ReverseProxy in
+  front of Azurite; armed, it passes N blob deletes and answers every later one 503. A branch of
+  3 files and an empty directory with 1 delete allowed gives exact counts under blobfs v0.5.0's
+  sequential sweep: 1 file and 1 directory removed, 2 deletes refused. The rerun runs disarmed.
+- files: graph's Build panics when a constructor returns, with a value or an error, after a Use it
+  made aborted, and a further Use in it panics too; any panic leaving Use sets the mark, so a
+  grandparent's recover is caught.
+- files: inv.Get panics on a nil node, on a node the leaf's path does not declare (one the Build
+  reached only as a dependency included), and on any read before the Build (in Validate or
+  PreRun).
+- files: Validate takes every positional content check (refs, pairs, units) as well as the flag
+  checks, so Args only counts.
+- files: FormError{Reason} is the form rules' typed error, which a command reports as a usage
+  error; mkdir by id and a put into a directory id without a name raise it.
+- files: Stat returns an Entry carrying its Path, the Ref's own or, for an id, computed from the
+  row, so stat by id prints the path line.
+- files: Located[T]{Path, Row} is the result of an operation that returns a bare blobfs row
+  (rmdir, rm, cat's open, bookmark add and rm), since blobfs's types can't carry a field of ours;
+  an operation with its own result type carries the path there.
+- files: checkPath runs in Validate and checks each segment with blobfs.NormalizeName and
+  ValidateName, wrapping blobfs.ErrInvalidPath, since blobfs exports no path validator; the
+  leading-slash refusal is the domain's, and the Service keeps its own refusals as a backstop.
+- files: cat labels a read that fails mid-stream "files: read <path>", with the resolved path,
+  since the open succeeded.
+- files: each layer file's mount function is one root.Add(pkg.Commands(...)...) over the Nodes it
+  passes.
+- files: the scenario runner drops the nil-action case and the per-step context check: every
+  action works through ctx, so a cancelled run fails the step under way, which the error names.
+- files: the integration probe defines test-only nodes, "recorded database" and "recorded store",
+  that build the real values from the production configuration nodes and record their Start and
+  Shutdown, since with the hooks gone a production node's value can't be wrapped.
+- files: scenario.WriteListing is the one source of the listing text, heading included, and both
+  footers call it.
+- files: ls by id prints no path: a listing's Path stays empty for every listing by id, since a
+  listing is not a record. Open question for the architect: should ls by id print the resolved
+  path, as stat by id does?
 
 ## Pending edits
 

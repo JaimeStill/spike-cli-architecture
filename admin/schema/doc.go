@@ -8,7 +8,7 @@
 // history table, and the app's set last, under sqlate's default table, so
 // blobfs's schema is at its head before the app's migrations reference it
 // and a revert runs in reverse; beside it is revert, which reverts every
-// set and keeps the history tables, as the migrator does not offer.
+// set and keeps the history tables, which the migrator does not offer.
 // commands.go builds the schema command and its status, up, down, and
 // reset subcommands, each a function of the migrator's node, which run the
 // migrator's own Status, Up, and Reset and the package's revert. output.go

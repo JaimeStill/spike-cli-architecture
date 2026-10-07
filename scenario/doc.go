@@ -29,7 +29,7 @@
 //
 //   - [Scenario], an ordered list of [Step]s over the graph nodes it
 //     declares
-//   - [Reporter], the channel a step narrates through
+//   - [Reporter], which writes a step's narration
 //   - [Commands], the package's command surface: the scenario parent with a
 //     leaf per tour, as a slice the root mounts with
 //     root.Add(scenario.Commands(...)...)

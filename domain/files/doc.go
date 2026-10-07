@@ -23,10 +23,12 @@
 //     domain's statements: the directory operations, which write and
 //     remove a directory's owner row with it, and the bookmark operations,
 //     whose add holds the file, blobfs's reference-then-delete rule,
-//     before it inserts. It holds the form rule mkdir runs before any
-//     I/O, which its command runs in Validate too: an id is refused only
-//     where no id can name the target, a directory's create.
-//     [Service.Start] prepares every statement against the database.
+//     before it inserts. It holds the request rules, the refusals an
+//     operation makes from its request alone, before any I/O, and which
+//     the commands run in Validate too: a path's syntax, an id where no id
+//     can name the target (a directory's create), a unit below the top
+//     level, and a cursor into the owner listing. [Service.Start] prepares
+//     every statement against the database.
 //   - database.go holds the unexported store, the data access the Service
 //     and the Storage share: the domain's pattern catalog, and blobfs's
 //     statements, with whatever engine the caller passes, and the domain's

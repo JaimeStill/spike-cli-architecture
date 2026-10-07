@@ -7,11 +7,11 @@ import (
 	"strings"
 )
 
-// Reporter is the channel a scenario narrates through: a heading per step,
-// which the runner prints, and under it, from the step, prose saying what
-// it does and why, with [Reporter.Note], and the output its operation
-// produced, with [Reporter.Show]. It writes plain text, with no color, to
-// one writer.
+// Reporter writes a scenario's narration: a heading per step, which the
+// runner prints, and under it, from the step, prose saying what it does
+// and why, with [Reporter.Note], and the output its operation produced,
+// with [Reporter.Show]. It writes plain text, with no color, to one
+// writer.
 type Reporter struct {
 	w       io.Writer
 	atBlank bool // whether the line just written was blank
