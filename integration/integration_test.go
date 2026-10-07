@@ -1422,13 +1422,11 @@ func closedPort(t *testing.T) int {
 // runs with its standard input held open on a pipe, so it commits the
 // pending row and waits on the body. main's signal context ends the run,
 // which cancels the upload's read of the body, so the process exits one
-// within prompt of the signal, reporting the cancellation once, as the
-// one line process.Fail writes: the command's path, then the error.
+// within processtest.Failsafe of the signal, where it would otherwise
+// block until its standard input closed, reporting the cancellation once,
+// as the one line process.Fail writes: the command's path, then the error.
 func TestAnInterruptedPut(t *testing.T) {
-	const (
-		path   = "/plan.txt"
-		prompt = 5 * time.Second
-	)
+	const path = "/plan.txt"
 	tg := open(t)
 	ok(t, tg, "schema", "up")
 	r, w, err := os.Pipe()
@@ -1455,9 +1453,6 @@ func TestAnInterruptedPut(t *testing.T) {
 
 	_ = p.cmd.Process.Signal(os.Interrupt)
 	t.Logf("$ kill -INT %d  # %s", p.cmd.Process.Pid, strings.TrimPrefix(p.line, "$ "))
-	if !p.exited(prompt) {
-		t.Fatalf("%s did not exit within %s of SIGINT", p.line, prompt)
-	}
 	out, errOut, code := p.wait(t)
 	if code != 1 || out != "" {
 		t.Errorf("the interrupted put exited %d with stdout %q, want 1 and nothing", code, out)

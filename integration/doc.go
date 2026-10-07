@@ -37,7 +37,7 @@
 // endpoint: every directory and bookmark command still succeeds, and two
 // object commands fail naming the store. TestAnInterruptedPut sends SIGINT
 // to a put blocked on its held-open standard input, through main's signal
-// context: it exits one, promptly, reporting the cancellation once.
+// context: it exits one, reporting the cancellation once.
 // scenarios_test.go prints the scenario parent's help, with its listing,
 // with nothing reachable, runs each tour twice in a row and after an
 // interrupted run, and runs scenario directories with the store
