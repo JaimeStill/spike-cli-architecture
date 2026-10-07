@@ -11,10 +11,11 @@ import (
 // or a row's id. Exactly one of Path and ID is set; an operation reads ID
 // when it is set and Path otherwise. A path starts with /, so the two
 // forms never collide. Every operation that names an entry takes a Ref,
-// and takes either form wherever an id can name the target. The
-// operations that take one form alone, because an id cannot name the
-// target, as a directory's create cannot, or two Refs of one form, refuse
-// any other with a [FormError] before any I/O.
+// and takes either form wherever an id can name the target; an operation
+// that takes two, a move or a copy, takes each in either form, so a path
+// and an id mix. The one operation that takes a path alone, because an id
+// cannot name its target, a directory's create, refuses an id with a
+// [FormError] before any I/O.
 type Ref struct {
 	Path string
 	ID   string
@@ -152,15 +153,19 @@ type Content struct {
 	ContentType string
 }
 
-// PutResult is what put returns: the row, available, and whether the put
-// resumed a pending row an earlier put left rather than write a new one.
+// PutResult is what put returns: the file's path, computed from the
+// directory's row for a put into a directory by id, the row, available,
+// and whether the put resumed a pending row an earlier put left rather
+// than write a new one.
 type PutResult struct {
+	Path    string
 	File    blobfs.File
 	Resumed bool
 }
 
 // CopyResult is what cp returns: the source's path, the copy's path, and
-// the copy's row, available.
+// the copy's row, available. Each path is computed from the rows for a
+// source or a destination named by id.
 type CopyResult struct {
 	From string
 	To   string
@@ -190,8 +195,11 @@ type Bookmark struct {
 // Located is the row an operation acted on and the path it was at: the
 // Ref's own path, or, for a Ref by id, the path computed from the row in
 // the operation's own read, so a caller reports a path whichever form
-// named the entry. rmdir returns its directory's row so, and bookmark add
-// and rm their file's.
+// named the entry. It is the result of an operation whose result is a row
+// of blobfs's and nothing more: rmdir returns its directory's row so, and
+// rm, cat's open, and bookmark add and rm their file's. An operation with
+// a result type of its own carries the path there instead: a put's, a
+// copy's and a move's, and a branch's delete.
 type Located[T any] struct {
 	Path string
 	Row  T

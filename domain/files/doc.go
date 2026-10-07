@@ -23,10 +23,9 @@
 //     domain's statements: the directory operations, which write and
 //     remove a directory's owner row with it, and the bookmark operations,
 //     whose add holds the file, blobfs's reference-then-delete rule,
-//     before it inserts. It holds the form rules each operation runs
-//     before any I/O, which the commands run in Validate too: an id is
-//     refused only where no id can name the target, and two Refs of
-//     different forms where an operation takes two of one form.
+//     before it inserts. It holds the form rule mkdir runs before any
+//     I/O, which its command runs in Validate too: an id is refused only
+//     where no id can name the target, a directory's create.
 //     [Service.Start] prepares every statement against the database.
 //   - database.go holds the unexported store, the data access the Service
 //     and the Storage share: the domain's pattern catalog, and blobfs's
@@ -48,9 +47,10 @@
 //   - entities.go holds the shapes the operations take and return: the
 //     [Ref] that names an entry, a Listing and its terms, a Page and the
 //     Contents of a listed directory, the Entry Stat finds, a move's
-//     result, the Located row a removal or a bookmark reports with its
-//     path, the Content a put writes, the results of a put, a copy, and a
-//     branch's delete, and a Bookmark as the bookmark listing reads it.
+//     result, the Located row a removal, a read, or a bookmark reports
+//     with its path, the Content a put writes, the results of a put, a
+//     copy, and a branch's delete, each with its paths, and a Bookmark as
+//     the bookmark listing reads it.
 //   - errors.go holds the errors the domain adds to blobfs's: the
 //     sentinels, worded in the domain's terms, and the [FormError] the
 //     form rules return.
@@ -64,8 +64,9 @@
 //     in place of a path: ls, with or without --unit, stat, mv, rmdir, put's
 //     destination, cat, cp, rm, rm --recursive, and bookmark add and rm.
 //     mkdir takes a path alone, since the directory it creates has
-//     no id yet; mv and cp take two paths or two ids. A success line that
-//     prints a path prints the resolved one when an id named the entry.
+//     no id yet; mv and cp take each argument in either form, so a path
+//     and an id mix. A success line names an entry by its resolved path,
+//     whichever form the argument took.
 //     Each bookmark subcommand requires --unit.
 //   - output.go renders the listings and the rows, over package output's
 //     Table and Record: ls's listing and each half's page, bookmark ls's

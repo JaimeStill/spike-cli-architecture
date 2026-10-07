@@ -308,28 +308,37 @@ func (s *store) filePath(ctx context.Context, sess sqlate.Session, ref Ref, f bl
 	return join(dir, f.Name), nil
 }
 
-// destination reads the destination path of a move or a copy through
-// sess: the directory the source goes into, that directory's path, and
-// the name the source takes there. dst names an existing directory, in
-// which case the name is the source's own, or a new path, in which case
-// the parent must exist and the last segment is the name.
-func (s *store) destination(ctx context.Context, sess sqlate.Session, dst, srcName string) (blobfs.Directory, string, string, error) {
-	dir, err := s.resolve(ctx, sess, dst)
+// destination reads the destination of a move or a copy through sess:
+// the id of the directory the source goes into, that directory's path, and
+// the name the source takes there. A dst by id is that directory, its path
+// computed by blobfs, and the name the source's own. A dst by path names
+// an existing directory, in which case the name is the source's own, or a
+// new path, in which case the parent must exist and the last segment is
+// the name.
+func (s *store) destination(ctx context.Context, sess sqlate.Session, dst Ref, srcName string) (string, string, string, error) {
+	if dst.ID != "" {
+		path, err := s.blobfs.Directories.Path(ctx, sess, dst.ID)
+		if err != nil {
+			return "", "", "", err
+		}
+		return dst.ID, path, srcName, nil
+	}
+	dir, err := s.resolve(ctx, sess, dst.Path)
 	switch {
 	case err == nil:
-		return dir, dst, srcName, nil
+		return dir.ID, dst.Path, srcName, nil
 	case !errors.Is(err, blobfs.ErrNotFound):
-		return blobfs.Directory{}, "", "", err
+		return "", "", "", err
 	}
-	parentPath, name, err := splitParent(dst)
+	parentPath, name, err := splitParent(dst.Path)
 	if err != nil {
-		return blobfs.Directory{}, "", "", err
+		return "", "", "", err
 	}
 	parent, err := s.resolve(ctx, sess, parentPath)
 	if err != nil {
-		return blobfs.Directory{}, "", "", err
+		return "", "", "", err
 	}
-	return parent, parentPath, name, nil
+	return parent.ID, parentPath, name, nil
 }
 
 // contents reads the two halves of the directory with id through sess:

@@ -178,7 +178,7 @@ func removeCopy(st *graph.Node[*files.Storage]) action {
 		if err != nil {
 			return err
 		}
-		return r.showf("rm: %s (id %s)\n", path, f.ID)
+		return r.showf("rm: %s (id %s)\n", f.Path, f.Row.ID)
 	}
 }
 

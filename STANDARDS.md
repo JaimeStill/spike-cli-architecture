@@ -33,12 +33,13 @@ The architecture pages that apply, in the architecture repository:
 - `Args` only counts positionals; every argument and flag value, the domain's form rules
   included, is checked in `Validate`, so bad input builds nothing.
 - An operation that names an entry takes the domain's reference type (`files.Ref`) and accepts
-  a path or an id wherever an id can name the target; it takes a single form only where the
-  other is impossible by nature (mkdir: the new directory has no id), and refuses it with a typed
-  form error before any I/O.
+  a path or an id wherever an id can name the target, each argument of a pair on its own (mv and
+  cp mix them); only mkdir is path-only, by nature (the new directory has no id), and it refuses
+  an id with a typed form error before any I/O.
 - A domain error is worded in the domain's terms; the command adds flag or command wording where
   it reports the error.
 - A command that changes state is never silent: it prints one success line with `fmt.Fprintf`.
+- A success line names an entry by its resolved path, whichever form the argument took.
 
 ## Composition
 

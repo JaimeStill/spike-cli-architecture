@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql/driver"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -34,6 +36,8 @@ var objectVerbs = [][]string{
 	{"cat", "id:" + planID},
 	{"cp", "/a.txt", "/b.txt"},
 	{"cp", "id:" + planID, "id:" + reportsID},
+	{"cp", "id:" + planID, "/b.txt"},
+	{"cp", "/a.txt", "id:" + reportsID},
 	{"rm", "/a.txt"},
 	{"rm", "id:" + planID},
 	{"rm", "--recursive", "/reports"},
@@ -123,10 +127,108 @@ func TestObjects_PutDashReadsTheInvocationsStdin(t *testing.T) {
 	}
 }
 
+func TestObjects_SuccessLinesNameTheResolvedPath(t *testing.T) {
+	// Each run names an entry by id, alone or beside a path, and its
+	// success line names every entry by the path the operation resolved.
+	const copyID = "00000000-0000-7000-8000-000000000006"
+	local := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(local, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reports := []driver.Value{reportsID, blobfs.RootID, "reports"}
+	files := func(rows ...[]driver.Value) sqltest.Response {
+		return sqltest.Response{Columns: fileColumns, Rows: rows}
+	}
+	tests := []struct {
+		name      string
+		args      []string
+		responses []sqltest.Response
+		want      string
+	}{
+		{
+			// The file by id and its path in the delete's first
+			// transaction, the hold, the bookmark count, the delete, and
+			// the purge.
+			name: "rm by id",
+			args: []string{"rm", "id:" + planID},
+			responses: []sqltest.Response{
+				files(planRow(reportsID)),
+				ancestors(reports),
+				{Columns: []string{"id"}, Rows: [][]driver.Value{{planID}}},
+				{Columns: []string{"n"}, Rows: [][]driver.Value{{int64(0)}}},
+				files([]driver.Value{planID, reportsID, "plan.txt", "deleting", planID + "/plan.txt", int64(12), "text/plain", `"e"`, int64(3), stamp, stamp}),
+				{Affected: 1},
+			},
+			want: "rm: /reports/plan.txt (id " + planID + ")\n",
+		},
+		{
+			// The directory's path, the name's lookup, the pending row,
+			// and the completion.
+			name: "put into a directory by id",
+			args: []string{"put", local, "id:" + reportsID},
+			responses: []sqltest.Response{
+				ancestors(reports),
+				files(),
+				files([]driver.Value{copyID, reportsID, "notes.txt", "pending", copyID + "/notes.txt", nil, "text/plain", nil, int64(1), stamp, stamp}),
+				files([]driver.Value{copyID, reportsID, "notes.txt", "available", copyID + "/notes.txt", int64(5), "text/plain", `"e"`, int64(2), stamp, stamp}),
+			},
+			want: "put: /reports/notes.txt (id " + copyID + ", 5 bytes, etag \"e\")\n",
+		},
+		{
+			// The source by id and its path, then the destination path,
+			// an existing directory, then the copy's write.
+			name: "cp an id into a path",
+			args: []string{"cp", "id:" + planID, "/archive"},
+			responses: []sqltest.Response{
+				files(planRow(reportsID)),
+				ancestors(reports),
+				resolvedAt(yearID, blobfs.RootID, "archive", 1),
+				files([]driver.Value{copyID, yearID, "plan.txt", "pending", copyID + "/plan.txt", nil, "text/plain", nil, int64(1), stamp, stamp}),
+				files([]driver.Value{copyID, yearID, "plan.txt", "available", copyID + "/plan.txt", int64(12), "text/plain", `"e"`, int64(2), stamp, stamp}),
+			},
+			want: "cp: /reports/plan.txt -> /archive/plan.txt (id " + copyID + ", 12 bytes, etag \"e\")\n",
+		},
+		{
+			// The source by path, then the destination by id's path.
+			name: "cp a path into an id",
+			args: []string{"cp", "/reports/plan.txt", "id:" + yearID},
+			responses: []sqltest.Response{
+				resolvedAt(reportsID, blobfs.RootID, "reports", 1),
+				files(planRow(reportsID)),
+				ancestors([]driver.Value{yearID, blobfs.RootID, "archive"}),
+				files([]driver.Value{copyID, yearID, "plan.txt", "pending", copyID + "/plan.txt", nil, "text/plain", nil, int64(1), stamp, stamp}),
+				files([]driver.Value{copyID, yearID, "plan.txt", "available", copyID + "/plan.txt", int64(12), "text/plain", `"e"`, int64(2), stamp, stamp}),
+			},
+			want: "cp: /reports/plan.txt -> /archive/plan.txt (id " + copyID + ", 12 bytes, etag \"e\")\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := storagetest.NewFake()
+			if _, err := fake.Put(context.Background(), planID+"/plan.txt", strings.NewReader("twelve bytes"), storage.PutOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			var out, errOut bytes.Buffer
+			rec, run, _ := objectApp(t, fake, strings.NewReader(""), &out, &errOut, tt.responses...)
+
+			code := run(tt.args...)
+
+			if code != process.ExitOK {
+				t.Fatalf("code = %d, want %d; stderr = %q", code, process.ExitOK, errOut.String())
+			}
+			if out.String() != tt.want {
+				t.Errorf("stdout = %q, want %q", out.String(), tt.want)
+			}
+			if n := rec.Pending(); n != 0 {
+				t.Errorf("%d scripted responses unconsumed", n)
+			}
+		})
+	}
+}
+
 func TestObjects_RmRecursiveByIDReportsTheBranchsPath(t *testing.T) {
 	// /reports/2026 by its id, an empty directory: the row and its path,
 	// the mark and the bookmark count, and the sweep's one pass.
-	const yearID = "00000000-0000-7000-8000-000000000005"
 	var out, errOut bytes.Buffer
 	deleting := []driver.Value{yearID, reportsID, "2026", "deleting", int64(2), stamp, stamp}
 	rec, run, _ := objectApp(t, storagetest.NewFake(), strings.NewReader(""), &out, &errOut,
@@ -200,7 +302,6 @@ func TestObjects_UsageErrorsBuildNothing(t *testing.T) {
 	}{
 		{"put - into a directory id", []string{"put", "-", "id:" + reportsID}, "stdin has no name to store under"},
 		{"rm -r", []string{"rm", "-r", "/reports"}, "flag provided but not defined: -r"},
-		{"cp a path and an id", []string{"cp", "/a.txt", "id:" + reportsID}, "two paths, or two ids"},
 		{"cat with no argument", []string{"cat"}, "accepts 1 argument, got 0"},
 		{"put with one argument", []string{"put", "-"}, "accepts 2 arguments, got 1"},
 	}

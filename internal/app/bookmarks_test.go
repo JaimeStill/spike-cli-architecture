@@ -31,9 +31,7 @@ func resolved(id, name string) sqltest.Response {
 
 // planRows is the lookup of plan.txt in /reports, available.
 func planRows() sqltest.Response {
-	return sqltest.Response{Columns: fileColumns, Rows: [][]driver.Value{
-		{planID, reportsID, "plan.txt", "available", planID + "/plan.txt", int64(12), "text/plain", `"e"`, int64(2), stamp, stamp},
-	}}
+	return sqltest.Response{Columns: fileColumns, Rows: [][]driver.Value{planRow(reportsID)}}
 }
 
 // activeViolation is the violation Postgres raises for a second active

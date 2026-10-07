@@ -50,28 +50,17 @@ func (s *Service) Start(ctx context.Context) error {
 	return nil
 }
 
-// The form rules: the forms of Ref an operation refuses because an id
-// cannot name its target, or because it takes two Refs of one form. Every
-// other operation takes either form. Each operation runs its rule before
-// any I/O, and a command runs the same rule in its Validate, so a refusal
-// is a usage error before anything is built.
+// The form rule: the one form of Ref an operation refuses because an id
+// cannot name its target. Every other operation takes either form, a move
+// and a copy each of their two Refs on its own. The operation runs the
+// rule before any I/O, and the command runs the same rule in its Validate,
+// so a refusal is a usage error before anything is built.
 
 // checkMkdir refuses a directory's create named by id: the directory does
 // not exist yet, so it has no id.
 func checkMkdir(ref Ref) error {
 	if ref.ID != "" {
 		return &FormError{Reason: "a directory is created by path, not by id"}
-	}
-	return nil
-}
-
-// checkPair refuses a move or a copy whose source and destination are not
-// of one form: by path, the destination is an existing directory or a new
-// path; by id, it is the directory the source goes into under its own
-// name, so the two forms do not mix.
-func checkPair(src, dst Ref) error {
-	if (src.ID == "") != (dst.ID == "") {
-		return &FormError{Reason: "a move or a copy takes two paths, or two ids: the source's and the destination directory's"}
 	}
 	return nil
 }
@@ -352,19 +341,20 @@ func refuseRoot(ref Ref) error {
 }
 
 // Move moves the directory or file src names, in one transaction. src and
-// dst are two paths or two ids (a [FormError] otherwise, before any I/O).
+// dst each take a path or an id, and each is resolved on its own, so a
+// path and an id mix.
 //
-// By path, dst is read the way Unix reads it: when it names an existing
-// directory the source moves into it under its own name, and otherwise dst
-// is the new path, whose parent must exist and whose last segment is the
-// new name, so a move to a new name under the same parent is a rename. src
-// is resolved as a directory first and as a file when no directory is at
-// the path; a directory and a file may share a name, and the directory
-// wins. By id, src is the file with the id, or the directory when no file
-// has it, and dst is the directory it moves into under its own name; the
-// paths of the source's parent and of the destination are computed by
-// blobfs's Directories.Path before anything changes, so a move by id
-// reports what a move by path does.
+// A source by path is resolved as a directory first and as a file when no
+// directory is at the path; a directory and a file may share a name, and
+// the directory wins. A source by id is the file with the id, or the
+// directory when no file has it, and the path of its parent is computed by
+// blobfs's Directories.Path before anything changes. A destination by path
+// is read the way Unix reads it: when it names an existing directory the
+// source moves into it under its own name, and otherwise it is the new
+// path, whose parent must exist and whose last segment is the new name, so
+// a move to a new name under the same parent is a rename. A destination by
+// id is the directory the source moves into under its own name, its path
+// computed by Directories.Path. Either way the result reports both paths.
 //
 // A directory moves through blobfs's Directories.Move, which takes the
 // tree lock and runs the cycle check inside this transaction, so a move
@@ -374,31 +364,28 @@ func refuseRoot(ref Ref) error {
 // store.
 //
 // The move stays under one top-level directory (ErrMoveAcrossScopes
-// otherwise), checked once both sides resolve and before anything
-// changes. The root as the source is blobfs.ErrRootDirectory before any
-// I/O. A source that does not exist, or a destination whose parent does
-// not, is blobfs.ErrNotFound; a name already held in the destination by an
-// entry of the same kind is blobfs.ErrNameTaken.
+// otherwise), checked on the two resolved paths before anything changes:
+// a source by path is checked once the destination resolves and before
+// the source is read. The root as the source is blobfs.ErrRootDirectory,
+// and a relative destination path blobfs.ErrInvalidPath, before any I/O. A
+// source that does not exist, or a destination whose parent does not, is
+// blobfs.ErrNotFound; a name already held in the destination by an entry
+// of the same kind is blobfs.ErrNameTaken.
 func (s *Service) Move(ctx context.Context, src, dst Ref) (MoveResult, error) {
 	at := label(src, "id") + " " + label(dst, "directory")
-	if err := checkPair(src, dst); err != nil {
-		return MoveResult{}, fmt.Errorf("files: mv %s: %w", at, err)
-	}
 	if src.ID == blobfs.RootID {
 		return MoveResult{}, fmt.Errorf("files: mv %s: %w", at, blobfs.ErrRootDirectory)
 	}
-	move := s.moveID
 	if src.ID == "" {
-		move = s.movePath
 		if _, _, err := splitParent(src.Path); err != nil {
 			return MoveResult{}, fmt.Errorf("files: mv %s: %w", at, err)
 		}
-		if !strings.HasPrefix(dst.Path, "/") {
-			return MoveResult{}, fmt.Errorf("files: mv %s: %w: %q does not start with /", at, blobfs.ErrInvalidPath, dst.Path)
-		}
+	}
+	if dst.ID == "" && !strings.HasPrefix(dst.Path, "/") {
+		return MoveResult{}, fmt.Errorf("files: mv %s: %w: %q does not start with /", at, blobfs.ErrInvalidPath, dst.Path)
 	}
 	res, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (MoveResult, error) {
-		return move(ctx, tx, src, dst)
+		return s.move(ctx, tx, src, dst)
 	})
 	if err != nil {
 		return MoveResult{}, fmt.Errorf("files: mv %s: %w", at, err)
@@ -406,95 +393,106 @@ func (s *Service) Move(ctx context.Context, src, dst Ref) (MoveResult, error) {
 	return res, nil
 }
 
-// movePath is Move by path inside tx, its errors unlabelled.
-func (s *Service) movePath(ctx context.Context, tx *sqlate.Tx, src, dst Ref) (MoveResult, error) {
-	srcParent, srcName, _ := splitParent(src.Path)
-	parent, parentPath, name, err := s.store.destination(ctx, tx, dst.Path, srcName)
-	if err != nil {
-		return MoveResult{}, err
-	}
-	if err := sameScope(src.Path, join(parentPath, name)); err != nil {
-		return MoveResult{}, err
-	}
-	dir, err := s.store.resolve(ctx, tx, src.Path)
-	switch {
-	case err == nil:
-		moved, err := s.store.blobfs.Directories.Move(ctx, tx, dir.ID, parent.ID, name, dir.Version)
-		if err != nil {
-			return MoveResult{}, err
-		}
-		return MoveResult{Kind: EntryDirectory, ID: moved.ID, From: src.Path, To: join(parentPath, moved.Name)}, nil
-	case !errors.Is(err, blobfs.ErrNotFound):
-		return MoveResult{}, err
-	}
-	srcDir, err := s.store.resolve(ctx, tx, srcParent)
-	if err != nil {
-		return MoveResult{}, err
-	}
-	f, err := s.store.blobfs.Files.FindByName(ctx, tx, srcDir.ID, srcName)
-	if err != nil {
-		return MoveResult{}, err
-	}
-	moved, err := s.store.blobfs.Files.Move(ctx, tx, f.ID, parent.ID, name, f.Version)
-	if err != nil {
-		return MoveResult{}, err
-	}
-	return MoveResult{Kind: EntryFile, ID: moved.ID, From: src.Path, To: join(parentPath, moved.Name)}, nil
+// moving is the entry a move reads before it moves it: its kind, its id,
+// its name, the version that guards the move, and the path it is at.
+type moving struct {
+	kind    EntryKind
+	id      string
+	name    string
+	version int64
+	path    string
 }
 
-// moveID is Move by id inside tx, its errors unlabelled: the row is read
-// first, the file with the id or else the directory, for its kind, its
-// name, its parent, and the version that guards the move.
-func (s *Service) moveID(ctx context.Context, tx *sqlate.Tx, src, dst Ref) (MoveResult, error) {
-	res := MoveResult{ID: src.ID}
-	var parentID, name string
-	var version int64
-	f, err := s.store.blobfs.Files.Find(ctx, tx, src.ID)
-	switch {
-	case err == nil:
-		res.Kind, parentID, name, version = EntryFile, f.DirectoryID, f.Name, f.Version
-	case !errors.Is(err, blobfs.ErrNotFound):
-		return MoveResult{}, err
-	default:
-		d, err := s.store.blobfs.Directories.Find(ctx, tx, src.ID)
-		switch {
-		case errors.Is(err, blobfs.ErrNotFound):
-			return MoveResult{}, fmt.Errorf("no file or directory has it: %w", blobfs.ErrNotFound)
-		case err != nil:
+// move is Move's body inside tx, its errors unlabelled: a source by id is
+// read first, for the name it keeps and the path it is at; a source by
+// path has both in the path itself. Then the destination is resolved and
+// the scope checked, a source by path read, and the entry moved.
+func (s *Service) move(ctx context.Context, tx *sqlate.Tx, src, dst Ref) (MoveResult, error) {
+	var e moving
+	var err error
+	if src.ID != "" {
+		if e, err = s.movingByID(ctx, tx, src.ID); err != nil {
 			return MoveResult{}, err
-		case d.ParentID == nil:
-			return MoveResult{}, blobfs.ErrRootDirectory
 		}
-		res.Kind, parentID, name, version = EntryDirectory, *d.ParentID, d.Name, d.Version
+	} else {
+		_, e.name, _ = splitParent(src.Path)
+		e.path = src.Path
 	}
-	fromDir, err := s.store.blobfs.Directories.Path(ctx, tx, parentID)
+	parentID, parentPath, name, err := s.store.destination(ctx, tx, dst, e.name)
 	if err != nil {
 		return MoveResult{}, err
 	}
-	toDir, err := s.store.blobfs.Directories.Path(ctx, tx, dst.ID)
-	if err != nil {
+	if err := sameScope(e.path, join(parentPath, name)); err != nil {
 		return MoveResult{}, err
 	}
-	res.From = join(fromDir, name)
-	if err := sameScope(res.From, join(toDir, name)); err != nil {
-		return MoveResult{}, err
+	if src.ID == "" {
+		if e, err = s.movingByPath(ctx, tx, src.Path); err != nil {
+			return MoveResult{}, err
+		}
 	}
 	var moved string
-	if res.Kind == EntryFile {
-		m, err := s.store.blobfs.Files.Move(ctx, tx, src.ID, dst.ID, name, version)
+	if e.kind == EntryFile {
+		m, err := s.store.blobfs.Files.Move(ctx, tx, e.id, parentID, name, e.version)
 		if err != nil {
 			return MoveResult{}, err
 		}
 		moved = m.Name
 	} else {
-		m, err := s.store.blobfs.Directories.Move(ctx, tx, src.ID, dst.ID, name, version)
+		m, err := s.store.blobfs.Directories.Move(ctx, tx, e.id, parentID, name, e.version)
 		if err != nil {
 			return MoveResult{}, err
 		}
 		moved = m.Name
 	}
-	res.To = join(toDir, moved)
-	return res, nil
+	return MoveResult{Kind: e.kind, ID: e.id, From: e.path, To: join(parentPath, moved)}, nil
+}
+
+// movingByPath reads the entry at path through tx: the directory there,
+// or the file when no directory is.
+func (s *Service) movingByPath(ctx context.Context, tx *sqlate.Tx, path string) (moving, error) {
+	dir, err := s.store.resolve(ctx, tx, path)
+	switch {
+	case err == nil:
+		return moving{kind: EntryDirectory, id: dir.ID, name: dir.Name, version: dir.Version, path: path}, nil
+	case !errors.Is(err, blobfs.ErrNotFound):
+		return moving{}, err
+	}
+	f, err := s.store.file(ctx, tx, Ref{Path: path})
+	if err != nil {
+		return moving{}, err
+	}
+	return moving{kind: EntryFile, id: f.ID, name: f.Name, version: f.Version, path: path}, nil
+}
+
+// movingByID reads the entry with id through tx: the file with the id, or
+// the directory when no file has it, and the path its parent computes.
+func (s *Service) movingByID(ctx context.Context, tx *sqlate.Tx, id string) (moving, error) {
+	e := moving{id: id}
+	var parentID string
+	f, err := s.store.blobfs.Files.Find(ctx, tx, id)
+	switch {
+	case err == nil:
+		e.kind, parentID, e.name, e.version = EntryFile, f.DirectoryID, f.Name, f.Version
+	case !errors.Is(err, blobfs.ErrNotFound):
+		return moving{}, err
+	default:
+		d, err := s.store.blobfs.Directories.Find(ctx, tx, id)
+		switch {
+		case errors.Is(err, blobfs.ErrNotFound):
+			return moving{}, fmt.Errorf("no file or directory has it: %w", blobfs.ErrNotFound)
+		case err != nil:
+			return moving{}, err
+		case d.ParentID == nil:
+			return moving{}, blobfs.ErrRootDirectory
+		}
+		e.kind, parentID, e.name, e.version = EntryDirectory, *d.ParentID, d.Name, d.Version
+	}
+	dir, err := s.store.blobfs.Directories.Path(ctx, tx, parentID)
+	if err != nil {
+		return moving{}, err
+	}
+	e.path = join(dir, e.name)
+	return e, nil
 }
 
 // AddBookmark records that the unit bookmarks the file ref names, by path

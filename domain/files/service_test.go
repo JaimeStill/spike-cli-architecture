@@ -506,6 +506,94 @@ func TestMove_ByIDMovesTheFileWithTheIDIntoTheDirectory(t *testing.T) {
 	}
 }
 
+func TestMove_MixesAPathAndAnID(t *testing.T) {
+	// Each Ref resolves on its own. A source by path has its name in the
+	// path, so the destination resolves first and the source after the
+	// scope check; a source by id is read first for its name and its path.
+	// A destination by id is the directory the source moves into, keeping
+	// its name; a destination by path is read the Unix way.
+	reports := []driver.Value{dirID, blobfs.RootID, "reports"}
+	tests := []struct {
+		name      string
+		src, dst  files.Ref
+		responses []sqltest.Response
+		to        string
+	}{
+		{"a path into an id", files.Ref{Path: "/reports/a.txt"}, files.Ref{ID: otherID}, []sqltest.Response{
+			ancestors([]driver.Value{otherID, dirID, "2026"}, reports),
+			resolved(dirID, blobfs.RootID, "reports", 1),
+			resolved(dirID, blobfs.RootID, "reports", 1),
+			fileRows(fileRow(fileID, dirID, "a.txt", 3)),
+			fileRows(fileRow(fileID, otherID, "a.txt", 3)),
+		}, "/reports/2026/a.txt"},
+		{"an id into an existing directory's path", files.Ref{ID: fileID}, files.Ref{Path: "/reports/2026"}, []sqltest.Response{
+			fileRows(fileRow(fileID, dirID, "a.txt", 3)),
+			ancestors(reports),
+			resolved(otherID, dirID, "2026", 2),
+			fileRows(fileRow(fileID, otherID, "a.txt", 3)),
+		}, "/reports/2026/a.txt"},
+		{"an id to a new path, a rename", files.Ref{ID: fileID}, files.Ref{Path: "/reports/b.txt"}, []sqltest.Response{
+			fileRows(fileRow(fileID, dirID, "a.txt", 3)),
+			ancestors(reports),
+			resolved(dirID, blobfs.RootID, "reports", 1),
+			resolved(dirID, blobfs.RootID, "reports", 1),
+			fileRows(fileRow(fileID, dirID, "b.txt", 3)),
+		}, "/reports/b.txt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, rec := open(t, tt.responses...)
+
+			res, err := s.Move(context.Background(), tt.src, tt.dst)
+
+			if err != nil {
+				t.Fatalf("Move() = %v", err)
+			}
+			want := files.MoveResult{Kind: files.EntryFile, ID: fileID, From: "/reports/a.txt", To: tt.to}
+			if res != want {
+				t.Errorf("Move() = %+v, want %+v", res, want)
+			}
+			if n := rec.Pending(); n != 0 {
+				t.Errorf("%d scripted responses unconsumed", n)
+			}
+		})
+	}
+}
+
+func TestMove_MixedFormsStayUnderOneTopLevelDirectory(t *testing.T) {
+	// The scope rule reads the resolved paths, whichever form named each
+	// side, and refuses before anything moves.
+	tests := []struct {
+		name      string
+		src, dst  files.Ref
+		responses []sqltest.Response
+		want      []sqltest.Op
+	}{
+		{"a path into an id under another", files.Ref{Path: "/a/y"}, files.Ref{ID: otherID}, []sqltest.Response{
+			ancestors([]driver.Value{otherID, blobfs.RootID, "b"}),
+		}, []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpRollback}},
+		{"an id into a path under another", files.Ref{ID: fileID}, files.Ref{Path: "/b"}, []sqltest.Response{
+			fileRows(fileRow(fileID, dirID, "y", 3)),
+			ancestors([]driver.Value{dirID, blobfs.RootID, "a"}),
+			resolved(otherID, blobfs.RootID, "b", 1),
+		}, []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpRollback}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, rec := open(t, tt.responses...)
+
+			_, err := s.Move(context.Background(), tt.src, tt.dst)
+
+			if !errors.Is(err, files.ErrMoveAcrossScopes) || !strings.Contains(err.Error(), "/a/y is under /a and /b/y under /b") {
+				t.Fatalf("Move() = %v, want ErrMoveAcrossScopes naming /a/y and /b/y", err)
+			}
+			if got := rec.Ops(); !slices.Equal(got, tt.want) {
+				t.Errorf("ops = %v, want %v: refused before the move", got, tt.want)
+			}
+		})
+	}
+}
+
 // ancestors is the engine's read of a directory's chain of parents, as
 // Directories.Path reads it: rows, from the directory up, ending below the
 // root, which the read appends.
@@ -518,9 +606,10 @@ func ancestors(rows ...[]driver.Value) sqltest.Response {
 
 func TestFormRules_RefuseBeforeAnyIO(t *testing.T) {
 	// Each operation that takes one form alone, because an id cannot name
-	// its target, or two Refs of one form, refuses any other with a
-	// FormError before it reaches the database or the object store.
-	byID, byPath := files.Ref{ID: dirID}, files.Ref{Path: "/reports"}
+	// its target, refuses the other with a FormError before it reaches the
+	// database or the object store, and so does a put into a directory by
+	// id with no name for the file.
+	byID := files.Ref{ID: dirID}
 	tests := []struct {
 		name string
 		call func(*files.Service, *files.Storage) error
@@ -530,18 +619,6 @@ func TestFormRules_RefuseBeforeAnyIO(t *testing.T) {
 			_, err := s.Mkdir(context.Background(), byID, "")
 			return err
 		}, "a directory is created by path, not by id"},
-		{"a move from a path to an id", func(s *files.Service, _ *files.Storage) error {
-			_, err := s.Move(context.Background(), byPath, byID)
-			return err
-		}, "two paths, or two ids"},
-		{"a move from an id to a path", func(s *files.Service, _ *files.Storage) error {
-			_, err := s.Move(context.Background(), byID, byPath)
-			return err
-		}, "two paths, or two ids"},
-		{"a copy from an id to a path", func(_ *files.Service, o *files.Storage) error {
-			_, err := o.Copy(context.Background(), byID, byPath)
-			return err
-		}, "two paths, or two ids"},
 		{"a put into a directory by id with no name", func(_ *files.Service, o *files.Storage) error {
 			_, err := o.Put(context.Background(), byID, files.Content{Body: strings.NewReader("x")})
 			return err

@@ -81,9 +81,10 @@ func (o objectStore) open(ctx context.Context, key string) (io.ReadCloser, error
 	return blob.Body, nil
 }
 
-// Put writes c as a new file and returns the row available: the file at
-// dst's path, whose parent must exist, or the file named c.Name in the
-// directory with dst's id. The parent is resolved on the pool. The root
+// Put writes c as a new file and returns the row available with its path:
+// the file at dst's path, whose parent must exist, or the file named
+// c.Name in the directory with dst's id, whose path blobfs computes before
+// the write. The parent is resolved on the pool. The root
 // is blobfs.ErrRootDirectory and a relative path blobfs.ErrInvalidPath,
 // and a directory id with no c.Name a [FormError], all before any I/O; a
 // directory that does not exist is blobfs.ErrNotFound.
@@ -116,7 +117,13 @@ func (s *Storage) put(ctx context.Context, dst Ref, c Content) (PutResult, error
 		if c.Name == "" {
 			return PutResult{}, &FormError{Reason: "a file put into a directory by id takes a name"}
 		}
-		return s.write(ctx, dst.ID, c.Name, c)
+		dir, err := s.store.blobfs.Directories.Path(ctx, s.store.db, dst.ID)
+		if err != nil {
+			return PutResult{}, err
+		}
+		res, err := s.write(ctx, dst.ID, c.Name, c)
+		res.Path = join(dir, c.Name)
+		return res, err
 	}
 	parent, name, err := splitParent(dst.Path)
 	if err != nil {
@@ -126,7 +133,9 @@ func (s *Storage) put(ctx context.Context, dst Ref, c Content) (PutResult, error
 	if err != nil {
 		return PutResult{}, err
 	}
-	return s.write(ctx, dir.ID, name, c)
+	res, err := s.write(ctx, dir.ID, name, c)
+	res.Path = dst.Path
+	return res, err
 }
 
 // write writes c as the file name in the directory with directoryID.
@@ -155,22 +164,28 @@ func (s *Storage) write(ctx context.Context, directoryID, name string, c Content
 }
 
 // Open opens the content of the file ref names for reading and returns
-// the row with it; the caller closes the reader. Only an available file
-// has content: a pending or deleting one is ErrNotAvailable, before the
-// store is reached.
-func (s *Storage) Open(ctx context.Context, ref Ref) (io.ReadCloser, blobfs.File, error) {
+// the row with its path, which for a file named by id blobfs computes from
+// the row, so a caller reports a failed read at the path; the caller
+// closes the reader. Only an available file has content: a pending or
+// deleting one is ErrNotAvailable, before the store is reached.
+func (s *Storage) Open(ctx context.Context, ref Ref) (io.ReadCloser, Located[blobfs.File], error) {
+	at := label(ref, "file")
 	f, err := s.store.file(ctx, s.store.db, ref)
 	if err != nil {
-		return nil, blobfs.File{}, fmt.Errorf("files: cat %s: %w", label(ref, "file"), err)
+		return nil, Located[blobfs.File]{}, fmt.Errorf("files: cat %s: %w", at, err)
 	}
 	if err := available(f); err != nil {
-		return nil, blobfs.File{}, fmt.Errorf("files: cat %s: %w", label(ref, "file"), err)
+		return nil, Located[blobfs.File]{}, fmt.Errorf("files: cat %s: %w", at, err)
+	}
+	path, err := s.store.filePath(ctx, s.store.db, ref, f)
+	if err != nil {
+		return nil, Located[blobfs.File]{}, fmt.Errorf("files: cat %s: %w", at, err)
 	}
 	body, err := s.objects.open(ctx, f.Key)
 	if err != nil {
-		return nil, blobfs.File{}, fmt.Errorf("files: cat %s: %w", label(ref, "file"), err)
+		return nil, Located[blobfs.File]{}, fmt.Errorf("files: cat %s: %w", path, err)
 	}
-	return body, f, nil
+	return body, Located[blobfs.File]{Path: path, Row: f}, nil
 }
 
 // available refuses a file that has no content to read or copy: a pending
@@ -184,14 +199,14 @@ func available(f blobfs.File) error {
 }
 
 // Copy copies the available file src names to a new file with its bytes
-// and its content type. src and dst are two paths or two ids (a
-// [FormError] otherwise, before any I/O). By path, dst is read as Move
-// reads it: an existing directory receives the copy under the source's
-// name, and any other path is the copy's path, whose parent must exist. By
-// id, dst is the directory that receives the copy under the source's name,
-// and the paths of the source's directory and of the destination are
-// computed before the copy, so a copy by id reports what a copy by path
-// does. The source and the destination are read on the pool.
+// and its content type. src and dst each take a path or an id, and each
+// is resolved on its own, so a path and an id mix. A dst by path is read
+// as Move reads it: an existing directory receives the copy under the
+// source's name, and any other path is the copy's path, whose parent must
+// exist. A dst by id is the directory that receives the copy under the
+// source's name. The path of a source by id, and of a destination by id,
+// is computed before the copy, so the result reports both paths whichever
+// form named them. The source and the destination are read on the pool.
 //
 // The copy is blobfs's WriteFile: Files.Create commits the copy's pending
 // row in the source's content type, which refuses a name a pending or
@@ -207,10 +222,7 @@ func available(f blobfs.File) error {
 // ErrNotAvailable.
 func (s *Storage) Copy(ctx context.Context, src, dst Ref) (CopyResult, error) {
 	at := label(src, "file") + " " + label(dst, "directory")
-	if err := checkPair(src, dst); err != nil {
-		return CopyResult{}, fmt.Errorf("files: cp %s: %w", at, err)
-	}
-	if src.ID == "" && !strings.HasPrefix(dst.Path, "/") {
+	if dst.ID == "" && !strings.HasPrefix(dst.Path, "/") {
 		return CopyResult{}, fmt.Errorf("files: cp %s: %w: %q does not start with /", at, blobfs.ErrInvalidPath, dst.Path)
 	}
 	res, err := s.copyRef(ctx, src, dst)
@@ -221,8 +233,8 @@ func (s *Storage) Copy(ctx context.Context, src, dst Ref) (CopyResult, error) {
 }
 
 // copyRef is Copy's body, its errors unlabelled: the source read and
-// checked available, the destination's directory, its path, and the
-// copy's name found, and the copy written.
+// checked available, its path, the destination's directory, its path, and
+// the copy's name found, and the copy written.
 func (s *Storage) copyRef(ctx context.Context, src, dst Ref) (CopyResult, error) {
 	db := s.store.db
 	f, err := s.store.file(ctx, db, src)
@@ -232,22 +244,13 @@ func (s *Storage) copyRef(ctx context.Context, src, dst Ref) (CopyResult, error)
 	if err := available(f); err != nil {
 		return CopyResult{}, err
 	}
-	from, dirID, toDir, name := src.Path, dst.ID, "", f.Name
-	if src.ID != "" {
-		fromDir, err := s.store.blobfs.Directories.Path(ctx, db, f.DirectoryID)
-		if err != nil {
-			return CopyResult{}, err
-		}
-		from = join(fromDir, f.Name)
-		if toDir, err = s.store.blobfs.Directories.Path(ctx, db, dst.ID); err != nil {
-			return CopyResult{}, err
-		}
-	} else {
-		var parent blobfs.Directory
-		if parent, toDir, name, err = s.store.destination(ctx, db, dst.Path, f.Name); err != nil {
-			return CopyResult{}, err
-		}
-		dirID = parent.ID
+	from, err := s.store.filePath(ctx, db, src, f)
+	if err != nil {
+		return CopyResult{}, err
+	}
+	dirID, toDir, name, err := s.store.destination(ctx, db, dst, f.Name)
+	if err != nil {
+		return CopyResult{}, err
 	}
 	made, err := s.copy(ctx, f, dirID, name)
 	if err != nil {
@@ -298,8 +301,10 @@ func (b *deferredBody) close() {
 	}
 }
 
-// Remove deletes the file ref names, whatever its status, and returns
-// its row as the delete found it. It is blobfs's RemoveFile: the file's
+// Remove deletes the file ref names, whatever its status, and returns its
+// row as the delete found it with its path, which for a file named by id
+// is computed in the delete's first transaction. It is blobfs's
+// RemoveFile: the file's
 // lookup, the domain's check that the file may be removed, and blobfs's
 // Files.Delete run in one transaction, which commits the row deleting; the
 // object is then deleted and the row purged. A file a unit has bookmarked
@@ -308,19 +313,25 @@ func (b *deferredBody) close() {
 // deleting, and a later Remove finishes it. The root is
 // blobfs.ErrRootDirectory before any I/O, and a file that does not exist
 // is blobfs.ErrNotFound.
-func (s *Storage) Remove(ctx context.Context, ref Ref) (blobfs.File, error) {
+func (s *Storage) Remove(ctx context.Context, ref Ref) (Located[blobfs.File], error) {
 	if ref.ID == "" {
 		if _, _, err := splitParent(ref.Path); err != nil {
-			return blobfs.File{}, fmt.Errorf("files: rm %s: %w", ref.Path, err)
+			return Located[blobfs.File]{}, fmt.Errorf("files: rm %s: %w", ref.Path, err)
 		}
 	}
+	var path string
 	f, err := s.remove(ctx, func(tx *sqlate.Tx) (blobfs.File, error) {
-		return s.store.file(ctx, tx, ref)
+		f, err := s.store.file(ctx, tx, ref)
+		if err != nil {
+			return blobfs.File{}, err
+		}
+		path, err = s.store.filePath(ctx, tx, ref, f)
+		return f, err
 	})
 	if err != nil {
-		return blobfs.File{}, fmt.Errorf("files: rm %s: %w", label(ref, "file"), err)
+		return Located[blobfs.File]{}, fmt.Errorf("files: rm %s: %w", label(ref, "file"), err)
 	}
-	return f, nil
+	return Located[blobfs.File]{Path: path, Row: f}, nil
 }
 
 // remove runs blobfs's RemoveFile of the file find reads in the delete's

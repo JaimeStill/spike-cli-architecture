@@ -54,7 +54,9 @@ func TestScenario_AloneHelpEndsWithTheListingAndBuildsNothing(t *testing.T) {
 }
 
 func TestRootHelp_EndsWithTheScenarioListingAndBuildsNothing(t *testing.T) {
-	tail := "\nRun 'blobfs <command> --help' for help on a command.\n\n" + listing
+	tail := "\nRun 'blobfs <command> --help' for help on a command.\n\n" +
+		"A path argument may instead be id:<uuid>, naming the directory or file by its id.\n\n" +
+		listing
 	tests := []struct {
 		name   string
 		args   []string
@@ -89,6 +91,24 @@ func TestRootHelp_EndsWithTheScenarioListingAndBuildsNothing(t *testing.T) {
 				t.Errorf("nodes built = %q, want none", got)
 			}
 		})
+	}
+}
+
+func TestRootHelp_ExplainsTheIDOperandOnce(t *testing.T) {
+	// The root's help states the id:<uuid> operand once, ahead of the
+	// scenario listing; a command's own help, whose synopsis writes
+	// <path|id:<uuid>>, does not repeat it, since the root's footer is not
+	// inherited.
+	const line = "A path argument may instead be id:<uuid>, naming the directory or file by its id.\n"
+
+	_, root, _ := run(t)
+	_, ls, _ := run(t, "ls", "--help")
+
+	if n := strings.Count(root, line); n != 1 || strings.Index(root, line) > strings.Index(root, "Scenarios:") {
+		t.Errorf("root help:\n%s\nwant %q once, before the scenario listing", root, line)
+	}
+	if strings.Contains(ls, "id:<uuid>, naming") {
+		t.Errorf("ls help:\n%s\nwant no root footer", ls)
 	}
 }
 

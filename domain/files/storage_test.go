@@ -137,7 +137,7 @@ func TestPut_CommitsThePendingRowThenPutsThenCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Put() = %v", err)
 	}
-	if res.Resumed || res.File.Status != blobfs.StatusAvailable || res.File.ID != fileID {
+	if res.Path != "/a.txt" || res.Resumed || res.File.Status != blobfs.StatusAvailable || res.File.ID != fileID {
 		t.Errorf("Put() = %+v, want the new row available and not resumed", res)
 	}
 	want := []sqltest.Op{sqltest.OpQuery, sqltest.OpQuery, sqltest.OpBegin, sqltest.OpQuery, sqltest.OpCommit, sqltest.OpQuery}
@@ -227,8 +227,31 @@ func TestOpen_StreamsAnAvailableFilesObject(t *testing.T) {
 	}
 	defer func() { _ = body.Close() }()
 	var b bytes.Buffer
-	if _, err := io.Copy(&b, body); err != nil || b.String() != "hello" || f.ID != fileID {
-		t.Errorf("Open() read %q, %v, file %s; want hello from the file", b.String(), err, f.ID)
+	if _, err := io.Copy(&b, body); err != nil || b.String() != "hello" || f.Row.ID != fileID || f.Path != "/a.txt" {
+		t.Errorf("Open() read %q, %v, file %s at %s; want hello from /a.txt", b.String(), err, f.Row.ID, f.Path)
+	}
+}
+
+func TestOpen_ByIDReportsTheFilesResolvedPath(t *testing.T) {
+	// The file is read by id, checked available, and its directory's path
+	// computed before the object is opened.
+	o, rec, fake := openStorage(t,
+		fileRows(fileRow(fileID, dirID, "a.txt", 5)),
+		ancestors([]driver.Value{dirID, blobfs.RootID, "reports"}),
+	)
+	store(t, fake, fileID+"/a.txt", "hello")
+
+	body, f, err := o.Open(context.Background(), files.Ref{ID: fileID})
+
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	defer func() { _ = body.Close() }()
+	if f.Path != "/reports/a.txt" || f.Row.ID != fileID {
+		t.Errorf("Open() = %+v, want the file at /reports/a.txt", f)
+	}
+	if n := rec.Pending(); n != 0 {
+		t.Errorf("%d scripted responses unconsumed", n)
 	}
 }
 
@@ -345,6 +368,79 @@ func TestCopy_StreamsTheSourceUnderTheCopysKey(t *testing.T) {
 	}
 }
 
+func TestCopy_MixesAPathAndAnID(t *testing.T) {
+	// Each Ref resolves on its own: a source by id has its path computed
+	// from its directory, and a destination by path that names an existing
+	// directory takes the copy under the source's name; a source by path
+	// into a destination by id is the directory with the id, its path
+	// computed.
+	tests := []struct {
+		name      string
+		src, dst  files.Ref
+		responses []sqltest.Response
+		from, to  string
+	}{
+		{"an id into a path", files.Ref{ID: fileID}, files.Ref{Path: "/archive"}, []sqltest.Response{
+			fileRows(fileRow(fileID, dirID, "a.txt", 5)),
+			ancestors([]driver.Value{dirID, blobfs.RootID, "reports"}),
+			resolved(otherID, blobfs.RootID, "archive", 1),
+			fileRows(pendingRow(earlierID, otherID, "a.txt")),
+			fileRows(fileRow(earlierID, otherID, "a.txt", 5)),
+		}, "/reports/a.txt", "/archive/a.txt"},
+		{"a path into an id", files.Ref{Path: "/reports/a.txt"}, files.Ref{ID: otherID}, []sqltest.Response{
+			resolved(dirID, blobfs.RootID, "reports", 1),
+			fileRows(fileRow(fileID, dirID, "a.txt", 5)),
+			ancestors([]driver.Value{otherID, blobfs.RootID, "archive"}),
+			fileRows(pendingRow(earlierID, otherID, "a.txt")),
+			fileRows(fileRow(earlierID, otherID, "a.txt", 5)),
+		}, "/reports/a.txt", "/archive/a.txt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o, rec, fake := openStorage(t, tt.responses...)
+			store(t, fake, fileID+"/a.txt", "hello")
+
+			res, err := o.Copy(context.Background(), tt.src, tt.dst)
+
+			if err != nil {
+				t.Fatalf("Copy() = %v", err)
+			}
+			if res.From != tt.from || res.To != tt.to || res.File.ID != earlierID {
+				t.Errorf("Copy() = %+v, want %s -> %s", res, tt.from, tt.to)
+			}
+			if got := object(t, fake, earlierID+"/a.txt"); got != "hello" {
+				t.Errorf("the copy's object = %q, want the source's bytes", got)
+			}
+			if n := rec.Pending(); n != 0 {
+				t.Errorf("%d scripted responses unconsumed", n)
+			}
+		})
+	}
+}
+
+func TestPut_IntoADirectoryByIDReportsTheResolvedPath(t *testing.T) {
+	// The directory's path is computed first, then the write runs as a put
+	// by path does: the name's lookup, the pending row, the completion.
+	o, rec, _ := openStorage(t,
+		ancestors([]driver.Value{dirID, blobfs.RootID, "reports"}),
+		fileRows(),
+		fileRows(pendingRow(fileID, dirID, "notes.txt")),
+		fileRows(fileRow(fileID, dirID, "notes.txt", 5)),
+	)
+
+	res, err := o.Put(context.Background(), files.Ref{ID: dirID}, files.Content{Name: "notes.txt", Body: strings.NewReader("hello"), ContentType: "text/plain"})
+
+	if err != nil {
+		t.Fatalf("Put() = %v", err)
+	}
+	if res.Path != "/reports/notes.txt" || res.File.ID != fileID {
+		t.Errorf("Put() = %+v, want the file at /reports/notes.txt", res)
+	}
+	if n := rec.Pending(); n != 0 {
+		t.Errorf("%d scripted responses unconsumed", n)
+	}
+}
+
 func TestRemove_AMissingObjectIsNoRefusal(t *testing.T) {
 	// The store holds no object under the file's key; its delete is
 	// success, so the row is purged.
@@ -359,12 +455,36 @@ func TestRemove_AMissingObjectIsNoRefusal(t *testing.T) {
 
 	f, err := o.Remove(context.Background(), files.Ref{Path: "/a.txt"})
 
-	if err != nil || f.ID != fileID {
+	if err != nil || f.Row.ID != fileID || f.Path != "/a.txt" {
 		t.Fatalf("Remove() = %+v, %v", f, err)
 	}
 	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpCommit, sqltest.OpExec}
 	if got := nonPrepares(rec); !slices.Equal(got, want) {
 		t.Errorf("ops = %v, want %v: the lookup, the hold, the bookmark count, and the delete in one transaction, then the purge", got, want)
+	}
+}
+
+func TestRemove_ByIDComputesThePathInTheDeletesTransaction(t *testing.T) {
+	// The file is read by id and its directory's path computed in the
+	// delete's first transaction, before the hold, the count, and the
+	// delete.
+	o, rec, _ := openStorage(t,
+		fileRows(fileRow(fileID, dirID, "a.txt", 5)),
+		ancestors([]driver.Value{dirID, blobfs.RootID, "reports"}),
+		held(fileID),
+		counted(0),
+		fileRows(deletingFileRow(fileID, dirID, "a.txt")),
+		purged(),
+	)
+
+	f, err := o.Remove(context.Background(), files.Ref{ID: fileID})
+
+	if err != nil || f.Row.ID != fileID || f.Path != "/reports/a.txt" {
+		t.Fatalf("Remove() = %+v, %v, want the file at /reports/a.txt", f, err)
+	}
+	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpCommit, sqltest.OpExec}
+	if got := nonPrepares(rec); !slices.Equal(got, want) {
+		t.Errorf("ops = %v, want %v: the path computed inside the delete's transaction", got, want)
 	}
 }
 

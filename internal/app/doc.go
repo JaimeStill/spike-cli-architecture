@@ -17,7 +17,8 @@
 // one call, each command declaring its own node. scenario.go mounts the
 // scenario parent over the files and storage nodes, with a leaf per tour;
 // the parent's help and the root's both end with the listing of each
-// scenario and the nodes it declares, through their footers. Every
+// scenario and the nodes it declares, through their footers; the root's
+// footer opens with the line that explains the id:<uuid> operand. Every
 // package's Commands returns a slice, so each layer file's mount function
 // is one root.Add(pkg.Commands(...)...) over the nodes it passes. Defining
 // the nodes constructs nothing. A command declares the nodes it needs with

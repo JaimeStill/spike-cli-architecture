@@ -139,8 +139,6 @@ func TestCommands_RefuseMalformedInputBeforeAnythingIsBuilt(t *testing.T) {
 		{"an id that is not a UUID", []string{"stat", "id:nope"}, "must be a UUID"},
 		{"the root's id", []string{"stat", "id:" + blobfs.RootID}, blobfs.ErrInvalidID.Error()},
 		{"mkdir by id", []string{"mkdir", "id:" + dirID}, "a directory is created by path, not by id"},
-		{"mv from a path to an id", []string{"mv", "/a", "id:" + dirID}, "two paths, or two ids"},
-		{"cp from an id to a path", []string{"cp", "id:" + fileID, "/a"}, "two paths, or two ids"},
 		{"put - into a directory by id", []string{"put", "-", "id:" + dirID}, "stdin has no name to store under"},
 	}
 	for _, tt := range tests {

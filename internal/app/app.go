@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io"
 
 	"github.com/standards-lab/go-database"
 	"github.com/standards-lab/go-storage"
@@ -45,9 +46,18 @@ func New(streams cli.Streams) *App {
 	mountAdmin(a.root, &a.nodes)
 	mountDomain(a.root, &a.nodes)
 	mountScenario(a.root, &a.nodes)
-	a.root.Footer = scenarioFooter(&a.nodes)
+	listing := scenarioListing(&a.nodes)
+	a.root.Footer = func(w io.Writer) {
+		_, _ = io.WriteString(w, idOperand+"\n")
+		listing(w)
+	}
 	return a
 }
+
+// idOperand is the line the root's help footer opens with: the operand
+// scheme every command that names an existing entry shares, so the
+// commands' synopses can write <path|id:<uuid>> without each restating it.
+const idOperand = "A path argument may instead be id:<uuid>, naming the directory or file by its id.\n"
 
 // Run dispatches args, the program arguments without the program name, and
 // returns the process exit code. The dispatcher builds the nodes the

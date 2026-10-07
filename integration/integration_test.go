@@ -782,8 +782,8 @@ func (s *script) move(t *testing.T) {
 }
 
 // ids is the id:<uuid> forms of ls, stat, and mv: the record by id is the
-// record by path without its path line, and a move by ids reports the
-// paths a move by path does.
+// record by path without its path line, and a move by ids, or by a path
+// and an id, reports the paths a move by path does.
 func (s *script) ids(t *testing.T) {
 	for _, p := range []string{"/ids", "/ids/src", "/ids/dst", "/ids/sub"} {
 		ok(t, s.tg, "mkdir", p)
@@ -828,7 +828,24 @@ func (s *script) ids(t *testing.T) {
 		t.Errorf("ls /ids/dst after the moves = %s", got)
 	}
 	refused(t, s.tg, "stays under one top-level directory", "mv", "id:"+subDir, "id:"+ids(ok(t, s.tg, "ls", "/"))["reports"])
-	misused(t, s.tg, "two paths, or two ids", "mv", "id:"+file, "/ids/dst")
+
+	// mv by a path and an id, each resolved on its own: an id destination
+	// is the directory to move into, and a path destination is read the
+	// Unix way, an existing directory to move into or a new name.
+	if out := ok(t, s.tg, "mv", "/ids/dst/f.txt", "id:"+srcDir); out != "mv: /ids/dst/f.txt -> /ids/src/f.txt (id "+file+")\n" {
+		t.Errorf("mv of a path into an id stdout = %q", out)
+	}
+	if out := ok(t, s.tg, "mv", "id:"+file, "/ids/dst"); out != "mv: /ids/src/f.txt -> /ids/dst/f.txt (id "+file+")\n" {
+		t.Errorf("mv of an id into a directory's path stdout = %q", out)
+	}
+	if out := ok(t, s.tg, "mv", "id:"+file, "/ids/dst/g.txt"); out != "mv: /ids/dst/f.txt -> /ids/dst/g.txt (id "+file+")\n" {
+		t.Errorf("mv of an id to a new path stdout = %q", out)
+	}
+	if out := ok(t, s.tg, "mv", "id:"+file, "/ids/dst/f.txt"); out != "mv: /ids/dst/g.txt -> /ids/dst/f.txt (id "+file+")\n" {
+		t.Errorf("mv of an id back to its name stdout = %q", out)
+	}
+	refused(t, s.tg, "stays under one top-level directory", "mv", "/ids/dst/sub", "id:"+ids(ok(t, s.tg, "ls", "/"))["reports"])
+	refused(t, s.tg, "stays under one top-level directory", "mv", "id:"+subDir, "/reports")
 	refused(t, s.tg, "no file or directory has it", "mv", "id:"+blobfs.NewID(), "id:"+dstDir)
 	misused(t, s.tg, "the nil UUID is the root's", "mv", "id:"+blobfs.RootID, "id:"+dstDir)
 }
@@ -900,7 +917,7 @@ func (s *script) put(t *testing.T) {
 	if out := ok(t, s.tg, "stat", "/objects/report.json"); field(out, "content-type") != "application/json" {
 		t.Errorf("stat of a .json put:\n%s\nwant the type from the extension", out)
 	}
-	if out := ok(t, s.tg, "put", notes, "id:"+objects); !strings.HasPrefix(out, "put: notes.txt in id:"+objects+" (id ") {
+	if out := ok(t, s.tg, "put", notes, "id:"+objects); !strings.HasPrefix(out, "put: /objects/notes.txt (id ") {
 		t.Errorf("put into a directory by id stdout = %q", out)
 	}
 	if out := ok(t, s.tg, "stat", "/objects/notes.txt"); !strings.HasPrefix(field(out, "content-type"), "text/plain") {
@@ -982,7 +999,23 @@ func (s *script) copy(t *testing.T) {
 	refused(t, s.tg, "the file is not available: it is pending", "cp", "/objects/stuck.txt", "/objects/sub")
 	refused(t, s.tg, "not found", "cp", "/objects/missing.txt", "/objects/sub")
 	refused(t, s.tg, "not found", "cp", "/objects/hello.txt", "/objects/nope/hello.txt")
-	misused(t, s.tg, "two paths, or two ids", "cp", "/objects/hello.txt", "id:"+under["sub"])
+
+	// cp by a path and an id, each resolved on its own: an id destination
+	// is the directory to copy into, and a path destination an existing
+	// directory to copy into or a new path.
+	if out := ok(t, s.tg, "cp", "/objects/notes.txt", "id:"+under["sub2"]); !strings.HasPrefix(out, "cp: /objects/notes.txt -> /objects/sub2/notes.txt (id ") {
+		t.Errorf("cp of a path into an id stdout = %q", out)
+	}
+	if out := ok(t, s.tg, "cp", "id:"+under["image.bin"], "/objects/sub2"); !strings.HasPrefix(out, "cp: /objects/image.bin -> /objects/sub2/image.bin (id ") {
+		t.Errorf("cp of an id into a directory's path stdout = %q", out)
+	}
+	if out := ok(t, s.tg, "cp", "id:"+under["image.bin"], "/objects/sub2/image-copy.bin"); !strings.HasPrefix(out, "cp: /objects/image.bin -> /objects/sub2/image-copy.bin (id ") {
+		t.Errorf("cp of an id to a new path stdout = %q", out)
+	}
+	if got := ok(t, s.tg, "cat", "/objects/sub2/notes.txt"); got != "notes\n" {
+		t.Errorf("cat of the copy of a path into an id = %q", got)
+	}
+	refused(t, s.tg, "name taken", "cp", "/objects/hello.txt", "id:"+under["sub"])
 }
 
 // remove deletes single files by path and by id, a pending file among
@@ -995,7 +1028,7 @@ func (s *script) remove(t *testing.T) {
 	refused(t, s.tg, "not found", "stat", "/objects/copy.txt")
 	refused(t, s.tg, "not found", "rm", "/objects/copy.txt")
 	sub := ids(ok(t, s.tg, "ls", "/objects/sub"))["hello.txt"]
-	if out := ok(t, s.tg, "rm", "id:"+sub); out != "rm: id:"+sub+" (id "+sub+")\n" {
+	if out := ok(t, s.tg, "rm", "id:"+sub); out != "rm: /objects/sub/hello.txt (id "+sub+")\n" {
 		t.Errorf("rm by id stdout = %q", out)
 	}
 	ok(t, s.tg, "rm", "/objects/stuck.txt")

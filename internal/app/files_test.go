@@ -32,7 +32,14 @@ const (
 	reportsID = "00000000-0000-7000-8000-000000000001"
 	planID    = "00000000-0000-7000-8000-000000000002"
 	unitID    = "00000000-0000-7000-8000-0000000000aa"
+	yearID    = "00000000-0000-7000-8000-000000000005"
 )
+
+// planRow is the available file plan.txt, 12 bytes, in the directory with
+// directory.
+func planRow(directory string) []driver.Value {
+	return []driver.Value{planID, directory, "plan.txt", "available", planID + "/plan.txt", int64(12), "text/plain", `"e"`, int64(2), stamp, stamp}
+}
 
 // directoryVerbs are the directory and bookmark commands, each as a run
 // that reaches its body.
@@ -48,6 +55,8 @@ var directoryVerbs = [][]string{
 	{"stat", "id:" + reportsID},
 	{"mv", "/reports", "/archive"},
 	{"mv", "id:" + planID, "id:" + reportsID},
+	{"mv", "/reports/plan.txt", "id:" + reportsID},
+	{"mv", "id:" + planID, "/reports"},
 	{"rmdir", "/reports"},
 	{"rmdir", "id:" + reportsID},
 	{"bookmark", "add", "/reports/plan.txt", "--unit", unitID, "--active"},
@@ -172,9 +181,16 @@ func directoryRow(id string, parent any, name string) []driver.Value {
 
 // resolvedRoot is the Postgres engine's path resolution of /.
 func resolvedRoot() sqltest.Response {
+	return resolvedAt(blobfs.RootID, nil, "/", 0)
+}
+
+// resolvedAt is the Postgres engine's path resolution reaching the
+// directory at depth, the number of segments it matched; a depth short of
+// the path's segments is a path that does not resolve.
+func resolvedAt(id string, parent any, name string, depth int64) sqltest.Response {
 	return sqltest.Response{
 		Columns: append(slices.Clone(directoryColumns), "depth"),
-		Rows:    [][]driver.Value{append(directoryRow(blobfs.RootID, nil, "/"), int64(0))},
+		Rows:    [][]driver.Value{append(directoryRow(id, parent, name), depth)},
 	}
 }
 
@@ -233,6 +249,34 @@ func TestFiles_DirectoryCommandsOverAScriptedDatabase(t *testing.T) {
 				{Affected: 1},
 			},
 			want: "rmdir: /reports/2026 (id " + planID + ")\n",
+		},
+		{
+			// The destination by id resolves first, then the source by
+			// path: /reports/plan.txt is no directory, so it is the file
+			// in /reports.
+			name: "mv a path into an id",
+			args: []string{"mv", "/reports/plan.txt", "id:" + yearID},
+			responses: []sqltest.Response{
+				ancestors([]driver.Value{yearID, reportsID, "2026"}, []driver.Value{reportsID, blobfs.RootID, "reports"}),
+				resolvedAt(reportsID, blobfs.RootID, "reports", 1),
+				resolvedAt(reportsID, blobfs.RootID, "reports", 1),
+				{Columns: fileColumns, Rows: [][]driver.Value{planRow(reportsID)}},
+				{Columns: fileColumns, Rows: [][]driver.Value{planRow(yearID)}},
+			},
+			want: "mv: /reports/plan.txt -> /reports/2026/plan.txt (id " + planID + ")\n",
+		},
+		{
+			// The source by id is read first, for its name and path, then
+			// the destination path, an existing directory.
+			name: "mv an id into a path",
+			args: []string{"mv", "id:" + planID, "/reports/2026"},
+			responses: []sqltest.Response{
+				{Columns: fileColumns, Rows: [][]driver.Value{planRow(reportsID)}},
+				ancestors([]driver.Value{reportsID, blobfs.RootID, "reports"}),
+				resolvedAt(yearID, reportsID, "2026", 2),
+				{Columns: fileColumns, Rows: [][]driver.Value{planRow(yearID)}},
+			},
+			want: "mv: /reports/plan.txt -> /reports/2026/plan.txt (id " + planID + ")\n",
 		},
 		{
 			name:      "stat by id",
@@ -320,7 +364,6 @@ func TestFiles_MalformedArgumentsAreUsageErrors(t *testing.T) {
 	}{
 		{"an id that is not a UUID", []string{"ls", "id:nope"}, "blobfs ls: blobfs: invalid id \"nope\": must be a UUID\n"},
 		{"the root's id", []string{"stat", "id:" + blobfs.RootID}, "the nil UUID is the root's"},
-		{"a path and an id", []string{"mv", "/a", "id:" + reportsID}, "two paths, or two ids"},
 		{"a total mode", []string{"ls", "/", "--total", "some"}, "--total \"some\": the mode is exact or none"},
 		{"a filter with no operator", []string{"ls", "/", "--filter", "name"}, "write <field>:<op>:<value>"},
 		{"a sort direction", []string{"ls", "/", "--sort", "name:up"}, "the direction is asc or desc"},

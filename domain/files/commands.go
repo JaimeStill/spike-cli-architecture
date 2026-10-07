@@ -158,10 +158,11 @@ func stat(svc *graph.Node[*Service]) *cli.Command {
 	}).Use(svc)
 }
 
-// mv is mv <src> <dst>: the directory or file at src moved into the
-// existing directory dst, or to the new path dst, in one transaction. With
-// two ids, the entry with the first, a file or else a directory, moves
-// into the directory with the second and keeps its name.
+// mv is mv <src> <dst>: the directory or file src names moved, in one
+// transaction, each argument a path or an id. A src by id is the file with
+// it, or else the directory. A dst by path is an existing directory to
+// move into, or else the new path; a dst by id is the directory to move
+// into, keeping the name. The success line names both resolved paths.
 func mv(svc *graph.Node[*Service]) *cli.Command {
 	var src, dst Ref
 	return (&cli.Command{
@@ -328,8 +329,9 @@ func bookmarkRm(svc *graph.Node[*Service]) *cli.Command {
 
 // put is put <local-file|-> <path|id:<uuid>> [--content-type <type>]: the
 // local file, or standard input for -, written as the file at the path,
-// or into the directory with the id under the local file's base name.
-// Standard input has no name, so - takes a path.
+// or into the directory with the id under the local file's base name, and
+// reported at the file's resolved path. Standard input has no name, so -
+// takes a path.
 func put(st *graph.Node[*Storage]) *cli.Command {
 	var contentType string
 	var dst Ref
@@ -356,10 +358,8 @@ func put(st *graph.Node[*Storage]) *cli.Command {
 			}
 			defer closeBody()
 			c := Content{Body: body, Size: size, ContentType: declaredType(contentType, src)}
-			at := inv.Args[1]
 			if dst.ID != "" {
 				c.Name = filepath.Base(src)
-				at = c.Name + " in " + inv.Args[1]
 			}
 			res, err := inv.Get(st).Put(ctx, dst, c)
 			if err != nil {
@@ -370,7 +370,7 @@ func put(st *graph.Node[*Storage]) *cli.Command {
 				resumed = ", resumed the pending row"
 			}
 			f := res.File
-			_, err = fmt.Fprintf(inv.Stdout, "put: %s (id %s, %d bytes, etag %s%s)\n", at, f.ID, sizeOf(f), etagOf(f), resumed)
+			_, err = fmt.Fprintf(inv.Stdout, "put: %s (id %s, %d bytes, etag %s%s)\n", res.Path, f.ID, sizeOf(f), etagOf(f), resumed)
 			return err
 		},
 	}
@@ -379,7 +379,8 @@ func put(st *graph.Node[*Storage]) *cli.Command {
 }
 
 // cat is cat <path|id:<uuid>>: the available file's content streamed to
-// stdout as it is.
+// stdout as it is. A read that fails midway names the file's resolved
+// path.
 func cat(st *graph.Node[*Storage]) *cli.Command {
 	var ref Ref
 	return (&cli.Command{
@@ -393,23 +394,24 @@ func cat(st *graph.Node[*Storage]) *cli.Command {
 			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
-			body, _, err := inv.Get(st).Open(ctx, ref)
+			body, f, err := inv.Get(st).Open(ctx, ref)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = body.Close() }()
 			if _, err := io.Copy(inv.Stdout, body); err != nil {
-				return fmt.Errorf("files: cat %s: %w", inv.Args[0], err)
+				return fmt.Errorf("files: cat %s: %w", f.Path, err)
 			}
 			return nil
 		},
 	}).Use(st)
 }
 
-// cp is cp <src> <dst>: the available file at src copied into the existing
-// directory dst under its own name, or to the new path dst. With two ids,
-// the file with the first is copied into the directory with the second
-// under its own name. A name already taken is refused.
+// cp is cp <src> <dst>: the available file src names copied, each
+// argument a path or an id. A dst by path is an existing directory to copy
+// into under the source's name, or else the new path; a dst by id is the
+// directory to copy into under the source's name. A name already taken is
+// refused. The success line names both resolved paths.
 func cp(st *graph.Node[*Storage]) *cli.Command {
 	var src, dst Ref
 	return (&cli.Command{
@@ -435,9 +437,10 @@ func cp(st *graph.Node[*Storage]) *cli.Command {
 }
 
 // rm is rm <path|id:<uuid>>, a file deleted, and rm --recursive
-// <path|id:<uuid>>, a directory and everything beneath it deleted,
-// reported at the branch's path, which for an id is the path the delete
-// resolved, with the totals its sweep removed. There is no -r shorthand.
+// <path|id:<uuid>>, a directory and everything beneath it deleted with
+// the totals its sweep removed; each is reported at the resolved path,
+// which for an id is the path the delete computed. There is no -r
+// shorthand.
 func rm(st *graph.Node[*Storage]) *cli.Command {
 	var recursive bool
 	var ref Ref
@@ -471,7 +474,7 @@ func rm(st *graph.Node[*Storage]) *cli.Command {
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(inv.Stdout, "rm: %s (id %s)\n", inv.Args[0], f.ID)
+			_, err = fmt.Fprintf(inv.Stdout, "rm: %s (id %s)\n", f.Path, f.Row.ID)
 			return err
 		},
 	}
@@ -533,8 +536,8 @@ func parseRef(arg string) (Ref, error) {
 	return Ref{ID: id}, nil
 }
 
-// parsePair reads the two arguments of mv or cp, and runs the domain's
-// rule that the two are of one form.
+// parsePair reads the two arguments of mv or cp, each a path or an id on
+// its own.
 func parsePair(args []string) (Ref, Ref, error) {
 	src, err := parseRef(args[0])
 	if err != nil {
@@ -544,7 +547,7 @@ func parsePair(args []string) (Ref, Ref, error) {
 	if err != nil {
 		return Ref{}, Ref{}, err
 	}
-	return src, dst, checkPair(src, dst)
+	return src, dst, nil
 }
 
 // pageFlags is the flag set every paged listing takes: the page and its
