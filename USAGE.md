@@ -808,6 +808,8 @@ What the `integration` package proves:
   every directory, object, and bookmark command.
 - **The pending put.** A `put -` with stdin held open commits a pending row; the test kills it
   with SIGKILL, and a later `put` resumes the row.
+- **The interrupted put.** A `put -` with stdin held open receives SIGINT mid-upload; it exits 1
+  and reports the cancellation once.
 - **The interrupted sweep.** An HTTP relay in front of Azurite lets one blob delete through and
   answers every later one 503. On a branch of three files and an empty directory, `rm
   --recursive` removes exactly one file and the directory and exits 1; the rerun, with the relay
@@ -829,7 +831,7 @@ input checks in `Validate`, and success lines.
 - **`lifecycle`**: a `Coordinator` over a built `System`. `Exec` starts the layers in order,
   runs a function, and shuts them down in reverse; `Run` serves until its context ends. A value
   takes part by implementing `Starter`, `Stopper`, or both (`Subsystem`). Open
-  `lifecycle/coordinator.go`.
+  `lifecycle/coordinator.go`; `stages_test.go` serves go-web-service's stage graph on `Run`.
 - **`cli`**: the dispatcher. A `Command` carries `Args`, `Validate`, `Run`, `Footer`, and the
   nodes it declares with `Use`; `Run(ctx, root, args, streams, WithGraph(...))` dispatches.
   `Invocation` embeds `Streams` and reads a declared node with `inv.Get`. Open `cli/run.go`,

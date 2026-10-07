@@ -86,22 +86,19 @@
 //
 // # Promotion
 //
-// The package was to be promoted to go-core once its API stayed unchanged
-// through the spike's files and validate tasks, the spike's CLI and a graph
-// shaped like go-web-service's both ran on it, and go-core's Coordinator,
-// rebuilt on it, passed its black-box tests, adapted only for the break
-// above. At the end of the validate task:
+// The package's promotion criteria are three, and they stand as follows:
 //
-//   - held: the spike's CLI runs on it, and so does a graph shaped like
-//     go-web-service's, which TestRunServesAGraphShapedLikeTheWebService
-//     serves on [Coordinator.Run]
-//   - did not hold: the API unchanged through files and validate. The
-//     files review reshaped it by ruling: participation split into the
-//     single-method [Starter] and [Stopper], which [Subsystem] now
-//     embeds, and graph removed Scope.OnStart and Scope.OnShutdown. It
-//     has stayed unchanged through validate
-//   - still open: go-core's black-box tests, which only the go-core goal
-//     can run
+//   - Held: the spike's CLI and a graph shaped like go-web-service's both
+//     run on it. TestRunServesAGraphShapedLikeTheWebService serves the
+//     graph on [Coordinator.Run].
+//   - Did not hold: an API unchanged through the spike's files and
+//     validate tasks. The files review reshaped it by ruling, splitting
+//     participation into the single-method [Starter] and [Stopper], which
+//     [Subsystem] embeds, and removing graph's Scope.OnStart and
+//     Scope.OnShutdown. The validate task left the API unchanged.
+//   - Open: go-core's Coordinator, rebuilt on it, passes its black-box
+//     tests, adapted only for the break above. Only the go-core goal can
+//     run them.
 //
 // Promotion follows the experiment's completion and precedes the build of
 // the cli goal.

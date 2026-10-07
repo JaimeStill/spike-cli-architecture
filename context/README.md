@@ -95,9 +95,10 @@ staged composition?
   `storagetest.Fake`; and, under `mise run integration`, on an isolated compose project it boots
   and tears down, integration tests and a black-box suite (package `integration`) that runs the
   built binary as a child process. The suite reaches every state through production surfaces: it
-  kills a `put -` with SIGKILL to leave a pending row, and interrupts rm --recursive through an
-  HTTP relay in front of the object store that answers 503 to every blob delete after a set
-  number.
+  kills a `put -` with SIGKILL to leave a pending row, sends a `put -` SIGINT to prove the signal
+  ends the run, and interrupts rm --recursive through an HTTP relay in front of the object store
+  that answers 503 to every blob delete after a set number. `lifecycle`'s tests run a graph
+  shaped like go-web-service's on `Coordinator.Run` (evidence 9).
 
 ## References
 

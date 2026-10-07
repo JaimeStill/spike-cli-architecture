@@ -81,7 +81,7 @@ Door          two-way: the spike repository and goal-record edits only; no
 
 ## Progress
 
-slices 3/3 committed · standards — · spec — · editor —
+slices 3/3 committed · standards ✓ · spec ✓ · editor ✓
 
 ## Decisions
 
@@ -380,7 +380,7 @@ slices 3/3 committed · standards — · spec — · editor —
   (architect, at the redirect).*
 - files: spike-blobfs's root help appended the scenario listing; cli's generated help has no hook
   for it (for the evidence-6 record). *Superseded: cli's Command.Footer appends it (architect,
-  at the redirect).*
+  at the redirect). Corrected: the convention is slab's (validate).*
 - files: stdin as a cli.Run parameter changes the go-cli-sdk candidate's signature (for the
   evidence-6 record).
 - files: go-core's processtest doesn't fit a CLI (no args or stdin, merged streams), a go-core or
@@ -402,7 +402,7 @@ slices 3/3 committed · standards — · spec — · editor —
   built instead of wrapping exported production constructors (architect).
 - files: cli gains a help footer hook, and the root's help appends the scenario listing through
   it, as spike-blobfs's did; the missing footer was a cobra feature the dispatcher lacked
-  (architect, rejecting "leave it to list").
+  (architect, rejecting "leave it to list"). *Corrected: the convention is slab's (validate).*
 - files: processtest gains a one-shot runner beside Launch (args, stdin, env in; stdout,
   stderr, exit code out; on Main's build), mirroring lifecycle's Exec beside Run; rejected
   deconstructing it, since nothing in it is fused. The spike's runner is the prototype
@@ -667,6 +667,20 @@ slices 3/3 committed · standards — · spec — · editor —
 - validate: marathon-architecture 0.3.0 (targets marathon 0.16) applied as-is on marathon 0.18.0.
 - validate: the one-line answer carries no line count; only evidence 7 and 9 are marked "Proven
   only by tests", and item 1 names root flags, PreRun, and Exclusive as tests-only features.
+- validate: the SIGINT test found that an interrupted `put -` never exited: a read of standard
+  input blocks in the kernel, where the context can't reach it. An unexported `cancelable` pipe in
+  domain/files fails the body's Read once the context ends; no exported API changed.
+- validate: the test running the stage graph on Run lives in lifecycle and restates the graph,
+  because depguard holds graph's tests to the standard library and graph.
+- validate: the cancellation error is ctx.Err(), not context.Cause, so the report wraps
+  context.Canceled.
+- validate: at the standards review, the hermetic put test cancels during the upload and scripts
+  the pending row's abandon; the SIGINT test is bounded by processtest.Failsafe, not 5s (its
+  measured exit is about 0.2s).
+- validate: cobra's Long has no counterpart in cli, recorded as a difference.
+- validate: the development stack's schema was applied to run the scenarios.
+- validate: the files decisions crediting spike-blobfs with the help-plus-scenario listing were
+  wrong: spike-blobfs has no scenarios, and the convention is slab's, as the cobra record states.
 
 ## Pending edits
 
@@ -710,3 +724,56 @@ slices 3/3 committed · standards — · spec — · editor —
   input checks in Validate, and a state change never silent.
 - architecture · `standards/go-elemental/principles/topology-and-naming.md` (with the cmd rule
   above): cmd may import the SDK packages it composes over (go-core, go-cli-sdk).
+- coordinator · `context/cli-applications.md`: under "## Answers · experiment.cli-architecture",
+  replace the placeholder line with this section:
+
+  ```markdown
+  ### Answer · experiment.cli-architecture.spike-cli-architecture
+
+  **Question:** Do a stdlib-`flag` dispatcher with the planned feature set and a per-command
+  dependency initializer hold up in a real CLI over the `blobfs` library, go-storage, and Postgres?
+
+  **Answer:** Yes; a dispatcher on the standard library's `flag` carries spike-blobfs's whole
+  command surface, each command brings up only the graph nodes it declares, and the same
+  Coordinator runs go-web-service's staged graph.
+
+  1. A dispatcher on the standard library's `flag` covers go-cli-sdk's planned feature set. Proven
+     by the running binary; `cli`'s tests alone prove root flags, PreRun, and Exclusive, which
+     blobfs doesn't use.
+  2. A CLI with no cobra or pflag in its module graph reproduces spike-blobfs's whole command
+     surface. Proven by the integration suite's `TestScript` over the built binary, and by
+     `go mod graph`.
+  3. Each command brings up only the graph nodes it declares. Proven by help, version, and a usage
+     error running with the stack down, and by `internal/app`'s build-recording tests.
+  4. Each node comes up once per run and shuts down in reverse, on success, error, and
+     cancellation. Proven by `cli`'s tests and the integration suite, whose `TestAnInterruptedPut`
+     sends SIGINT to the built binary and gets one report.
+  5. A dependency that fails to come up is reported once, and what had started is shut down.
+     Proven by `TestUse_FailuresReportedOnce`,
+     `TestInfrastructureIntegration_StoreUnreachableClosesTheDatabase`, and the integration
+     suite's `TestTheStoreUnreachable`.
+  6. A record lists each cobra convention and feature spike-blobfs used, with what replaced it.
+     Proven by running both binaries' help and exit codes: [the cobra record](https://github.com/JaimeStill/spike-cli-architecture/blob/main/context/cobra-conventions.md).
+  7. The layout's test conventions hold without cobra. Proven only by tests: `internal/app`'s over
+     buffers and `domain/files`'s over `storagetest.Fake`.
+  8. A scenario package declares its nodes like any other command. Proven by both scenarios
+     running twice against the development stack, and by the integration suite's `TestScenarios`.
+  9. The graph expresses go-web-service's stage table, and the CLI and a service run on one
+     Coordinator. Proven only by tests: `TestWebServiceStageOrder` and `TestWebServiceSubsetBuild`
+     (graph) and `TestRunServesAGraphShapedLikeTheWebService` (lifecycle).
+
+  **go-cli-sdk:** the `cli` package's API is the candidate. It adds `Use` with `WithGraph`,
+  `Invocation.Get`, `Validate`, `Footer`, and `Streams`, and departs from the plan three times:
+  requested help exits 2, there is no `help` or `completion` command, and cobra's `Long` has no
+  counterpart.
+
+  **go-cli-sdk-template:** `internal/app`'s shape is the candidate composition root. One exported
+  `Nodes` value describes the graph, configuration is graph nodes, there is no `config.go`,
+  `commands.go`, or central initializer, fixtures live in an internal `apptest` package, and
+  `main` imports `cli` for `cli.Streams`.
+
+  **Promotion:** promote `graph` and `lifecycle` into go-core at the API as validate left it.
+
+  [The answer](https://github.com/JaimeStill/spike-cli-architecture/blob/main/context/README.md#the-answer) ·
+  [spike-cli-architecture](https://github.com/JaimeStill/spike-cli-architecture)
+  ```
