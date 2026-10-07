@@ -1,14 +1,14 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** brief ready
-- **Task:** files
-- **Branch:** files
+- **State:** idle
+- **Task:** none
+- **Branch:** none
 
 ## Tasks
 
 1. [x] dispatcher
 2. [x] composition
-3. [ ] files
+3. [x] files
 4. [ ] validate
 
 ## Task brief · files
@@ -105,9 +105,6 @@ Out of scope  promoting graph, lifecycle, or cli to go-core or go-cli-sdk; the
 Door          two-way: the spike repository only, no release
 ```
 
-## Progress
-
-slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics ✓ · standards ✓ · spec ✓ · editor ✓
 
 ## Decisions
 
