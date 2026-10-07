@@ -96,9 +96,10 @@
 //     go-web-service's, which TestRunServesAGraphShapedLikeTheWebService
 //     serves on [Coordinator.Run]
 //   - did not hold: the API unchanged through files and validate. The
-//     files review reshaped it by ruling, splitting Subsystem into
-//     [Starter] and [Stopper] and removing the graph's hooks, and it has
-//     stayed unchanged through validate
+//     files review reshaped it by ruling: participation split into the
+//     single-method [Starter] and [Stopper], which [Subsystem] now
+//     embeds, and graph removed Scope.OnStart and Scope.OnShutdown. It
+//     has stayed unchanged through validate
 //   - still open: go-core's black-box tests, which only the go-core goal
 //     can run
 //

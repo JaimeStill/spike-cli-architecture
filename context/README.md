@@ -124,8 +124,9 @@ Coordinator runs go-web-service's staged graph.
    `TestSchema_VerbsBuildTheDatabaseAndNeverTheStore` and
    `TestObjects_CommandsBuildTheDatabaseAndTheStore`.
 4. Once per run, closed in reverse: `TestUse_NodeNamedTwiceIsBuiltOnce`,
-   `TestInfrastructureIntegration_StartsBothAndShutsDownInReverse`, and, for a signal, the
-   integration test `TestAnInterruptedPut`.
+   `TestInfrastructureIntegration_StartsBothAndShutsDownInReverse`, and, on cancellation,
+   `TestUse_ShutsDownWhenTheContextEndsMidBody`. The integration test `TestAnInterruptedPut`
+   proves a signal through the built binary ends the run with a single report.
 5. A failed dependency reported once: `TestUse_FailuresReportedOnce`,
    `TestInfrastructureIntegration_StoreUnreachableClosesTheDatabase`, and the integration test
    `TestTheStoreUnreachable`.
@@ -156,9 +157,10 @@ central initializer; fixtures live in an internal `apptest` package; and `main` 
 `cli.Streams` and the arguments, so it imports `cli` beside `internal/app`.
 
 **Promotion.** Promote `graph` and `lifecycle` into go-core at the API as it stands after this
-task. The files review reshaped both: `Subsystem` split into `Starter` and `Stopper` with the
-hooks removed, and `graph` gained `Ref.Name` and `Observe`. Those changes came from review
-rulings, not failures.
+task. The files review reshaped both: participation split into the single-method `Starter` and
+`Stopper`, which `Subsystem` now embeds; `graph` lost its `Scope` hooks and gained
+`Ref.Name`, and kept `Observe` from the files build. The reshaping came from review rulings,
+not failures.
 
 See [cobra-conventions.md](cobra-conventions.md) for the cobra record and
 [USAGE.md](../USAGE.md) for every command with its output.
