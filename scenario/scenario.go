@@ -57,7 +57,7 @@ func command(s Scenario) *cli.Command {
 func run(ctx context.Context, s Scenario, inv *cli.Invocation) error {
 	r := &Reporter{w: inv.Stdout}
 	for i, step := range s.Steps {
-		r.Intent(i+1, len(s.Steps), step.Intent)
+		r.heading(i+1, len(s.Steps), step.Intent)
 		if err := step.Action(ctx, inv, r); err != nil {
 			return fmt.Errorf("step %d (%s): %w", i+1, step.Intent, err)
 		}

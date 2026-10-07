@@ -8,9 +8,10 @@ import (
 )
 
 // Reporter is the channel a scenario narrates through: a heading per step,
-// prose saying what a step does and why, and the output a step's operation
-// produced, each indented under its heading. It writes plain text, with no
-// color, to one writer.
+// which the runner prints, and under it, from the step, prose saying what
+// it does and why, with [Reporter.Note], and the output its operation
+// produced, with [Reporter.Show]. It writes plain text, with no color, to
+// one writer.
 type Reporter struct {
 	w       io.Writer
 	atBlank bool // whether the line just written was blank
@@ -22,9 +23,9 @@ const indent = "  "
 // columns is the width Note wraps prose to, the indent included.
 const columns = 80
 
-// Intent prints step i of n's intent sentence as a heading, set off from
+// heading prints step i of n's intent sentence as a heading, set off from
 // the step before it by a blank line.
-func (r *Reporter) Intent(i, n int, intent string) {
+func (r *Reporter) heading(i, n int, intent string) {
 	r.blank()
 	r.printf("[%d/%d] %s\n", i, n, intent)
 }
