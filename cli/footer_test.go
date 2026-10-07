@@ -66,8 +66,11 @@ func TestRun_FooterIsNotInherited(t *testing.T) {
 
 		r := dispatch(t, f.root, args...)
 
-		if strings.Contains(r.stdout, "Topics:") {
-			t.Errorf("%v: stdout =\n%s\nwant no parent's footer", args, r.stdout)
+		if !strings.Contains(r.stdout, "Usage:") {
+			t.Errorf("%v: stdout =\n%s\nwant the command's help", args, r.stdout)
+		}
+		if strings.Contains(r.stdout+r.stderr, "Topics:") {
+			t.Errorf("%v: stdout =\n%s\nstderr =\n%s\nwant no parent's footer", args, r.stdout, r.stderr)
 		}
 	}
 }
@@ -80,8 +83,8 @@ func TestRun_FooterIsNotInAUsageError(t *testing.T) {
 	if r.code != process.ExitUsage {
 		t.Errorf("code = %d, want %d", r.code, process.ExitUsage)
 	}
-	if strings.Contains(r.stderr, "Topics:") {
-		t.Errorf("stderr =\n%s\nwant the short usage without the footer", r.stderr)
+	if !strings.Contains(r.stderr, "Usage:") || strings.Contains(r.stdout+r.stderr, "Topics:") {
+		t.Errorf("stdout =\n%s\nstderr =\n%s\nwant the short usage on stderr without the footer", r.stdout, r.stderr)
 	}
 }
 

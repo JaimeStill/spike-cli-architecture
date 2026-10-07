@@ -90,13 +90,16 @@ func TestRootHelp_EndsWithTheScenarioListingAndBuildsNothing(t *testing.T) {
 
 func TestRootHelp_ScenarioListingIsTheRootsOwn(t *testing.T) {
 	for _, args := range [][]string{{"demo"}, {"list", "--help"}, {"schema"}} {
-		code, out, _ := run(t, args...)
+		code, out, errOut := run(t, args...)
 
 		if code != process.ExitUsage {
 			t.Errorf("%v: code = %d, want %d", args, code, process.ExitUsage)
 		}
-		if strings.Contains(out, "Scenarios:") {
-			t.Errorf("%v: help:\n%s\nwant no scenario listing", args, out)
+		if !strings.Contains(out, "Usage:") {
+			t.Errorf("%v: stdout:\n%s\nwant the command's help", args, out)
+		}
+		if strings.Contains(out+errOut, "Scenarios:") {
+			t.Errorf("%v: stdout:\n%s\nstderr:\n%s\nwant no scenario listing", args, out, errOut)
 		}
 	}
 }
