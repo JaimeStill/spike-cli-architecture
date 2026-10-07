@@ -107,7 +107,7 @@ Door          two-way: the spike repository only, no release
 
 ## Progress
 
-slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics — · standards — · spec — · editor —
+slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics ✓ · standards — · spec — · editor —
 
 ## Decisions
 
@@ -586,6 +586,11 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
   one-line writers (architect).
 - files ergonomics: every domain's Commands returns []*cli.Command, so each app mount is
   root.Add(pkg.Commands(...)...) (architect).
+
+- files ergonomics: an id is an operand scheme, `<path|id:<uuid>>` on each positional, not a
+  --id flag: an id names the target, two-operand commands and mixed pairs stay one uniform parse,
+  and absolute paths make the prefix unambiguous; the root help explains the id: form in one line
+  (architect).
 
 ## Pending edits
 
