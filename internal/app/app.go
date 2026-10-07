@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 
-	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
 	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
@@ -43,10 +42,8 @@ func New(stdin io.Reader, stdout, stderr io.Writer) *App {
 		stdout: stdout,
 		stderr: stderr,
 	}
-	a.root.Add(
-		versionCommand(),
-		schema.Commands(a.admin.migrator),
-	)
+	a.root.Add(versionCommand())
+	a.root.Add(mountAdmin(a.admin)...)
 	a.root.Add(mountDomain(a.domain)...)
 	a.root.Add(mountDemo(a.domain)...)
 	return a

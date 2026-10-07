@@ -5,6 +5,7 @@ import (
 	"github.com/standards-lab/sqlate/postgres"
 
 	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
+	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
@@ -21,6 +22,12 @@ func defineAdmin(g *graph.Graph, in *infrastructure) *admin {
 	a := &admin{in: in}
 	a.migrator = g.Define("migrator", a.newMigrator)
 	return a
+}
+
+// mountAdmin builds the administration commands at the root: the schema
+// group over the migrator node.
+func mountAdmin(a *admin) []*cli.Command {
+	return []*cli.Command{schema.Commands(a.migrator)}
 }
 
 // newMigrator constructs the schema client over the database's pool,

@@ -4,7 +4,8 @@
 //
 // infrastructure.go defines the configuration nodes, each finalized under
 // the BLOBFS prefix, and the database and object store nodes built from
-// them. admin.go defines the migrator node, built on the database.
+// them. admin.go defines the migrator node, built on the database, and
+// mounts the schema group over it.
 // domain.go defines the files node, the files domain's Store built on the
 // database with blobfs's Postgres engine, which the root fixes there, and
 // whose start is the Store's statement check; and the objects node, the
