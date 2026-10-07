@@ -592,6 +592,16 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
   and absolute paths make the prefix unambiguous; the root help explains the id: form in one line
   (architect).
 
+- files standards: the unit-depth and no-cursor-at-root refusals move into Validate as usage
+  errors through domain check functions, as checkMkdir works, so bad input builds nothing
+  (architect).
+- files standards: WriteFileRecord is unexported; the no-unread-exports rule supersedes the output
+  ruling's list (architect).
+- files standards: domain error labels use the operation's domain name ("list", "make
+  directory", "remove tree", "add bookmark"), not CLI command words (architect).
+- files standards: the scenario working areas and wording drop "demo": /scenario-directories,
+  /scenario-files, "the scenario unit" (architect).
+
 ## Pending edits
 
 - architecture · `standards/go-elemental/principles/topology-and-naming.md`: state that the
