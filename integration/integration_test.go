@@ -4,16 +4,18 @@ package integration_test
 
 import (
 	"bytes"
-	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/standards-lab/blobfs"
 	"github.com/standards-lab/go-core/process/processtest"
@@ -55,18 +57,156 @@ type target struct {
 	database  string
 	container string
 	env       []string
-	db        *sql.DB
 }
 
 // open creates the test's database and returns the target over it and a
-// container named after it, with the test's own pool on the database for
-// reads and writes the binary does not make.
+// container named after it. The test reads and writes the database only
+// through the binary, so the pool livetest opens on it goes unused.
 func open(t *testing.T, env ...string) target {
 	t.Helper()
-	name, db := livetest.Database(t)
+	name, _ := livetest.Database(t)
 	container := strings.ReplaceAll(name, "_", "-")
 	t.Logf("database %s, container %s", name, container)
-	return target{database: name, container: container, env: env, db: db}
+	return target{database: name, container: container, env: env}
+}
+
+// with returns tg with env appended to its environment, which overrides
+// what tg sets, as the later of two settings of one variable wins.
+func (tg target) with(env ...string) target {
+	tg.env = append(append([]string(nil), tg.env...), env...)
+	return tg
+}
+
+// relayed returns tg with its object store reached through f, a relay to
+// the store the environment names, which the test severs to inject an
+// outage. The store's retries are off, so a refused request is refused at
+// once rather than after the provider's backoff.
+func relayed(t *testing.T, tg target, f *processtest.Forwarder) target {
+	t.Helper()
+	endpoint := storeEndpoint(t)
+	endpoint.Host = f.Addr()
+	return tg.with("BLOBFS_STORAGE_ENDPOINT="+endpoint.String(), "BLOBFS_STORAGE_OPTIONS_MAX_RETRIES=0")
+}
+
+// storeEndpoint returns the object store's endpoint, as the environment
+// names it; its host is the address a relay forwards to.
+func storeEndpoint(t *testing.T) *url.URL {
+	t.Helper()
+	u, err := url.Parse(os.Getenv("BLOBFS_STORAGE_ENDPOINT"))
+	if err != nil || u.Host == "" {
+		t.Fatalf("BLOBFS_STORAGE_ENDPOINT %q names no host", os.Getenv("BLOBFS_STORAGE_ENDPOINT"))
+	}
+	return u
+}
+
+// proc is one started run of the binary: a child process the test waits
+// on, or crashes, while it runs.
+type proc struct {
+	line        string
+	cmd         *exec.Cmd
+	out, errOut bytes.Buffer
+	done        chan struct{}
+	err         error
+}
+
+// start starts the binary with args against tg, stdin as its standard
+// input, and returns the running process; line is the shell line the
+// transcript logs for it. A process still running when the test ends is
+// killed.
+func start(t *testing.T, tg target, stdin io.Reader, line string, args ...string) *proc {
+	t.Helper()
+	cmd := exec.Command(binary, args...)
+	cmd.Env = append(append(os.Environ(), "BLOBFS_DATABASE_NAME="+tg.database, "BLOBFS_STORAGE_CONTAINER="+tg.container), tg.env...)
+	cmd.Stdin = stdin
+	cmd.WaitDelay = processtest.Failsafe
+	p := &proc{line: line, cmd: cmd, done: make(chan struct{})}
+	cmd.Stdout, cmd.Stderr = &p.out, &p.errOut
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start %v: %v", args, err)
+	}
+	go func() {
+		p.err = cmd.Wait()
+		close(p.done)
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-p.done:
+		default:
+			_ = cmd.Process.Kill()
+			<-p.done
+		}
+	})
+	return p
+}
+
+// wait waits for the process to exit and returns its stdout, stderr, and
+// exit code, logging its shell line with its output. A process that has
+// not exited within processtest.Failsafe is a stall: it is interrupted,
+// killed if it has not exited within Failsafe more, and fails the test
+// with its output.
+func (p *proc) wait(t *testing.T) (stdout, stderr string, code int) {
+	t.Helper()
+	if !p.exited(processtest.Failsafe) {
+		_ = p.cmd.Process.Signal(os.Interrupt)
+		if !p.exited(processtest.Failsafe) {
+			_ = p.cmd.Process.Kill()
+			<-p.done
+		}
+		t.Fatalf("%s did not exit within %s:\nstdout: %s\nstderr: %s", p.line, processtest.Failsafe, p.out.String(), p.errOut.String())
+	}
+	var exit *exec.ExitError
+	switch {
+	case p.err == nil:
+	case errors.As(p.err, &exit):
+		code = exit.ExitCode()
+	default:
+		t.Fatalf("%s: %v", p.line, p.err)
+	}
+	p.log(t, code)
+	return p.out.String(), p.errOut.String(), code
+}
+
+// crash kills the process with SIGKILL, which it cannot catch, as a crash
+// or the kernel's OOM killer stops it, and fails the test unless the kill
+// is what ended it.
+func (p *proc) crash(t *testing.T) {
+	t.Helper()
+	_ = p.cmd.Process.Signal(syscall.SIGKILL)
+	if !p.exited(processtest.Failsafe) {
+		t.Fatalf("%s did not exit within %s of SIGKILL", p.line, processtest.Failsafe)
+	}
+	var exit *exec.ExitError
+	if !errors.As(p.err, &exit) || exit.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
+		t.Fatalf("%s ended by %v before the kill:\nstdout: %s\nstderr: %s", p.line, p.err, p.out.String(), p.errOut.String())
+	}
+	t.Logf("$ kill -KILL %d  # %s", p.cmd.Process.Pid, strings.TrimPrefix(p.line, "$ "))
+}
+
+// exited reports whether the process exits within d.
+func (p *proc) exited(d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-p.done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// log logs the process's shell line with its stdout and, when it exited
+// nonzero, its exit code and stderr.
+func (p *proc) log(t *testing.T, code int) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString(p.line)
+	if p.out.Len() > 0 {
+		b.WriteString("\n" + strings.TrimRight(p.out.String(), "\n"))
+	}
+	if code != 0 {
+		fmt.Fprintf(&b, "\nexit %d: %s", code, strings.TrimRight(p.errOut.String(), "\n"))
+	}
+	t.Log(b.String())
 }
 
 // run executes the binary with args against tg, logs the run as a shell
@@ -77,47 +217,15 @@ func run(t *testing.T, tg target, args ...string) (stdout, stderr string, code i
 	return runIn(t, tg, "", args...)
 }
 
-// runIn is run with stdin piped to the binary's standard input. A run that
-// has not exited within processtest.Failsafe is a stall: it is
-// interrupted, killed if it has not exited within Failsafe more, and fails
-// the test with its output.
+// runIn is run with stdin piped to the binary's standard input, bounded as
+// proc.wait bounds it.
 func runIn(t *testing.T, tg target, stdin string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), processtest.Failsafe)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
-	cmd.WaitDelay = processtest.Failsafe
-	cmd.Env = append(append(os.Environ(), "BLOBFS_DATABASE_NAME="+tg.database, "BLOBFS_STORAGE_CONTAINER="+tg.container), tg.env...)
-	cmd.Stdin = strings.NewReader(stdin)
-	var out, errOut bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
-	err := cmd.Run()
-	if ctx.Err() != nil {
-		t.Fatalf("blobfs %s did not exit within %s:\nstdout: %s\nstderr: %s", strings.Join(args, " "), processtest.Failsafe, out.String(), errOut.String())
-	}
-	var exit *exec.ExitError
-	switch {
-	case err == nil:
-	case errors.As(err, &exit):
-		code = exit.ExitCode()
-	default:
-		t.Fatalf("run %v: %v", args, err)
-	}
-	var b strings.Builder
+	line := "$ blobfs " + strings.Join(args, " ")
 	if stdin != "" {
-		fmt.Fprintf(&b, "$ printf %q | blobfs %s", stdin, strings.Join(args, " "))
-	} else {
-		b.WriteString("$ blobfs " + strings.Join(args, " "))
+		line = fmt.Sprintf("$ printf %q | blobfs %s", stdin, strings.Join(args, " "))
 	}
-	if out.Len() > 0 {
-		b.WriteString("\n" + strings.TrimRight(out.String(), "\n"))
-	}
-	if code != 0 {
-		fmt.Fprintf(&b, "\nexit %d: %s", code, strings.TrimRight(errOut.String(), "\n"))
-	}
-	t.Log(b.String())
-	return out.String(), errOut.String(), code
+	return start(t, tg, strings.NewReader(stdin), line, args...).wait(t)
 }
 
 // ok runs the binary and fails the test unless it exits zero with nothing
@@ -230,36 +338,82 @@ func idOf(t *testing.T, out string) string {
 	return id
 }
 
-// seedPending inserts a pending file named name into the directory with id
-// directoryID, as a put that stopped after its first step leaves it, and
-// returns its id.
-func seedPending(t *testing.T, tg target, directoryID, name string) string {
+// pending leaves the file at path pending, as a put that crashed
+// mid-upload leaves it, and returns its id. put - runs with its stdin held
+// open on a pipe, so it commits the pending row and then waits on the
+// body; once a stat in another run shows the row pending, the put is
+// killed with SIGKILL, which it cannot catch, so nothing abandons the row.
+func pending(t *testing.T, tg target, path string) string {
 	t.Helper()
-	id := blobfs.NewID()
-	_, err := tg.db.ExecContext(context.Background(),
-		"INSERT INTO blobfs_file (id, directory_id, name, status, key, content_type) VALUES ($1, $2, $3, 'pending', $4, 'text/plain')",
-		id, directoryID, name, id+"/"+name)
+	r, w, err := os.Pipe()
 	if err != nil {
-		t.Fatalf("seed %s: %v", name, err)
+		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = w.Close() })
+	p := start(t, tg, r, "$ blobfs put - "+path+" &  # stdin held open", "put", "-", path)
+	// The child holds its own copy of the read end.
+	_ = r.Close()
+	if _, err := w.WriteString("the first bytes of a body that never ends"); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	processtest.WaitFor(t, path+" pending", func() bool {
+		out, _, code := run(t, tg, "stat", path)
+		id = field(out, "id")
+		return code == 0 && field(out, "status") == "pending"
+	})
+	p.crash(t)
 	return id
 }
 
-// markDeleting marks the directories with ids, and every file in them,
-// deleting, as blobfs's branch mark leaves a branch whose rm --recursive
-// was interrupted before its sweep finished. ids lists the branch's root
-// and every directory beneath it.
-func markDeleting(t *testing.T, tg target, ids ...string) {
+// branch makes the directory at path with an empty directory sub and n
+// one-byte files, f000.txt on, put through tg, and returns the id of
+// f000.txt, the first file the sweep finishes, which walks a directory's
+// files by name before its child directories.
+func branch(t *testing.T, tg target, path string, n int) string {
 	t.Helper()
-	ctx := context.Background()
-	for _, id := range ids {
-		if _, err := tg.db.ExecContext(ctx, "UPDATE blobfs_directory SET status = 'deleting', version = version + 1 WHERE id = $1", id); err != nil {
-			t.Fatalf("mark directory %s: %v", id, err)
-		}
-		if _, err := tg.db.ExecContext(ctx, "UPDATE blobfs_file SET status = 'deleting', version = version + 1 WHERE directory_id = $1", id); err != nil {
-			t.Fatalf("mark the files of %s: %v", id, err)
-		}
+	ok(t, tg, "mkdir", path)
+	ok(t, tg, "mkdir", path+"/sub")
+	first := put(t, tg, path+"/f000.txt", "f")
+	for i := 1; i < n; i++ {
+		put(t, tg, fmt.Sprintf("%s/f%03d.txt", path, i), "f")
 	}
+	return first
+}
+
+// interrupt runs rm --recursive of the branch at path, which branch made
+// with n files whose first is first, through tg, whose store is reached
+// through f, and severs f mid-sweep: once a stat in another run finds
+// first gone, the sweep has begun deleting objects, and every delete after
+// the sever is refused. The run exits one with the refusal and the counts
+// it reached, which interrupt checks and returns: the files removed before
+// the sever, and the one directory, sub, that the store's outage does not
+// hold back. The branch stays deleting, and f stays severed.
+func interrupt(t *testing.T, tg target, f *processtest.Forwarder, path, first string, n int) (files int) {
+	t.Helper()
+	p := start(t, tg, strings.NewReader(""), "$ blobfs rm --recursive "+path+" &", "rm", "--recursive", path)
+	processtest.WaitFor(t, "the sweep of "+path+" past its first file", func() bool {
+		_, errOut, code := run(t, tg, "stat", "id:"+first)
+		return code == 1 && strings.Contains(errOut, "not found")
+	})
+	f.Sever()
+	t.Log("the store's relay is severed")
+	out, errOut, code := p.wait(t)
+	if code != 1 || out != "" {
+		t.Fatalf("rm --recursive %s severed mid-sweep exited %d with stdout %q; want a refusal (a sweep of %d files that finished before the sever needs more files)", path, code, out, n)
+	}
+	_, counts, found := strings.Cut(errOut, "rm --recursive "+path+": removed ")
+	var dirs int
+	if _, err := fmt.Sscanf(counts, "%d files and %d directories, then: ", &files, &dirs); !found || err != nil {
+		t.Fatalf("rm --recursive %s stderr = %q, want the counts it reached", path, errOut)
+	}
+	if files < 1 || files >= n || dirs != 1 {
+		t.Errorf("rm --recursive %s removed %d files and %d directories; want 1 to %d files and sub", path, files, dirs, n-1)
+	}
+	if !strings.Contains(errOut, "delete the object of file ") {
+		t.Errorf("rm --recursive %s stderr = %q, want the store's refusal", path, errOut)
+	}
+	return files
 }
 
 // script is one ordered run of the binary over one database, and what its
@@ -648,12 +802,13 @@ func (s *script) put(t *testing.T) {
 		t.Errorf("stat after --content-type:\n%s", out)
 	}
 
-	// A pending row a stopped put left is resumed under its own key.
-	pending := seedPending(t, s.tg, objects, "pending.txt")
-	if out := okIn(t, s.tg, "resumed\n", "put", "-", "/objects/pending.txt"); out != "put: /objects/pending.txt (id "+pending+", 8 bytes, etag "+field(ok(t, s.tg, "stat", "/objects/pending.txt"), "etag")+", resumed the pending row)\n" {
+	// A pending row a crashed put left is resumed under its own id, and
+	// holds the second put's bytes.
+	crashed := pending(t, s.tg, "/objects/pending.txt")
+	if out := okIn(t, s.tg, "resumed\n", "put", "-", "/objects/pending.txt"); out != "put: /objects/pending.txt (id "+crashed+", 8 bytes, etag "+field(ok(t, s.tg, "stat", "/objects/pending.txt"), "etag")+", resumed the pending row)\n" {
 		t.Errorf("put onto a pending row stdout = %q", out)
 	}
-	if got := ok(t, s.tg, "cat", "id:"+pending); got != "resumed\n" {
+	if got := ok(t, s.tg, "cat", "id:"+crashed); got != "resumed\n" {
 		t.Errorf("cat of the resumed file = %q", got)
 	}
 
@@ -677,7 +832,7 @@ func (s *script) cat(t *testing.T) {
 	if got := ok(t, s.tg, "cat", "id:"+hello); got != "hello, blobfs\n" {
 		t.Errorf("cat by id = %q", got)
 	}
-	seedPending(t, s.tg, ids(ok(t, s.tg, "ls", "/"))["objects"], "stuck.txt")
+	pending(t, s.tg, "/objects/stuck.txt")
 	refused(t, s.tg, "the file is not available: it is pending", "cat", "/objects/stuck.txt")
 	refused(t, s.tg, "not found", "cat", "/objects/missing.txt")
 	refused(t, s.tg, "not found", "cat", "/objects")
@@ -739,9 +894,15 @@ func (s *script) remove(t *testing.T) {
 	refused(t, s.tg, "the root directory", "rm", "/")
 }
 
+// branchFiles is how many files an interrupted branch holds: enough that
+// its sweep, a few milliseconds a file, outlasts a stat run's notice that
+// it has begun, so the relay is severed with files left to refuse.
+const branchFiles = 150
+
 // removeTree deletes a branch and prints its totals, finishes a branch
-// whose earlier run was interrupted, and, through its sweep, a branch
-// another run marked; the root and an id are refused.
+// whose earlier run the store's outage interrupted, and, through its
+// sweep, a branch another interrupted run left; the root and an id are
+// refused.
 func (s *script) removeTree(t *testing.T) {
 	for _, p := range []string{"/tree", "/tree/a", "/tree/a/b"} {
 		ok(t, s.tg, "mkdir", p)
@@ -754,25 +915,26 @@ func (s *script) removeTree(t *testing.T) {
 	}
 	refused(t, s.tg, "not found", "ls", "/tree")
 
-	// An interrupted run: the branch is marked and its sweep never ran. A
-	// rerun finds the deleting directory at its path and finishes it.
-	ok(t, s.tg, "mkdir", "/half")
-	ok(t, s.tg, "mkdir", "/half/sub")
-	put(t, s.tg, "/half/sub/h.txt", "h")
-	half := ids(ok(t, s.tg, "ls", "/"))["half"]
-	markDeleting(t, s.tg, half, ids(ok(t, s.tg, "ls", "/half"))["sub"])
-	refused(t, s.tg, "deleting", "ls", "/half")
-	if out := ok(t, s.tg, "rm", "--recursive", "/half"); out != "rm --recursive: /half (1 files, 2 directories)\n" {
+	// An interrupted run: the store's relay is severed mid-sweep, so the
+	// run is refused partway and the branch stays deleting. A rerun finds
+	// the deleting directory at its path and finishes it.
+	f := processtest.Forward(t, storeEndpoint(t).Host)
+	rt := relayed(t, s.tg, f)
+	first := branch(t, rt, "/half", branchFiles)
+	removed := interrupt(t, rt, f, "/half", first, branchFiles)
+	refused(t, rt, "deleting", "ls", "/half")
+	f.Restore(t)
+	if out := ok(t, rt, "rm", "--recursive", "/half"); out != fmt.Sprintf("rm --recursive: /half (%d files, 1 directories)\n", branchFiles-removed) {
 		t.Errorf("rm --recursive of an interrupted branch stdout = %q", out)
 	}
 
-	// The sweep finishes every marked branch: /orphan, which another run
-	// marked, goes with /other, and the totals count both.
-	ok(t, s.tg, "mkdir", "/orphan")
-	ok(t, s.tg, "mkdir", "/other")
-	put(t, s.tg, "/orphan/o.txt", "o")
-	markDeleting(t, s.tg, ids(ok(t, s.tg, "ls", "/"))["orphan"])
-	if out := ok(t, s.tg, "rm", "--recursive", "/other"); out != "rm --recursive: /other (1 files, 2 directories)\n" {
+	// The sweep finishes every marked branch: /orphan, which an
+	// interrupted run left, goes with /other, and the totals count both.
+	first = branch(t, rt, "/orphan", branchFiles)
+	removed = interrupt(t, rt, f, "/orphan", first, branchFiles)
+	f.Restore(t)
+	ok(t, rt, "mkdir", "/other")
+	if out := ok(t, rt, "rm", "--recursive", "/other"); out != fmt.Sprintf("rm --recursive: /other (%d files, 2 directories)\n", branchFiles-removed) {
 		t.Errorf("rm --recursive with another marked branch stdout = %q", out)
 	}
 	if got := names(ok(t, s.tg, "ls", "/")); got != "a c ids objects reports" {
@@ -790,6 +952,9 @@ func (s *script) removeTree(t *testing.T) {
 // the root, to the unit's own top-level directories, and the refusals;
 // then mv carrying the owner row with a renamed top-level directory, and
 // rmdir and rm --recursive removing the owner rows with their directories.
+// The owner row's foreign key to its directory has no cascade, so a row
+// left behind would refuse the directory's removal: a removal that
+// succeeds is the binary's proof that the row went with it.
 func (s *script) units(t *testing.T) {
 	unit, other := blobfs.NewID(), blobfs.NewID()
 	if out := ok(t, s.tg, "mkdir", "/owned", "--unit", unit); !strings.HasPrefix(out, "mkdir: /owned (id ") || !strings.HasSuffix(out, ", unit "+unit+")\n") {
@@ -836,22 +1001,21 @@ func (s *script) units(t *testing.T) {
 	}
 
 	// A renamed top-level directory keeps its owner row, which follows it
-	// by id; rmdir removes the row with the directory.
+	// by id; rmdir removes the row with the directory, or the directory's
+	// delete would be refused.
 	ok(t, s.tg, "mv", "/theirs", "/mine")
 	if got := names(ok(t, s.tg, "ls", "/", "--unit", other)); got != "mine" {
 		t.Errorf("ls / as the other unit after the rename = %s", got)
 	}
 	ok(t, s.tg, "rmdir", "/mine")
-	if n := owners(t, s.tg, other); n != 0 {
-		t.Errorf("owner rows of the other unit after rmdir = %d, want 0", n)
+	if got := names(ok(t, s.tg, "ls", "/", "--unit", other)); got != "" {
+		t.Errorf("ls / as the other unit after rmdir = %s", got)
 	}
 
-	// rm --recursive removes the owner row of the branch's root with it.
+	// rm --recursive removes the owner row of the branch's root with it,
+	// or the sweep's removal of the root would be refused.
 	if out := ok(t, s.tg, "rm", "--recursive", "/owned"); out != "rm --recursive: /owned (1 files, 2 directories)\n" {
 		t.Errorf("rm --recursive of an owned branch stdout = %q", out)
-	}
-	if n := owners(t, s.tg, unit); n != 0 {
-		t.Errorf("owner rows of the unit after rm --recursive = %d, want 0", n)
 	}
 	if got := names(ok(t, s.tg, "ls", "/", "--unit", unit)); got != "" {
 		t.Errorf("ls / as the unit after rm --recursive = %s", got)
@@ -968,17 +1132,6 @@ func bookmarkPaths(out string) string {
 	return strings.Join(paths, " ")
 }
 
-// owners returns how many directories the unit with id owns, read from the
-// owner table on the test's own pool.
-func owners(t *testing.T, tg target, unit string) int {
-	t.Helper()
-	var n int
-	if err := tg.db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM directory_owner WHERE unit_id = $1", unit).Scan(&n); err != nil {
-		t.Fatalf("count the owner rows of %s: %v", unit, err)
-	}
-	return n
-}
-
 // TestTheStoreUnreachable runs the commands with the object store's
 // endpoint on a port nothing listens on: every directory and bookmark
 // command declares the database alone, so none reaches the store and each
@@ -1000,14 +1153,15 @@ func TestTheStoreUnreachable(t *testing.T) {
 	ok(t, tg, "mv", "/reports/2026", "/reports/2027")
 	ok(t, tg, "rmdir", "/reports/2027")
 
-	// Ownership and the bookmark commands, over a pending file seeded
-	// without the store.
+	// Ownership and the bookmark commands, over a file a put left pending
+	// when it crashed, a put that reached the store, so it ran with the
+	// store's endpoint restored to the environment's.
 	unit := blobfs.NewID()
 	ok(t, tg, "mkdir", "/library", "--unit", unit)
 	if got := names(ok(t, tg, "ls", "/", "--unit", unit)); got != "library" {
 		t.Errorf("ls / --unit names = %s", got)
 	}
-	seedPending(t, tg, ids(ok(t, tg, "ls", "/"))["library"], "plan.txt")
+	pending(t, tg.with("BLOBFS_STORAGE_ENDPOINT="+os.Getenv("BLOBFS_STORAGE_ENDPOINT")), "/library/plan.txt")
 	ok(t, tg, "ls", "/library", "--unit", unit)
 	ok(t, tg, "bookmark", "add", "/library/plan.txt", "--unit", unit, "--active")
 	if got := bookmarkPaths(ok(t, tg, "bookmark", "ls", "--unit", unit)); got != "/library/plan.txt" {

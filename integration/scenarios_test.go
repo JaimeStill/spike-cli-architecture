@@ -84,8 +84,10 @@ func TestDemos(t *testing.T) {
 	if got := names(ok(t, tg, "ls", "/")); got != "" {
 		t.Errorf("ls / after the tours = %s, want nothing left", got)
 	}
-	if n := owners(t, tg, "0199c0de-0000-7000-8000-0000000000de"); n != 0 {
-		t.Errorf("the demo unit owns %d directories after the tours, want 0", n)
+	// The owner rows went with their directories, whose removal a row left
+	// behind would refuse through its foreign key.
+	if got := names(ok(t, tg, "ls", "/", "--unit", "0199c0de-0000-7000-8000-0000000000de")); got != "" {
+		t.Errorf("ls / as the demo unit after the tours = %s, want nothing left", got)
 	}
 }
 
