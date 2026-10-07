@@ -11,13 +11,14 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/migrations"
 )
 
-// AppSet is the name of the app's migration set in the migrator and in its
-// status rows. blobfs's set carries the name its source exports.
-const AppSet = "app"
-
-// Sets returns the two migration sets bottom first: blobfs's set, under its
-// own history table, and then the app's set, under sqlate's default table.
-func Sets() ([]migrate.Set, error) {
+// NewMigrator builds sqlate's multi-set migrator over db for the two
+// migration sets, bottom first: blobfs's set, under its own history table
+// and the name its source exports, and then the app's set, named app,
+// under sqlate's default table. It performs no I/O: the migrator validates
+// the sets and opens nothing. Its Up, Reset, and Status are the schema
+// operations as they stand; [Down] is the revert the migrator does not
+// offer.
+func NewMigrator(db *sqlate.DB) (*migrate.Migrator, error) {
 	blobfsSet, err := blobfspostgres.Migrations()
 	if err != nil {
 		return nil, err
@@ -26,19 +27,7 @@ func Sets() ([]migrate.Set, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []migrate.Set{blobfsSet, {Name: AppSet, Migrations: appSet}}, nil
-}
-
-// NewMigrator builds sqlate's multi-set migrator over db for the sets
-// [Sets] returns. It performs no I/O: the migrator validates the sets and
-// opens nothing. Its Up, Reset, and Status are the schema operations as
-// they stand; [Down] is the revert the migrator does not offer.
-func NewMigrator(db *sqlate.DB) (*migrate.Migrator, error) {
-	sets, err := Sets()
-	if err != nil {
-		return nil, err
-	}
-	return migrate.New(db, sets, migrate.Options{})
+	return migrate.New(db, []migrate.Set{blobfsSet, {Name: "app", Migrations: appSet}}, migrate.Options{})
 }
 
 // Down reverts every applied migration of m's sets, the app's set first,

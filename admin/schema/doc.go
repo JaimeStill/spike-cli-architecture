@@ -10,8 +10,9 @@
 // and a revert runs in reverse; beside it is [Down], the revert that keeps
 // the history tables, which the migrator does not offer. commands.go
 // builds the schema command and its status, up, down, and reset
-// subcommands, which run the migrator's own Status, Up, and Reset and the
-// package's Down. output.go renders the status table's rows.
+// subcommands, each a function of the migrator's node, which run the
+// migrator's own Status, Up, and Reset and the package's Down. output.go
+// writes the status table.
 //
 // The group's boundary with the composition root is one graph node: the
 // root defines the node that constructs the migrator over its database and
@@ -28,6 +29,4 @@
 //   - [NewMigrator], which builds the migrator over a database
 //   - [Down], which reverts every set, the app's first, and keeps the
 //     history tables
-//   - [Sets], the two migration sets, bottom first
-//   - [AppSet], the name of the app's set
 package schema
