@@ -82,18 +82,16 @@ type Nodes struct {
 	Objects         *graph.Node[*files.Objects]   // "objects"
 }
 
-// Graph, Nodes, and Root are the App's composition as [New] described it:
-// the graph, its nodes, and the command tree over them. Nothing in the
-// program reads them but [App.Run]; they are published so a caller can
-// observe what a run builds, with graph.Graph.Observe, Replace a node's
-// constructor with a substitute, or Add a command over the nodes, all
-// before the App runs. A Replace or an Add changes the App itself, and the
-// graph panics on a Replace once a run has built from it.
-
-// Graph returns the graph a's commands are built from.
+// Graph returns the graph a's commands are built from, as [New] described
+// it. Nothing in the program reads it but [App.Run]; it is published so a
+// caller can, before the App runs, observe what a run builds with
+// graph.Graph.Observe, or Replace a node's constructor with a substitute.
+// A Replace changes the App itself, and the graph panics on a Replace once
+// a run has built from it.
 func (a *App) Graph() *graph.Graph { return a.graph }
 
-// Nodes returns a's graph nodes.
+// Nodes returns a handle on each of a's graph nodes, for a caller's Replace
+// or for a command it adds over them.
 func (a *App) Nodes() Nodes {
 	return Nodes{
 		DatabaseConfig:  a.infra.databaseConfig,
@@ -107,5 +105,6 @@ func (a *App) Nodes() Nodes {
 	}
 }
 
-// Root returns a's root command.
+// Root returns a's root command. A command a caller Adds to it before the
+// App runs is part of the App's tree from then on.
 func (a *App) Root() *cli.Command { return a.root }

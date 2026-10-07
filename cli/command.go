@@ -36,12 +36,12 @@ type Command struct {
 	// Footer writes text the command appends to its own generated help,
 	// such as a listing the program generates: the help prints a blank line
 	// and then what Footer writes, after every standard section, or nothing
-	// more when Footer writes nothing. It applies
-	// wherever the command's full help prints, on -h or --help and when a
-	// parent runs with no subcommand or an unknown one, and not to the short
-	// usage a usage error prints. Descendants do not inherit it. The help is
-	// rendered in memory before it is printed, so a write to w cannot fail;
-	// a nil Footer appends nothing.
+	// more when Footer writes nothing. It applies wherever the command's
+	// full help prints, on -h or --help and when a parent runs with no
+	// subcommand or an unknown one, and not to the short usage a usage error
+	// prints. Descendants do not inherit it. The help is rendered in memory
+	// before it is printed, so a write to w cannot fail; a nil Footer
+	// appends nothing.
 	Footer func(w io.Writer)
 
 	// Args validates a leaf's positional arguments before Run is called,
