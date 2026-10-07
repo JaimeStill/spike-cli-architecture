@@ -571,6 +571,22 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
 - files review · app: one infrastructure node, "sql", a *sqlate.DB over the database in sqlate's
   Postgres dialect, which the migrator and the files service both Use (architect).
 
+- files ergonomics: ErrVerify drops its CLI hint and reads in domain terms ("the schema is not
+  applied"); the root help's schema group is the pointer; rejected a cli start-error seam and
+  remedy text passed into files.New (architect).
+- files ergonomics: cmd/blobfs imports cli for cli.Streams; accepted as a spike-only artifact
+  that resolves at promotion, when go-cli-sdk is an external import like go-core's process;
+  rejected an app.Streams alias (a pass-through) (architect).
+- files ergonomics: a command accepts a path or an id wherever an id can name the target, which
+  is the point of the Ref ruling; path-only survives only where an id is impossible by nature
+  (mkdir: the new directory has no id). rmdir, bookmark add|rm, rm --recursive, and ls --unit
+  accept ids. Amends the brief's behavior 5 ("rm --recursive takes a path, not an id"); each is
+  a deliberate difference from spike-blobfs for the validate task's comparison (architect).
+- files ergonomics: the scenario tours keep their own success lines; rejected exporting six
+  one-line writers (architect).
+- files ergonomics: every domain's Commands returns []*cli.Command, so each app mount is
+  root.Add(pkg.Commands(...)...) (architect).
+
 ## Pending edits
 
 - architecture · `standards/go-elemental/principles/topology-and-naming.md`: state that the
@@ -604,3 +620,15 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
   adopts the scenario convention: its demo and scenario packages consolidate into `scenario`,
   `slab demo <name>` becomes `slab scenario <name>`, and `slab list` gives way to the scenario
   parent's help footer (and the root's); the conventions note records one shape for every CLI.
+- architecture · `standards/go-elemental/principles/baseline-standards.md` (or a new principles
+  page): a type or layer is introduced only when it is needed; no pass-through wrappers.
+- architecture · `principles/composition-root.md`: a CLI's configuration is a graph node, read
+  only when a Build reaches it (the page's configuration rule covers web services only).
+- architecture · `standards/go-elemental/principles/lifecycle-and-context.md`: participation by
+  single-method interfaces (Starter, Stopper, Subsystem embedding both); joins the composition
+  ontology page.
+- architecture · the domain-file ontology page (above) also states: one Commands call per
+  domain returning []*cli.Command, plain command functions of declared nodes read with inv.Get,
+  input checks in Validate, and a state change never silent.
+- architecture · `standards/go-elemental/principles/topology-and-naming.md` (with the cmd rule
+  above): cmd may import the SDK packages it composes over (go-core, go-cli-sdk).
