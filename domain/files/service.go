@@ -141,8 +141,7 @@ func label(ref Ref, kind string) string {
 // snapshot and agree with each other. A directory that does not exist is
 // blobfs.ErrNotFound, and a path that does not start with a slash
 // blobfs.ErrInvalidPath. A directory named by id is read first, since
-// blobfs lists a directory that does not exist as empty, and its contents'
-// Path is empty: a listing by id reports no path.
+// blobfs lists a directory that does not exist as empty.
 //
 // A unit in l scopes the listing to what the unit owns. Below the root, a
 // unit that does not own the listed directory's top-level ancestor is
@@ -171,7 +170,7 @@ func (s *Service) List(ctx context.Context, ref Ref, l Listing) (Contents, error
 			if err != nil {
 				return Contents{}, err
 			}
-			return s.store.contents(ctx, tx, ref.Path, dir.ID, l)
+			return s.store.contents(ctx, tx, dir.ID, l)
 		case atRoot(ref):
 			return s.topLevel(ctx, tx, l)
 		case ref.ID != "":
@@ -179,13 +178,13 @@ func (s *Service) List(ctx context.Context, ref Ref, l Listing) (Contents, error
 			if err != nil {
 				return Contents{}, err
 			}
-			return s.store.contents(ctx, tx, "", dir.ID, l)
+			return s.store.contents(ctx, tx, dir.ID, l)
 		}
 		dir, err := s.resolveOwned(ctx, tx, ref.Path, l.Unit)
 		if err != nil {
 			return Contents{}, err
 		}
-		return s.store.contents(ctx, tx, ref.Path, dir.ID, l)
+		return s.store.contents(ctx, tx, dir.ID, l)
 	}, sqlate.ReadOnly(), sqlate.Isolation(sql.LevelRepeatableRead))
 	if err != nil {
 		return Contents{}, fmt.Errorf("files: list %s: %w", at, err)
@@ -262,7 +261,7 @@ func (s *Service) topLevel(ctx context.Context, sess sqlate.Session, l Listing) 
 	if l.Total == TotalNone {
 		files.Total = NoTotal
 	}
-	return Contents{Path: "/", Directories: dirs, Files: files}, nil
+	return Contents{Directories: dirs, Files: files}, nil
 }
 
 // Stat returns the row ref names, on the pool: the file at the path or

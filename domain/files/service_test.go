@@ -139,7 +139,7 @@ func TestList_ResolvesAndReadsBothHalvesInOneReadOnlySnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() = %v", err)
 	}
-	if c.Path != "/reports" || len(c.Directories.Rows) != 1 || c.Directories.Rows[0].Name != "2026" ||
+	if len(c.Directories.Rows) != 1 || c.Directories.Rows[0].Name != "2026" ||
 		len(c.Files.Rows) != 1 || c.Files.Rows[0].Name != "a.txt" || c.Directories.Total != 1 || c.Files.Total != 1 {
 		t.Errorf("List() = %+v", c)
 	}
@@ -291,8 +291,8 @@ func TestList_ByIDReadsTheDirectoryFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List(id) = %v", err)
 	}
-	if c.Path != "" || len(c.Files.Rows) != 1 {
-		t.Errorf("List(id) = %+v, want no path and the file", c)
+	if len(c.Files.Rows) != 1 {
+		t.Errorf("List(id) = %+v, want the file", c)
 	}
 }
 

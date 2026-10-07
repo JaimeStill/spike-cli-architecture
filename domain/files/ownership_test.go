@@ -87,7 +87,7 @@ func TestList_AsAUnitChecksTheTopLevelDirectorysOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() = %v", err)
 	}
-	if len(c.Files.Rows) != 1 || c.Path != "/reports/2026" {
+	if len(c.Files.Rows) != 1 {
 		t.Errorf("List() = %+v, want the file under /reports/2026", c)
 	}
 	calls := rec.Calls()
@@ -223,8 +223,8 @@ func TestList_AsAUnitByIDChecksTheTopLevelAncestorsOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() = %v", err)
 	}
-	if len(c.Files.Rows) != 1 || c.Path != "" {
-		t.Errorf("List() = %+v, want the file and no path, as a listing by id reports", c)
+	if len(c.Files.Rows) != 1 {
+		t.Errorf("List() = %+v, want the file", c)
 	}
 	calls := rec.Calls()
 	if args := calls[3].Args; len(args) != 2 || fmt.Sprint(args[1]) != "[reports]" {

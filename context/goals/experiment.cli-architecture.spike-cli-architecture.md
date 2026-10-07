@@ -1,6 +1,6 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** brief ready
+- **State:** building
 - **Task:** files
 - **Branch:** files
 
@@ -661,9 +661,9 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
   Shutdown, since with the hooks gone a production node's value can't be wrapped.
 - files: scenario.WriteListing is the one source of the listing text, heading included, and both
   footers call it.
-- files: ls by id prints no path: a listing's Path stays empty for every listing by id, since a
-  listing is not a record. Open question for the architect: should ls by id print the resolved
-  path, as stat by id does?
+- files: ls prints no path for either form, as Unix ls lists entries, not the directory; the
+  unread Contents.Path goes (no field without a reader), and a listing heading, if ever wanted,
+  is a new format for both forms (architect, at the third session brief).
 
 ## Pending edits
 

@@ -99,13 +99,11 @@ type Page[T any] struct {
 	Next  string
 }
 
-// Contents is what ls returns for one directory: the path it listed, empty
-// for a listing by id, the directories under it, and the files in it, each
-// one page under the same Listing with its own total. Both halves are read
+// Contents is what ls returns for one directory: the directories under it
+// and the files in it, each one page under the same Listing with its own total. Both halves are read
 // in one read-only repeatable-read transaction, so they agree with each
 // other.
 type Contents struct {
-	Path        string
 	Directories Page[blobfs.Directory]
 	Files       Page[blobfs.File]
 }

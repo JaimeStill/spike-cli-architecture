@@ -343,9 +343,8 @@ func (s *store) destination(ctx context.Context, sess sqlate.Session, dst Ref, s
 
 // contents reads the two halves of the directory with id through sess:
 // the directory half under the terms naming a directory field, the file
-// half under every term, each from its own cursor when l carries one. path
-// is what the result reports as listed.
-func (s *store) contents(ctx context.Context, sess sqlate.Session, path, id string, l Listing) (Contents, error) {
+// half under every term, each from its own cursor when l carries one.
+func (s *store) contents(ctx context.Context, sess sqlate.Session, id string, l Listing) (Contents, error) {
 	dirs, err := half(ctx, sess, s.blobfs.Directories, id, l, directoryFields, l.After.Directories)
 	if err != nil {
 		return Contents{}, err
@@ -354,7 +353,7 @@ func (s *store) contents(ctx context.Context, sess sqlate.Session, path, id stri
 	if err != nil {
 		return Contents{}, err
 	}
-	return Contents{Path: path, Directories: dirs, Files: files}, nil
+	return Contents{Directories: dirs, Files: files}, nil
 }
 
 // The names of the constraints and the unique index the app's bookmark
