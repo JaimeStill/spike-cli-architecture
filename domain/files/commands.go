@@ -357,10 +357,10 @@ func put(st *graph.Node[*Storage]) *cli.Command {
 			}
 			defer closeBody()
 			c := Content{Body: body, Size: size, ContentType: declaredType(contentType, src)}
-			label := inv.Args[1]
+			at := inv.Args[1]
 			if dst.ID != "" {
 				c.Name = filepath.Base(src)
-				label = c.Name + " in " + inv.Args[1]
+				at = c.Name + " in " + inv.Args[1]
 			}
 			res, err := inv.Get(st).Put(ctx, dst, c)
 			if err != nil {
@@ -371,7 +371,7 @@ func put(st *graph.Node[*Storage]) *cli.Command {
 				resumed = ", resumed the pending row"
 			}
 			f := res.File
-			_, err = fmt.Fprintf(inv.Stdout, "put: %s (id %s, %d bytes, etag %s%s)\n", label, f.ID, sizeOf(f), etagOf(f), resumed)
+			_, err = fmt.Fprintf(inv.Stdout, "put: %s (id %s, %d bytes, etag %s%s)\n", at, f.ID, sizeOf(f), etagOf(f), resumed)
 			return err
 		},
 	}
@@ -518,27 +518,11 @@ func declaredType(flag, local string) string {
 	return "application/octet-stream"
 }
 
-// sizeOf returns a file's size, or 0 when the row records none.
-func sizeOf(f blobfs.File) int64 {
-	if f.Size == nil {
-		return 0
-	}
-	return *f.Size
-}
-
-// etagOf returns a file's etag, or - when the row records none.
-func etagOf(f blobfs.File) string {
-	if f.ETag == nil {
-		return "-"
-	}
-	return *f.ETag
-}
-
 // The CLI-syntax parsers: each reads the command line's text into the
 // domain's shapes, and each runs in a command's Validate, which reports
 // any refusal as a usage error.
 
-// ParseRef reads one path-or-id argument. Text after an id: prefix must be
+// parseRef reads one path-or-id argument. Text after an id: prefix must be
 // a UUID other than the root's, checked by blobfs.ParseID before any I/O,
 // and is returned in canonical form; anything else is taken as a path,
 // which the Service validates.

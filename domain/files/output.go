@@ -80,17 +80,13 @@ func WriteDirectoryRecord(w io.Writer, path string, d blobfs.Directory) error {
 // fileRecord lays a file row out as the fields stat prints, in order. The
 // path line is left out when path is empty.
 func fileRecord(path string, f blobfs.File) []output.Field {
-	etag := "-"
-	if f.ETag != nil {
-		etag = *f.ETag
-	}
 	fields := []output.Field{
 		{Name: "id", Value: f.ID},
 		{Name: "name", Value: f.Name},
 		{Name: "status", Value: string(f.Status)},
 		{Name: "size", Value: sizeCell(f.Size)},
 		{Name: "content-type", Value: f.ContentType},
-		{Name: "etag", Value: etag},
+		{Name: "etag", Value: etagOf(f)},
 		{Name: "key", Value: f.Key},
 		{Name: "version", Value: strconv.FormatInt(f.Version, 10)},
 		{Name: "created", Value: f.CreatedAt.UTC().Format(time.RFC3339)},
@@ -122,6 +118,22 @@ func directoryRecord(path string, d blobfs.Directory) []output.Field {
 		fields = append([]output.Field{{Name: "path", Value: path}}, fields...)
 	}
 	return fields
+}
+
+// sizeOf returns a file's size, or 0 when the row records none.
+func sizeOf(f blobfs.File) int64 {
+	if f.Size == nil {
+		return 0
+	}
+	return *f.Size
+}
+
+// etagOf returns a file's etag, or - when the row records none.
+func etagOf(f blobfs.File) string {
+	if f.ETag == nil {
+		return "-"
+	}
+	return *f.ETag
 }
 
 // sizeCell renders a row's size, or - when the row records none.
