@@ -1,6 +1,6 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** brief ready
+- **State:** building
 - **Task:** files
 - **Branch:** files
 
@@ -449,6 +449,15 @@ slices 4/4 committed · redirect 4/4 · standards ✓ · spec ✓ · editor ✓
 - files: the interrupted sweep depends on a timing margin. Accept it, or require a deterministic
   hold point, which needs a production surface the spike lacks? Open question for the architect.
 
+- files: redirected at the second session brief (architect): the hoisting rule is standardized,
+  so fixtures over a composition root's published API live in an internal `<app>test` package
+  even with one consuming test package; a pending edit carries it to tests-and-docs.md.
+- files: redirected at the second session brief (architect): the interrupted-sweep test runs
+  deterministically, since integration tests become merge gates; no timing margin is accepted.
+- files: redirected at the second session brief (architect): a holistic review of the source
+  code (not the test infrastructure), layer by layer from the lowest, judging each layer's
+  structures, methods, and signatures, and how the layers compose.
+
 ## Pending edits
 
 - architecture · `standards/go-elemental/principles/topology-and-naming.md`: state that the
@@ -469,3 +478,7 @@ slices 4/4 committed · redirect 4/4 · standards ✓ · spec ✓ · editor ✓
   lifecycle-and-context.md` and `principles/composition-root.md` updated to it.
 - coordinator · `context/roadmap.toml`: the go-core goal (added above) also gives
   `process/processtest` a one-shot runner beside Launch, for CLIs, citing the spike's runner.
+- architecture · `standards/go-elemental/principles/tests-and-docs.md`: a composition root's
+  test fixtures, built over the root's published composition (its graph and nodes), live in an
+  internal `<app>test` package even when one test package consumes them, as the spike's
+  `internal/apptest` does; the "more than one test package" hoisting rule covers shared helpers.
