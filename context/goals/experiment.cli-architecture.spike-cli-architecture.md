@@ -1,6 +1,6 @@
 # goal · experiment.cli-architecture.spike-cli-architecture
 
-- **State:** brief ready
+- **State:** building
 - **Task:** files
 - **Branch:** files
 
@@ -664,6 +664,15 @@ slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics
 - files: ls prints no path for either form, as Unix ls lists entries, not the directory; the
   unread Contents.Path goes (no field without a reader), and a listing heading, if ever wanted,
   is a new format for both forms (architect, at the third session brief).
+
+- files usage: the root refusal and a malformed cursor move into Validate (exit 2, nothing
+  built); a cursor/sort mismatch moves too if it can be checked offline (architect).
+- files usage: singular totals; error wording says "into" and names resolved paths where the
+  error follows resolution; rm's bookmark refusal said once; mv/cp synopses
+  "<path|id:<uuid>> <path|id:<uuid>>"; one scenario column width in both listings (architect).
+- files usage: a store outage keeps the SDK's own message ("connection refused" or "context
+  deadline exceeded"); every one names store: and exits 1 (architect).
+- files usage: USAGE.md at the root walks the whole spike with real output (architect asked).
 
 ## Pending edits
 
