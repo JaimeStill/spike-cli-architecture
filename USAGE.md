@@ -873,7 +873,9 @@ feature spike-blobfs relied on, and what replaced it here.
   composition root fixes blobfs's Postgres engine, and integration states arise through SIGKILL
   and the fault relay instead.
 - No `-r`: the dispatcher has no shorthand flags, so it is `rm --recursive`.
-- `blobfs scenario <name>` replaces `demo <name>` and `list`; the help footers carry the listing.
+- spike-blobfs has no scenario package. The `scenario` parent follows slab's `demo` and `list`
+  convention, consolidated under `blobfs scenario <name>`, and the root's help ends with the
+  listing, as `blobfs scenario`'s does.
 - Ids are accepted wherever an id can name the target, including `rmdir`, `bookmark add|rm`,
   `rm --recursive`, and `ls --unit`; only `mkdir` is path-only.
 - `mv` and `cp` take each argument as a path or an id, so the forms mix.
