@@ -10,9 +10,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/standards-lab/blobfs"
 	"github.com/standards-lab/go-core/process"
+	"github.com/standards-lab/go-core/process/processtest"
 	godatabase "github.com/standards-lab/go-database"
 	"github.com/standards-lab/go-storage"
 	"github.com/standards-lab/go-storage/storagetest"
@@ -121,6 +123,54 @@ func TestObjects_PutDashReadsTheInvocationsStdin(t *testing.T) {
 	}
 	if opts, _ := fake.LastPut(); opts.ContentType != "application/octet-stream" || opts.Size != 0 {
 		t.Errorf("the put's options = %+v, want octet-stream and an unknown size", opts)
+	}
+	if n := rec.Pending(); n != 0 {
+		t.Errorf("%d scripted responses unconsumed", n)
+	}
+}
+
+// TestObjects_PutDashEndsWithTheContextWhileStdinBlocks holds standard
+// input open on a pipe nothing writes to, whose Read blocks whatever the
+// context, as a read of a pipe does in the kernel. The context ends once
+// the store's Put is reading the body: the run abandons the pending row
+// and returns with the cancellation while the read still blocks.
+func TestObjects_PutDashEndsWithTheContextWhileStdinBlocks(t *testing.T) {
+	const fileID = "00000000-0000-7000-8000-000000000003"
+	stdin, held := io.Pipe()
+	defer func() { _ = held.Close() }()
+	fake := storagetest.NewFake()
+	var out, errOut bytes.Buffer
+	a, _, rec, _ := scriptedAppIn(t, stdin, &out, &errOut,
+		resolvedRoot(),
+		sqltest.Response{Columns: fileColumns},
+		sqltest.Response{Columns: fileColumns, Rows: [][]driver.Value{
+			{fileID, blobfs.RootID, "a.txt", "pending", fileID + "/a.txt", nil, "application/octet-stream", nil, int64(1), stamp, stamp},
+		}},
+		// The abandon of the pending row: marked deleting, then purged.
+		sqltest.Response{Columns: fileColumns, Rows: [][]driver.Value{
+			{fileID, blobfs.RootID, "a.txt", "deleting", fileID + "/a.txt", nil, "application/octet-stream", nil, int64(2), stamp, stamp},
+		}},
+		sqltest.Response{Affected: 1},
+	)
+	apptest.FakeStore(t, a, fake)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	go func() { done <- a.Run(ctx, []string{"put", "-", "/a.txt"}) }()
+
+	processtest.WaitFor(t, "the store's Put", func() bool { return fake.Puts() == 1 })
+	cancel()
+	select {
+	case code := <-done:
+		if code != process.ExitFailure {
+			t.Errorf("code = %d, want %d", code, process.ExitFailure)
+		}
+	case <-time.After(processtest.Failsafe):
+		t.Fatal("put did not return once its context ended, its stdin still blocking")
+	}
+	if !strings.HasPrefix(errOut.String(), "blobfs put: files: put /a.txt: ") ||
+		!strings.HasSuffix(errOut.String(), ": "+context.Canceled.Error()+"\n") {
+		t.Errorf("stderr = %q, want the put's cancellation", errOut.String())
 	}
 	if n := rec.Pending(); n != 0 {
 		t.Errorf("%d scripted responses unconsumed", n)

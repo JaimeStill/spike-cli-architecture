@@ -95,9 +95,10 @@ staged composition?
   `storagetest.Fake`; and, under `mise run integration`, on an isolated compose project it boots
   and tears down, integration tests and a black-box suite (package `integration`) that runs the
   built binary as a child process. The suite reaches every state through production surfaces: it
-  kills a `put -` with SIGKILL to leave a pending row, and interrupts rm --recursive through an
-  HTTP relay in front of the object store that answers 503 to every blob delete after a set
-  number.
+  kills a `put -` with SIGKILL to leave a pending row, sends a `put -` SIGINT to prove the signal
+  ends the run, and interrupts rm --recursive through an HTTP relay in front of the object store
+  that answers 503 to every blob delete after a set number. `lifecycle`'s tests run a graph
+  shaped like go-web-service's on `Coordinator.Run` (evidence 9).
 
 ## References
 
@@ -108,4 +109,59 @@ other example), and `spike-blobfs` (the CLI being rebuilt).
 
 ## The answer
 
-(written by the validate task)
+**Question:** Do a stdlib-`flag` dispatcher with the planned feature set and a per-command
+dependency initializer hold up in a real CLI over the `blobfs` library, go-storage, and Postgres?
+
+**Answer:** Yes; a dispatcher on the standard library's `flag` carries spike-blobfs's whole
+command surface, each command brings up only the graph nodes it declares, and the same
+Coordinator runs go-web-service's staged graph.
+
+1. The planned feature set: proven by the running binary. Root flags, PreRun, and Exclusive
+   have no user in blobfs, so only `cli`'s tests prove them.
+2. No cobra, spike-blobfs's whole surface: the integration suite over the built binary
+   (`TestScript`); `go mod graph` shows no cobra or pflag.
+3. Only declared nodes come up: help, version, and a usage error run with the stack down, and
+   `internal/app`'s build-recording tests, such as
+   `TestSchema_VerbsBuildTheDatabaseAndNeverTheStore` and
+   `TestObjects_CommandsBuildTheDatabaseAndTheStore`.
+4. Once per run, closed in reverse: `TestUse_NodeNamedTwiceIsBuiltOnce`,
+   `TestInfrastructureIntegration_StartsBothAndShutsDownInReverse`, and, on cancellation,
+   `TestUse_ShutsDownWhenTheContextEndsMidBody`. The integration test `TestAnInterruptedPut`
+   proves a signal through the built binary ends the run with a single report.
+5. A failed dependency reported once: `TestUse_FailuresReportedOnce`,
+   `TestInfrastructureIntegration_StoreUnreachableClosesTheDatabase`, and the integration test
+   `TestTheStoreUnreachable`.
+6. The cobra record, [cobra-conventions.md](cobra-conventions.md): checked against both
+   binaries' help and exit codes.
+7. The test conventions without cobra: proven only by tests, `internal/app`'s over buffers and
+   `domain/files`'s over `storagetest.Fake`.
+8. A scenario package that declares its nodes: both scenarios run twice against the development
+   stack, and the integration test `TestScenarios`.
+9. The stage table and one Coordinator: proven only by tests, `TestWebServiceStageOrder` and
+   `TestWebServiceSubsetBuild` (graph) and `TestRunServesAGraphShapedLikeTheWebService`
+   (lifecycle).
+
+**go-cli-sdk.** The `cli` package's exported API is go-cli-sdk's proven candidate. It adds to
+the planned feature set `Use` with `WithGraph`, so a command brings up only what it declares;
+`Invocation.Get`, to read a declared value; `Validate`, so bad input builds nothing; `Footer`,
+for slab's help-plus-listing convention; and `Streams`, since `put -` reads stdin. It departs
+from the plan three times: requested help exits 2 through go-core's `process.Usage`; there is
+no `help` or `completion` command; and cobra's `Long` has no counterpart. Once `graph` and
+`lifecycle` are promoted, the SDK imports only the standard library and go-core. The intake
+decides.
+
+**go-cli-sdk-template.** `internal/app`'s shape is the candidate composition root. It departs
+from `cli-applications.md`'s layout: one exported `Nodes` value describes the graph; each layer
+file fills its part of it, mounts its commands with one `root.Add(pkg.Commands(...)...)`, or
+both; configuration is graph nodes, so there is no `config.go`; there is no `commands.go` and no
+central initializer; fixtures live in an internal `apptest` package; and `main` passes
+`cli.Streams` and the arguments, so it imports `cli` beside `internal/app`.
+
+**Promotion.** Promote `graph` and `lifecycle` into go-core at the API as it stands after this
+task. The files review reshaped both: participation split into the single-method `Starter` and
+`Stopper`, which `Subsystem` now embeds; `graph` lost its `Scope` hooks and gained
+`Ref.Name`, and kept `Observe` from the files build. The reshaping came from review rulings,
+not failures.
+
+See [cobra-conventions.md](cobra-conventions.md) for the cobra record and
+[USAGE.md](../USAGE.md) for every command with its output.

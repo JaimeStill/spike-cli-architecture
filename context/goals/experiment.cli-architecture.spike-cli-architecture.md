@@ -9,102 +9,75 @@
 1. [x] dispatcher
 2. [x] composition
 3. [x] files
-4. [ ] validate
+4. [x] validate
 
-## Task brief · files
+## Task brief · validate
 
 ```
-Problem       blobfs serves only schema and version. Evidence 2, 7, and 8 need
-              spike-blobfs's files and bookmark surface rebuilt on published
-              blobfs, go-storage/azureblob, and Postgres. Each command declares
-              only the dependencies it uses. The work is tested in the layout's
-              tiers and joined by a scenario package whose commands declare
-              their dependencies like any command. Without it, the experiment
-              can't show the dispatcher and the graph holding up in a real CLI.
-Behaviors     1. mkdir, ls, stat, mv, and rmdir behave as spike-blobfs's do:
-                 absolute paths and id:<uuid> refs, cp/mv taking two paths or
-                 two ids. ls has --page, --size, repeatable --sort and --filter,
-                 --total exact|none, --after-dirs/--after-files, --cursors, and
-                 --unit; mkdir has --unit. Each declares Postgres alone and
-                 succeeds with the object store unreachable.
-              2. bookmark add, ls, and rm behave as spike-blobfs's do, each
-                 with a required --unit, add with --active, and at most one
-                 active bookmark per unit. Each declares Postgres alone.
-              3. put uploads a local file, or stdin for `-`, to a path or into
-                 a directory id. Its content type comes from --content-type,
-                 then the file's extension, then application/octet-stream. A
-                 put onto a pending row resumes it. A name an available file
-                 holds is refused.
-              4. cat streams an available file's content to stdout. cp copies
-                 an available file to a new path or into a directory, refusing
-                 a name already taken. rm deletes a file, and refuses a file a
-                 unit has bookmarked before touching anything.
-              5. rm --recursive takes a path, not an id. It marks the branch
-                 deleting, sweeps until no work remains, and prints the files
-                 and directories removed as totals. A rerun after an
-                 interruption finishes the branch. The root is refused.
-              6. put, cat, cp, and rm declare Postgres and the object store. An
-                 unreachable store fails them once, naming the store, with the
-                 database shut down. The directory and bookmark commands are
-                 unaffected.
-              7. A files command run against a schema that isn't applied fails
-                 at start, naming the files node, before its body runs.
-              8. blobfs runs on blobfs's Postgres engine, fixed in the
-                 composition root. It has no --dsn, --variant, or --fail-after,
-                 and --recursive has no -r shorthand. No module in its graph is
-                 cobra.
-              9. The dispatcher hands a command stdin beside stdout and stderr.
-                 cli.Run and app.New take it as a parameter, a command reads it
-                 as Invocation.Stdin, and main passes the process's stdin.
-              10. `blobfs list` prints each scenario's name, its summary, and
-                  the names of the nodes it declares. It builds nothing and
-                  succeeds with the stack down.
-              11. `blobfs demo directories` declares Postgres alone, and
-                  `blobfs demo files` declares Postgres and the store. Each
-                  narrates every step before doing it, brings up only what it
-                  declares, reports an unreachable dependency as the start
-                  error naming its node, and succeeds twice in a row.
-              12. Hermetic tier: app tests drive the command tree over
-                  buffers; domain tests run over sqltest and storagetest.Fake
-                  with no network.
-              13. Integration tier: under `mise run integration`, on its
-                  isolated compose project (5437, 10011), the built binary runs
-                  as a child process through one ordered script over every
-                  command, each test with its own throwaway database and
-                  container. A directory command succeeds with the store
-                  endpoint unreachable.
-Test seams    the blobfs program's arguments, stdin, stdout, stderr, and exit
-              code: App.Run over buffers in the hermetic tier, the built binary
-              in the integration tier. The domain's own API over sqltest and
-              storagetest.Fake.
-Slices        1. Directory commands: mkdir, ls, stat, mv, rmdir over published
-                 blobfs on its Postgres engine. blobfs v0.5.0 enters as a direct
-                 requirement. Adds the files node over the database, the
-                 statement check at start, ls's listing output, and the
-                 black-box harness over the built binary. Demo: mkdir and ls
-                 with Azurite stopped. (Behaviors 1, 7, 8, 12, 13)
-              2. Object commands: stdin through the dispatcher; put, cat, cp,
-                 rm, and rm --recursive over the store node. Demo: `put -`,
-                 cat round-trips the bytes, then rm --recursive prints its
-                 totals. (Behaviors 3–6, 9)
-              3. Ownership and bookmarks: --unit on mkdir and ls, bookmark
-                 add, ls, and rm, and rm's bookmark refusal. Demo: bookmark
-                 add --active, then bookmark ls, then a refused rm.
-                 (Behaviors 1, 2, 4)
-              4. Scenarios: the scenario package, `list` at the root, and the
-                 `directories` and `files` tours under `demo`. Demo: `blobfs
-                 list` with the stack down, then `blobfs demo files` twice.
-                 (Behaviors 10, 11)
+Problem       The spike's nine evidence items are built but have not been run as a
+              whole or recorded. Two proofs are missing: a service-shaped graph on
+              the Coordinator's Run, and signal cancellation through the built
+              binary. Nothing records the cobra conventions and what replaced
+              them, and the spike has no answer. The experiment's intake needs
+              that answer in cli-applications.md to decide go-cli-sdk's API and
+              go-cli-sdk-template's composition root.
+Behaviors     1. A hermetic test runs the go-web-service-shaped graph on the
+                 Coordinator's Run. Its layers start in stage order (config;
+                 database and store; domain, schema, and storage; reactors;
+                 server), it serves until the context ends, then it shuts down
+                 in reverse.
+              2. Under the isolated integration stack, a blobfs object command
+                 that receives SIGINT mid-run exits 1 promptly and reports a
+                 single cancellation error.
+              3. Evidence 1 to 9 each pass end to end on the finished code: the
+                 hermetic check, the isolated integration suite, both scenarios
+                 run twice against the development stack, and help, version,
+                 and a usage error with the stack down. A defect this run finds
+                 is fixed when the fix stays inside the spike and leaves the
+                 exported API of cli, graph, and lifecycle unchanged; anything
+                 else is escalated.
+              4. A record lists each cobra-specific convention of the current
+                 layout and each cobra feature spike-blobfs used, with what
+                 replaced it or why it's no longer needed. It names the
+                 dispatcher features blobfs doesn't use (root flags, PreRun,
+                 Exclusive), and the go-core and go-cli-sdk candidates the work
+                 found. It credits the help-plus-scenario-listing convention to
+                 slab. USAGE.md's differences section links to it.
+              5. The spike's "The answer" states the question and the one-line
+                 answer (decision 12), then the nine evidence items, each naming
+                 its proof. Only items 7 and 9 say "Proven only by tests". It
+                 names the cli API as go-cli-sdk's candidate and internal/app's
+                 shape as go-cli-sdk-template's candidate composition root, each
+                 with its departures from the plan, and recommends promoting
+                 graph and lifecycle at the post-validate API. It links the
+                 cobra record.
+              6. lifecycle's package documentation states which promotion
+                 criteria held.
+              7. The goal record's pending edits gain the answer section for
+                 cli-applications.md under "Answers · experiment.cli-architecture",
+                 in the answer-section form, linking "The answer" and the remote.
+                 The moot roadmap-summary edit is dropped, with a Decision.
+Test seams    lifecycle's Coordinator API over a built graph (hermetic); the
+              blobfs binary as a child process (integration tier)
+Slices        1. Proof gaps: the stage graph on Run, and SIGINT through the
+                 binary. Demo: `mise run check` and `mise run integration` pass.
+                 (Behaviors 1, 2)
+              2. The evidence run and the cobra record. Demo: each record entry
+                 checked against both binaries' help and exit codes.
+                 (Behaviors 3, 4)
+              3. The answer: "The answer", lifecycle's criteria, the answer
+                 section, and the edit cleanup in the goal record. Demo: the
+                 answer fits on one screen and its links resolve.
+                 (Behaviors 5, 6, 7)
               (No upgrade slice: `mise run currency` reports nothing.)
-Out of scope  promoting graph, lifecycle, or cli to go-core or go-cli-sdk; the
-              evidence-6 record and the README's answer (the validate task); a
-              background or standalone sweep command; shorthand flags; a blobfs
-              variant other than Postgres
-              *Superseded: "the root's help listing the scenarios" is in scope;
-              the architect's redirect put it there.*
-Door          two-way: the spike repository only, no release
+Out of scope  promoting graph, lifecycle, or cli; changing any exported API;
+              rewriting cli-applications.md's layout, conventions, or plan, or
+              the cli goal summary (the intake's job); applying pending edits
+              (the sync's job); archiving (the intake's job); shorthand flags and
+              completion
+Door          two-way: the spike repository and goal-record edits only; no
+              release. The sync lands its coordinator edits through a pull request.
 ```
-
 
 ## Decisions
 
@@ -403,7 +376,7 @@ Door          two-way: the spike repository only, no release
   (architect, at the redirect).*
 - files: spike-blobfs's root help appended the scenario listing; cli's generated help has no hook
   for it (for the evidence-6 record). *Superseded: cli's Command.Footer appends it (architect,
-  at the redirect).*
+  at the redirect). Corrected: the convention is slab's (validate).*
 - files: stdin as a cli.Run parameter changes the go-cli-sdk candidate's signature (for the
   evidence-6 record).
 - files: go-core's processtest doesn't fit a CLI (no args or stdin, merged streams), a go-core or
@@ -425,7 +398,7 @@ Door          two-way: the spike repository only, no release
   built instead of wrapping exported production constructors (architect).
 - files: cli gains a help footer hook, and the root's help appends the scenario listing through
   it, as spike-blobfs's did; the missing footer was a cobra feature the dispatcher lacked
-  (architect, rejecting "leave it to list").
+  (architect, rejecting "leave it to list"). *Corrected: the convention is slab's (validate).*
 - files: processtest gains a one-shot runner beside Launch (args, stdin, env in; stdout,
   stderr, exit code out; on Main's build), mirroring lifecycle's Exec beside Run; rejected
   deconstructing it, since nothing in it is fused. The spike's runner is the prototype
@@ -671,6 +644,40 @@ Door          two-way: the spike repository only, no release
   deadline exceeded"); every one names store: and exits 1 (architect).
 - files usage: USAGE.md at the root walks the whole spike with real output (architect asked).
 
+- validate: the evidence-6 record is its own note in the spike's context/, linked from "The
+  answer" and USAGE.md's differences section; rejected a README section (pushes the answer past
+  one screen) and extending USAGE.md (user-facing, partial).
+- validate: evidence 9's second half gets a hermetic test running the go-web-service-shaped
+  graph on Coordinator.Run; evidence 4's signal path gets a black-box SIGINT integration test.
+- validate: the end-to-end run cites existing commands per item; no new mise task.
+- validate: a defect the run finds is fixed in validate when it stays in the spike and leaves
+  cli, graph, and lifecycle's exported API unchanged; otherwise escalated.
+- validate: the answer names the cli API as go-cli-sdk's candidate and internal/app's shape as
+  go-cli-sdk-template's candidate composition root, each with its departures from the plan.
+- validate: the answer recommends promoting graph and lifecycle at the post-validate API; the
+  reshaping came from review rulings, not failures; lifecycle's criteria are restated.
+- validate: rewrites of cli-applications.md's layout, conventions, plan, and the cli summary are
+  left to the intake.
+- validate: dropped the pending edit widening the spike's and composition task's roadmap
+  summaries: the sync deletes that table in the same commit.
+- validate: marathon-architecture 0.3.0 (targets marathon 0.16) applied as-is on marathon 0.18.0.
+- validate: the one-line answer carries no line count; only evidence 7 and 9 are marked "Proven
+  only by tests", and item 1 names root flags, PreRun, and Exclusive as tests-only features.
+- validate: the SIGINT test found that an interrupted `put -` never exited: a read of standard
+  input blocks in the kernel, where the context can't reach it. An unexported `cancelable` pipe in
+  domain/files fails the body's Read once the context ends; no exported API changed.
+- validate: the test running the stage graph on Run lives in lifecycle and restates the graph,
+  because depguard holds graph's tests to the standard library and graph.
+- validate: the cancellation error is ctx.Err(), not context.Cause, so the report wraps
+  context.Canceled.
+- validate: at the standards review, the hermetic put test cancels during the upload and scripts
+  the pending row's abandon; the SIGINT test is bounded by processtest.Failsafe, not 5s (its
+  measured exit is about 0.2s).
+- validate: cobra's Long has no counterpart in cli, recorded as a difference.
+- validate: the development stack's schema was applied to run the scenarios.
+- validate: the files decisions crediting spike-blobfs with the help-plus-scenario listing were
+  wrong: spike-blobfs has no scenarios, and the convention is slab's, as the cobra record states.
+
 ## Pending edits
 
 - architecture · `standards/go-elemental/principles/topology-and-naming.md`: state that the
@@ -680,9 +687,6 @@ Door          two-way: the spike repository only, no release
 - coordinator · `context/roadmap.toml`: add a go-core goal, "go-core: the dependency graph,
   and lifecycle rebuilt as its executor (Coordinator over a System; Add and stages retired)", to
   `planned` ahead of `cli`, citing the spike's answer.
-- coordinator · `context/roadmap.toml`: widen the spike's and the composition task's summaries
-  to the general composition primitive: a dependency graph, a Coordinator over any built
-  subset, and commands that declare what they use.
 - coordinator · `context/cli-applications.md`: every library promotion the experiment
   identifies runs once the experiment completes and before `cli` builds.
 - architecture · a definitions page for the composition ontology (graph, node, system, layer,
@@ -716,3 +720,56 @@ Door          two-way: the spike repository only, no release
   input checks in Validate, and a state change never silent.
 - architecture · `standards/go-elemental/principles/topology-and-naming.md` (with the cmd rule
   above): cmd may import the SDK packages it composes over (go-core, go-cli-sdk).
+- coordinator · `context/cli-applications.md`: under "## Answers · experiment.cli-architecture",
+  replace the placeholder line with this section:
+
+  ```markdown
+  ### Answer · experiment.cli-architecture.spike-cli-architecture
+
+  **Question:** Do a stdlib-`flag` dispatcher with the planned feature set and a per-command
+  dependency initializer hold up in a real CLI over the `blobfs` library, go-storage, and Postgres?
+
+  **Answer:** Yes; a dispatcher on the standard library's `flag` carries spike-blobfs's whole
+  command surface, each command brings up only the graph nodes it declares, and the same
+  Coordinator runs go-web-service's staged graph.
+
+  1. A dispatcher on the standard library's `flag` covers go-cli-sdk's planned feature set. Proven
+     by the running binary; `cli`'s tests alone prove root flags, PreRun, and Exclusive, which
+     blobfs doesn't use.
+  2. A CLI with no cobra or pflag in its module graph reproduces spike-blobfs's whole command
+     surface. Proven by the integration suite's `TestScript` over the built binary, and by
+     `go mod graph`.
+  3. Each command brings up only the graph nodes it declares. Proven by help, version, and a usage
+     error running with the stack down, and by `internal/app`'s build-recording tests.
+  4. Each node comes up once per run and shuts down in reverse, on success, error, and
+     cancellation. Proven by `cli`'s tests and the integration suite, whose `TestAnInterruptedPut`
+     sends SIGINT to the built binary and gets one report.
+  5. A dependency that fails to come up is reported once, and what had started is shut down.
+     Proven by `TestUse_FailuresReportedOnce`,
+     `TestInfrastructureIntegration_StoreUnreachableClosesTheDatabase`, and the integration
+     suite's `TestTheStoreUnreachable`.
+  6. A record lists each cobra convention and feature spike-blobfs used, with what replaced it.
+     Proven by running both binaries' help and exit codes: [the cobra record](https://github.com/JaimeStill/spike-cli-architecture/blob/main/context/cobra-conventions.md).
+  7. The layout's test conventions hold without cobra. Proven only by tests: `internal/app`'s over
+     buffers and `domain/files`'s over `storagetest.Fake`.
+  8. A scenario package declares its nodes like any other command. Proven by both scenarios
+     running twice against the development stack, and by the integration suite's `TestScenarios`.
+  9. The graph expresses go-web-service's stage table, and the CLI and a service run on one
+     Coordinator. Proven only by tests: `TestWebServiceStageOrder` and `TestWebServiceSubsetBuild`
+     (graph) and `TestRunServesAGraphShapedLikeTheWebService` (lifecycle).
+
+  **go-cli-sdk:** the `cli` package's API is the candidate. It adds `Use` with `WithGraph`,
+  `Invocation.Get`, `Validate`, `Footer`, and `Streams`, and departs from the plan three times:
+  requested help exits 2, there is no `help` or `completion` command, and cobra's `Long` has no
+  counterpart.
+
+  **go-cli-sdk-template:** `internal/app`'s shape is the candidate composition root. One exported
+  `Nodes` value describes the graph, configuration is graph nodes, there is no `config.go`,
+  `commands.go`, or central initializer, fixtures live in an internal `apptest` package, and
+  `main` imports `cli` for `cli.Streams`.
+
+  **Promotion:** promote `graph` and `lifecycle` into go-core at the API as validate left it.
+
+  [The answer](https://github.com/JaimeStill/spike-cli-architecture/blob/main/context/README.md#the-answer) ·
+  [spike-cli-architecture](https://github.com/JaimeStill/spike-cli-architecture)
+  ```

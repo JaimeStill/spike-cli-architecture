@@ -86,14 +86,19 @@
 //
 // # Promotion
 //
-// The package is promoted to go-core when:
+// The package's promotion criteria are three, and they stand as follows:
 //
-//   - its API stays unchanged through the spike's files and validate
-//     tasks
-//   - the spike's CLI and a graph shaped like go-web-service's both run on
-//     it
-//   - go-core's Coordinator, rebuilt on it, passes its black-box tests,
-//     adapted only for the break above
+//   - Held: the spike's CLI and a graph shaped like go-web-service's both
+//     run on it. TestRunServesAGraphShapedLikeTheWebService serves the
+//     graph on [Coordinator.Run].
+//   - Did not hold: an API unchanged through the spike's files and
+//     validate tasks. The files review reshaped it by ruling, splitting
+//     participation into the single-method [Starter] and [Stopper], which
+//     [Subsystem] embeds, and removing graph's Scope.OnStart and
+//     Scope.OnShutdown. The validate task left the API unchanged.
+//   - Open: go-core's Coordinator, rebuilt on it, passes its black-box
+//     tests, adapted only for the break above. Only the go-core goal can
+//     run them.
 //
 // Promotion follows the experiment's completion and precedes the build of
 // the cli goal.
