@@ -69,7 +69,7 @@ func newStack(t *testing.T, responses ...sqltest.Response) *stack {
 	s.st = s.g.Define("storage", func(sc *graph.Scope) (*files.Storage, error) {
 		return files.NewStorage(sc.Use(s.svc), sc.Use(store)), nil
 	})
-	s.root = (&cli.Command{Name: "prog"}).Add(scenario.Commands(s.svc, s.st))
+	s.root = (&cli.Command{Name: "prog"}).Add(scenario.Commands(s.svc, s.st)...)
 	return s
 }
 

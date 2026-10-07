@@ -19,10 +19,10 @@ func defineDomain(g *graph.Graph, n *Nodes) {
 	n.Storage = g.Define("storage", newStorage(n))
 }
 
-// mountDomain builds the files domain's commands at the root, each
-// declaring the node it reads.
-func mountDomain(n *Nodes) []*cli.Command {
-	return files.Commands(n.Files, n.Storage)
+// mountDomain mounts the files domain's commands at root, each declaring
+// the node it reads.
+func mountDomain(root *cli.Command, n *Nodes) {
+	root.Add(files.Commands(n.Files, n.Storage)...)
 }
 
 // newFiles constructs the files Service over the sql node, the database's

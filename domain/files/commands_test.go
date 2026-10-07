@@ -138,14 +138,9 @@ func TestCommands_RefuseMalformedInputBeforeAnythingIsBuilt(t *testing.T) {
 		{"a unit that is not a UUID", []string{"mkdir", "/x", "--unit", "nope"}, `--unit "nope" is not a UUID`},
 		{"an id that is not a UUID", []string{"stat", "id:nope"}, "must be a UUID"},
 		{"the root's id", []string{"stat", "id:" + blobfs.RootID}, blobfs.ErrInvalidID.Error()},
-		{"rmdir by id", []string{"rmdir", "id:" + dirID}, "a directory is removed by path, not by id"},
-		{"bookmark add by id", []string{"bookmark", "add", "id:" + fileID, "--unit", unitID}, "a bookmark names its file by path, not by id"},
-		{"bookmark rm by id", []string{"bookmark", "rm", "id:" + fileID, "--unit", unitID}, "a bookmark names its file by path, not by id"},
 		{"mkdir by id", []string{"mkdir", "id:" + dirID}, "a directory is created by path, not by id"},
-		{"a unit's listing by id", []string{"ls", "id:" + dirID, "--unit", unitID}, "a listing by id has no path to derive the unit's scope from"},
 		{"mv from a path to an id", []string{"mv", "/a", "id:" + dirID}, "two paths, or two ids"},
 		{"cp from an id to a path", []string{"cp", "id:" + fileID, "/a"}, "two paths, or two ids"},
-		{"rm --recursive by id", []string{"rm", "--recursive", "id:" + dirID}, "a branch is removed by path, not by id"},
 		{"put - into a directory by id", []string{"put", "-", "id:" + dirID}, "stdin has no name to store under"},
 	}
 	for _, tt := range tests {

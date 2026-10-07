@@ -43,14 +43,18 @@ var directoryVerbs = [][]string{
 	{"ls", "/", "--unit", unitID},
 	{"ls", "/reports", "--unit", unitID},
 	{"ls", "id:" + reportsID},
+	{"ls", "id:" + reportsID, "--unit", unitID},
 	{"stat", "/reports"},
 	{"stat", "id:" + reportsID},
 	{"mv", "/reports", "/archive"},
 	{"mv", "id:" + planID, "id:" + reportsID},
 	{"rmdir", "/reports"},
+	{"rmdir", "id:" + reportsID},
 	{"bookmark", "add", "/reports/plan.txt", "--unit", unitID, "--active"},
+	{"bookmark", "add", "id:" + planID, "--unit", unitID},
 	{"bookmark", "ls", "--unit", unitID},
 	{"bookmark", "rm", "/reports/plan.txt", "--unit", unitID},
+	{"bookmark", "rm", "id:" + planID, "--unit", unitID},
 }
 
 // commandPath returns the path of the command args run, as the dispatcher
@@ -174,6 +178,16 @@ func resolvedRoot() sqltest.Response {
 	}
 }
 
+// ancestors is the Postgres engine's read of a directory's chain of
+// parents, as blobfs computes a path from an id: rows from the directory
+// up, ending below the root, which the read appends.
+func ancestors(rows ...[]driver.Value) sqltest.Response {
+	return sqltest.Response{
+		Columns: []string{"id", "parent_id", "name"},
+		Rows:    append(rows, []driver.Value{blobfs.RootID, nil, "/"}),
+	}
+}
+
 func TestFiles_DirectoryCommandsOverAScriptedDatabase(t *testing.T) {
 	root := directoryRows(directoryRow(blobfs.RootID, nil, "/"))
 	tests := []struct {
@@ -208,6 +222,17 @@ func TestFiles_DirectoryCommandsOverAScriptedDatabase(t *testing.T) {
 				"more: no\n" +
 				"files: 1 on page 1 of size 20, total 1\n" +
 				"more: no\n",
+		},
+		{
+			name: "rmdir by id",
+			args: []string{"rmdir", "id:" + planID},
+			responses: []sqltest.Response{
+				directoryRows(directoryRow(planID, reportsID, "2026")),
+				ancestors([]driver.Value{planID, reportsID, "2026"}, []driver.Value{reportsID, blobfs.RootID, "reports"}),
+				{},
+				{Affected: 1},
+			},
+			want: "rmdir: /reports/2026 (id " + planID + ")\n",
 		},
 		{
 			name:      "stat by id",

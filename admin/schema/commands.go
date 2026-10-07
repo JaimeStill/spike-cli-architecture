@@ -10,15 +10,17 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 )
 
-// Commands builds the schema command with its status, up, down, and reset
-// subcommands over migrator, the composition root's node for the migrator
-// [NewMigrator] builds. The group declares migrator with Use, and every
+// Commands builds the package's command surface over migrator, the
+// composition root's node for the migrator [NewMigrator] builds: the
+// schema command with its status, up, down, and reset subcommands, its one
+// element, returned as a slice as every package's Commands is, so the root
+// mounts each the same way. The group declares migrator with Use, and every
 // subcommand inherits it, so the dispatcher builds and starts the
 // migrator's dependencies before a verb's body runs and shuts them down
 // after; each subcommand is a function of migrator, and its body reads the
 // migrator with the Invocation's Get. Every subcommand takes no arguments.
-func Commands(migrator *graph.Node[*migrate.Migrator]) *cli.Command {
-	return (&cli.Command{
+func Commands(migrator *graph.Node[*migrate.Migrator]) []*cli.Command {
+	return []*cli.Command{(&cli.Command{
 		Name:    "schema",
 		Summary: "Report, apply, revert, and reset the two migration sets",
 	}).Use(migrator).Add(
@@ -26,7 +28,7 @@ func Commands(migrator *graph.Node[*migrate.Migrator]) *cli.Command {
 		up(migrator),
 		down(migrator),
 		reset(migrator),
-	)
+	)}
 }
 
 // status is the status subcommand: one row per set, bottom first, with the

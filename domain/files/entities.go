@@ -11,8 +11,10 @@ import (
 // or a row's id. Exactly one of Path and ID is set; an operation reads ID
 // when it is set and Path otherwise. A path starts with /, so the two
 // forms never collide. Every operation that names an entry takes a Ref,
-// and the operations that take one form alone, or two Refs of one form,
-// refuse any other with a [FormError] before any I/O.
+// and takes either form wherever an id can name the target. The
+// operations that take one form alone, because an id cannot name the
+// target, as a directory's create cannot, or two Refs of one form, refuse
+// any other with a [FormError] before any I/O.
 type Ref struct {
 	Path string
 	ID   string
@@ -185,9 +187,21 @@ type Bookmark struct {
 	UpdatedAt   time.Time     `json:"updated_at"`
 }
 
-// TreeRemoval is what rm --recursive returns: how many files and
-// directories its sweep removed, summed over its passes.
+// Located is the row an operation acted on and the path it was at: the
+// Ref's own path, or, for a Ref by id, the path computed from the row in
+// the operation's own read, so a caller reports a path whichever form
+// named the entry. rmdir returns its directory's row so, and bookmark add
+// and rm their file's.
+type Located[T any] struct {
+	Path string
+	Row  T
+}
+
+// TreeRemoval is what rm --recursive returns: the path of the branch's
+// root, computed from the row for a branch named by id, and how many files
+// and directories its sweep removed, summed over its passes.
 type TreeRemoval struct {
+	Path        string
 	Files       int
 	Directories int
 }

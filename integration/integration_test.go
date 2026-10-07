@@ -556,10 +556,10 @@ func TestScript(t *testing.T) {
 }
 
 // schemaUp is the first step: a listing before the schema fails at the
-// files node's start and names the fix, and schema up then applies both
-// sets.
+// files node's start, in the domain's terms, and schema up then applies
+// both sets.
 func (s *script) schemaUp(t *testing.T) {
-	refused(t, s.tg, "blobfs ls: files: the database does not satisfy the statements; if the schema is not applied, run blobfs schema up", "ls", "/")
+	refused(t, s.tg, "blobfs ls: files: the database does not satisfy the statements: the schema is not applied or does not match them", "ls", "/")
 	refused(t, s.tg, "blobfs mkdir: files: ", "mkdir", "/reports")
 	if out := ok(t, s.tg, "schema", "up"); out != "schema up: both sets at head\n" {
 		t.Errorf("schema up stdout = %q", out)
@@ -833,7 +833,8 @@ func (s *script) ids(t *testing.T) {
 	misused(t, s.tg, "the nil UUID is the root's", "mv", "id:"+blobfs.RootID, "id:"+dstDir)
 }
 
-// removeDirectory removes empty directories and refuses the rest.
+// removeDirectory removes empty directories, by path and by id, and
+// refuses the rest.
 func (s *script) removeDirectory(t *testing.T) {
 	id := ids(ok(t, s.tg, "ls", "/reports"))["2025"]
 	if out := ok(t, s.tg, "rmdir", "/reports/2025"); out != "rmdir: /reports/2025 (id "+id+")\n" {
@@ -844,8 +845,19 @@ func (s *script) removeDirectory(t *testing.T) {
 	refused(t, s.tg, "directory not empty", "rmdir", "/archive")
 	refused(t, s.tg, "the root directory", "rmdir", "/")
 	refused(t, s.tg, "not found", "rmdir", "/reports/missing")
-	ok(t, s.tg, "rmdir", "/archive/old")
-	ok(t, s.tg, "rmdir", "/archive")
+	refused(t, s.tg, "not found", "rmdir", "id:"+blobfs.NewID())
+	misused(t, s.tg, "the nil UUID is the root's", "rmdir", "id:"+blobfs.RootID)
+	archive := ids(ok(t, s.tg, "ls", "/"))["archive"]
+	refused(t, s.tg, "directory not empty", "rmdir", "id:"+archive)
+
+	// By id, the line reports the path the removal resolved.
+	old := ids(ok(t, s.tg, "ls", "/archive"))["old"]
+	if out := ok(t, s.tg, "rmdir", "id:"+old); out != "rmdir: /archive/old (id "+old+")\n" {
+		t.Errorf("rmdir by id stdout = %q", out)
+	}
+	if out := ok(t, s.tg, "rmdir", "id:"+archive); out != "rmdir: /archive (id "+archive+")\n" {
+		t.Errorf("rmdir by id of a top-level directory stdout = %q", out)
+	}
 	if got := names(ok(t, s.tg, "ls", "/")); got != "a c ids reports" {
 		t.Errorf("ls / after the removals = %s", got)
 	}
@@ -994,10 +1006,10 @@ func (s *script) remove(t *testing.T) {
 	refused(t, s.tg, "the root directory", "rm", "/")
 }
 
-// removeTree deletes a branch and prints its totals, finishes a branch
-// whose earlier run the store's outage interrupted, and, through its
-// sweep, a branch another interrupted run left; the root and an id are
-// refused.
+// removeTree deletes a branch, by path and by id, and prints its path and
+// totals, finishes a branch whose earlier run the store's outage
+// interrupted, and, through its sweep, a branch another interrupted run
+// left; the root is refused.
 func (s *script) removeTree(t *testing.T) {
 	for _, p := range []string{"/tree", "/tree/a", "/tree/a/b"} {
 		ok(t, s.tg, "mkdir", p)
@@ -1009,6 +1021,19 @@ func (s *script) removeTree(t *testing.T) {
 		t.Errorf("rm --recursive stdout = %q", out)
 	}
 	refused(t, s.tg, "not found", "ls", "/tree")
+
+	// By id, the line reports the path the delete resolved.
+	ok(t, s.tg, "mkdir", "/tree")
+	ok(t, s.tg, "mkdir", "/tree/a")
+	put(t, s.tg, "/tree/a/y.txt", "y")
+	a := ids(ok(t, s.tg, "ls", "/tree"))["a"]
+	if out := ok(t, s.tg, "rm", "--recursive", "id:"+a); out != "rm --recursive: /tree/a (1 files, 1 directories)\n" {
+		t.Errorf("rm --recursive by id stdout = %q", out)
+	}
+	if got := names(ok(t, s.tg, "ls", "/tree")); got != "" {
+		t.Errorf("ls /tree after rm --recursive by id = %s", got)
+	}
+	ok(t, s.tg, "rmdir", "/tree")
 
 	// An interrupted run: the store refuses every delete past the first
 	// branchDeletes, so the run is refused partway and the branch stays
@@ -1038,7 +1063,8 @@ func (s *script) removeTree(t *testing.T) {
 
 	refused(t, s.tg, "the root directory", "rm", "--recursive", "/")
 	refused(t, s.tg, "not found", "rm", "--recursive", "/missing")
-	misused(t, s.tg, "a branch is removed by path, not by id", "rm", "--recursive", "id:"+ids(ok(t, s.tg, "ls", "/"))["objects"])
+	misused(t, s.tg, "the nil UUID is the root's", "rm", "--recursive", "id:"+blobfs.RootID)
+	refused(t, s.tg, "not found", "rm", "--recursive", "id:"+blobfs.NewID())
 	misused(t, s.tg, "flag provided but not defined: -r", "rm", "-r", "/objects")
 }
 
@@ -1090,7 +1116,20 @@ func (s *script) units(t *testing.T) {
 		t.Errorf("ls / as the unit with a filter nothing matches names = %s", got)
 	}
 	refused(t, s.tg, "the owner listing pages by number only; ls / --unit takes no --after-dirs or --after-files", "ls", "/", "--unit", unit, "--after-dirs", "x")
-	misused(t, s.tg, "a listing by id has no path to derive the unit's scope from", "ls", "id:"+ids(ok(t, s.tg, "ls", "/"))["owned"], "--unit", unit)
+
+	// ls id: --unit: the directory's top-level ancestor is the scope the
+	// path form checks.
+	owned := ids(ok(t, s.tg, "ls", "/"))["owned"]
+	sub := ids(ok(t, s.tg, "ls", "/owned"))["sub"]
+	if got := names(ok(t, s.tg, "ls", "id:"+owned, "--unit", unit)); got != "sub" {
+		t.Errorf("ls /owned by id as the owner names = %s", got)
+	}
+	if got := names(ok(t, s.tg, "ls", "id:"+sub, "--unit", unit)); got != "f.txt" {
+		t.Errorf("ls /owned/sub by id as the owner names = %s", got)
+	}
+	refused(t, s.tg, "the unit does not own the directory", "ls", "id:"+owned, "--unit", other)
+	refused(t, s.tg, "the unit does not own the directory", "ls", "id:"+sub, "--unit", other)
+	refused(t, s.tg, "not found", "ls", "id:"+blobfs.NewID(), "--unit", unit)
 	if got := names(ok(t, s.tg, "ls", "/")); got != "a c ids objects owned reports theirs" {
 		t.Errorf("ls / names = %s", got)
 	}
@@ -1136,11 +1175,15 @@ func (s *script) bookmarks(t *testing.T) {
 	if out := ok(t, s.tg, "bookmark", "add", "/library/x.txt", "--unit", unit, "--active"); out != "bookmark add: /library/x.txt (file "+x+", unit "+unit+", active)\n" {
 		t.Errorf("bookmark add --active stdout = %q", out)
 	}
-	ok(t, s.tg, "bookmark", "add", "/library/x.txt", "--unit", other, "--active")
+	// By id, the line reports the path the add resolved.
+	if out := ok(t, s.tg, "bookmark", "add", "id:"+x, "--unit", other, "--active"); out != "bookmark add: /library/x.txt (file "+x+", unit "+other+", active)\n" {
+		t.Errorf("bookmark add by id stdout = %q", out)
+	}
 	refused(t, s.tg, "the unit has an active bookmark already (constraint uq_bookmark_active)", "bookmark", "add", "/library/y.txt", "--unit", unit, "--active")
 	refused(t, s.tg, "the unit has bookmarked the file already (constraint pk_bookmark)", "bookmark", "add", "/library/deep/z.txt", "--unit", unit)
 	refused(t, s.tg, "not found", "bookmark", "add", "/library/missing.txt", "--unit", unit)
 	refused(t, s.tg, "not found", "bookmark", "add", "/library/deep", "--unit", unit)
+	refused(t, s.tg, "not found", "bookmark", "add", "id:"+blobfs.NewID(), "--unit", unit)
 	misused(t, s.tg, "required flag --unit not set", "bookmark", "add", "/library/y.txt")
 	misused(t, s.tg, `--unit "nope" is not a UUID`, "bookmark", "ls", "--unit", "nope")
 
@@ -1200,7 +1243,9 @@ func (s *script) bookmarks(t *testing.T) {
 	refused(t, s.tg, "the unit has no bookmark of the file", "bookmark", "rm", "/library/x.txt", "--unit", unit)
 	refused(t, s.tg, "not found", "bookmark", "rm", "/library/missing.txt", "--unit", unit)
 	refused(t, s.tg, "1 unit(s) bookmark the file", "rm", "/library/x.txt")
-	ok(t, s.tg, "bookmark", "rm", "/library/x.txt", "--unit", other)
+	if out := ok(t, s.tg, "bookmark", "rm", "id:"+x, "--unit", other); out != "bookmark rm: /library/x.txt (file "+x+", unit "+other+")\n" {
+		t.Errorf("bookmark rm by id stdout = %q", out)
+	}
 	if out := ok(t, s.tg, "rm", "/library/x.txt"); out != "rm: /library/x.txt (id "+x+")\n" {
 		t.Errorf("rm after the bookmarks went stdout = %q", out)
 	}

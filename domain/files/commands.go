@@ -32,7 +32,7 @@ import (
 //
 // Each command counts its arguments in Args and checks them and its flags
 // in Validate, the domain's form rules included, so a malformed
-// path-or-id, an id where a path is needed, a unit, a filter, a sort term,
+// path-or-id, an id where no id can name the target, a unit, a filter, a sort term,
 // or a total mode is a usage error before anything is built; each bookmark
 // subcommand requires --unit, so a run without it is a usage error too.
 func Commands(svc *graph.Node[*Service], st *graph.Node[*Storage]) []*cli.Command {
@@ -96,8 +96,8 @@ func mkdir(svc *graph.Node[*Service]) *cli.Command {
 // ls is ls <path|id:<uuid>>: the directories under the directory first,
 // then its files, each one page, with a line per half stating the page and
 // the total, and the cursor lines only under --cursors. With --unit the
-// unit must own the path's top-level directory, and ls / lists the unit's
-// own top-level directories; a listing by id takes no unit.
+// unit must own the directory's top-level ancestor, whether the path or
+// the id names it, and ls / lists the unit's own top-level directories.
 func ls(svc *graph.Node[*Service]) *cli.Command {
 	var f listingFlags
 	var ref Ref
@@ -112,10 +112,8 @@ func ls(svc *graph.Node[*Service]) *cli.Command {
 			if ref, err = parseRef(inv.Args[0]); err != nil {
 				return err
 			}
-			if l, err = f.listing(); err != nil {
-				return err
-			}
-			return checkList(ref, l)
+			l, err = f.listing()
+			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
 			c, err := inv.Get(svc).List(ctx, ref, l)
@@ -187,28 +185,27 @@ func mv(svc *graph.Node[*Service]) *cli.Command {
 	}).Use(svc)
 }
 
-// rmdir is rmdir <path>: an empty directory removed. A directory that
-// still has contents is refused, and so is the root.
+// rmdir is rmdir <path|id:<uuid>>: an empty directory removed, reported
+// at its path, which for an id is the path the removal resolved. A
+// directory that still has contents is refused, and so is the root.
 func rmdir(svc *graph.Node[*Service]) *cli.Command {
 	var ref Ref
 	return (&cli.Command{
 		Name:     "rmdir",
 		Summary:  "Remove an empty directory",
-		Synopsis: "<path>",
+		Synopsis: "<path|id:<uuid>>",
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if ref, err = parseRef(inv.Args[0]); err != nil {
-				return err
-			}
-			return checkRemoveDirectory(ref)
+			ref, err = parseRef(inv.Args[0])
+			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
 			dir, err := inv.Get(svc).RemoveDirectory(ctx, ref)
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(inv.Stdout, "rmdir: %s (id %s)\n", ref.Path, dir.ID)
+			_, err = fmt.Fprintf(inv.Stdout, "rmdir: %s (id %s)\n", dir.Path, dir.Row.ID)
 			return err
 		},
 	}).Use(svc)
@@ -223,21 +220,22 @@ func bookmark(svc *graph.Node[*Service]) *cli.Command {
 	}).Add(bookmarkAdd(svc), bookmarkLs(svc), bookmarkRm(svc)).Use(svc)
 }
 
-// bookmarkAdd is bookmark add <path> --unit <uuid> [--active]: the unit's
-// bookmark of the file at the path, active when asked, and refused while
-// another bookmark of the unit is active.
+// bookmarkAdd is bookmark add <path|id:<uuid>> --unit <uuid> [--active]:
+// the unit's bookmark of the file, active when asked, and refused while
+// another bookmark of the unit is active. It reports the file at its
+// path, which for an id is the path the add resolved.
 func bookmarkAdd(svc *graph.Node[*Service]) *cli.Command {
 	var unit string
 	var active bool
 	var ref Ref
 	cmd := &cli.Command{
 		Name:     "add",
-		Summary:  "Bookmark the file at a path for a unit; --active makes it the unit's one active bookmark",
-		Synopsis: "<path>",
+		Summary:  "Bookmark a file for a unit; --active makes it the unit's one active bookmark",
+		Synopsis: "<path|id:<uuid>>",
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if ref, err = parseBookmarkRef(inv.Args[0]); err != nil {
+			if ref, err = parseRef(inv.Args[0]); err != nil {
 				return err
 			}
 			unit, err = parseUnit(unit)
@@ -252,7 +250,7 @@ func bookmarkAdd(svc *graph.Node[*Service]) *cli.Command {
 			if active {
 				state = "active"
 			}
-			_, err = fmt.Fprintf(inv.Stdout, "bookmark add: %s (file %s, unit %s, %s)\n", ref.Path, f.ID, unit, state)
+			_, err = fmt.Fprintf(inv.Stdout, "bookmark add: %s (file %s, unit %s, %s)\n", f.Path, f.Row.ID, unit, state)
 			return err
 		},
 	}
@@ -295,19 +293,20 @@ func bookmarkLs(svc *graph.Node[*Service]) *cli.Command {
 	return cmd
 }
 
-// bookmarkRm is bookmark rm <path> --unit <uuid>: the unit's bookmark of
-// the file at the path removed, active or not.
+// bookmarkRm is bookmark rm <path|id:<uuid>> --unit <uuid>: the unit's
+// bookmark of the file removed, active or not, and the file reported at
+// its path, which for an id is the path the removal resolved.
 func bookmarkRm(svc *graph.Node[*Service]) *cli.Command {
 	var unit string
 	var ref Ref
 	cmd := &cli.Command{
 		Name:     "rm",
-		Summary:  "Remove a unit's bookmark of the file at a path, active or not",
-		Synopsis: "<path>",
+		Summary:  "Remove a unit's bookmark of a file, active or not",
+		Synopsis: "<path|id:<uuid>>",
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if ref, err = parseBookmarkRef(inv.Args[0]); err != nil {
+			if ref, err = parseRef(inv.Args[0]); err != nil {
 				return err
 			}
 			unit, err = parseUnit(unit)
@@ -318,7 +317,7 @@ func bookmarkRm(svc *graph.Node[*Service]) *cli.Command {
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(inv.Stdout, "bookmark rm: %s (file %s, unit %s)\n", ref.Path, f.ID, unit)
+			_, err = fmt.Fprintf(inv.Stdout, "bookmark rm: %s (file %s, unit %s)\n", f.Path, f.Row.ID, unit)
 			return err
 		},
 	}
@@ -435,9 +434,10 @@ func cp(st *graph.Node[*Storage]) *cli.Command {
 	}).Use(st)
 }
 
-// rm is rm <path|id:<uuid>>, a file deleted, and rm --recursive <path>, a
-// directory and everything beneath it deleted, reported as the totals its
-// sweep removed. There is no -r shorthand.
+// rm is rm <path|id:<uuid>>, a file deleted, and rm --recursive
+// <path|id:<uuid>>, a directory and everything beneath it deleted,
+// reported at the branch's path, which for an id is the path the delete
+// resolved, with the totals its sweep removed. There is no -r shorthand.
 func rm(st *graph.Node[*Storage]) *cli.Command {
 	var recursive bool
 	var ref Ref
@@ -448,13 +448,8 @@ func rm(st *graph.Node[*Storage]) *cli.Command {
 		Args:     cli.ExactArgs(1),
 		Validate: func(inv *cli.Invocation) error {
 			var err error
-			if ref, err = parseRef(inv.Args[0]); err != nil {
-				return err
-			}
-			if recursive {
-				return checkRemoveTree(ref)
-			}
-			return nil
+			ref, err = parseRef(inv.Args[0])
+			return err
 		},
 		Run: func(ctx context.Context, inv *cli.Invocation) error {
 			s := inv.Get(st)
@@ -466,7 +461,7 @@ func rm(st *graph.Node[*Storage]) *cli.Command {
 				if err != nil {
 					return err
 				}
-				_, err = fmt.Fprintf(inv.Stdout, "rm --recursive: %s (%d files, %d directories)\n", ref.Path, res.Files, res.Directories)
+				_, err = fmt.Fprintf(inv.Stdout, "rm --recursive: %s (%d files, %d directories)\n", res.Path, res.Files, res.Directories)
 				return err
 			}
 			f, err := s.Remove(ctx, ref)
@@ -480,7 +475,7 @@ func rm(st *graph.Node[*Storage]) *cli.Command {
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&recursive, "recursive", false, "delete the directory at the path and everything beneath it")
+	cmd.Flags().BoolVar(&recursive, "recursive", false, "delete the directory the argument names and everything beneath it")
 	return cmd.Use(st)
 }
 
@@ -552,16 +547,6 @@ func parsePair(args []string) (Ref, Ref, error) {
 	return src, dst, checkPair(src, dst)
 }
 
-// parseBookmarkRef reads the file argument of bookmark add or rm, and runs
-// the domain's rule that a bookmark names its file by path.
-func parseBookmarkRef(arg string) (Ref, error) {
-	ref, err := parseRef(arg)
-	if err != nil {
-		return Ref{}, err
-	}
-	return ref, checkBookmark(ref)
-}
-
 // pageFlags is the flag set every paged listing takes: the page and its
 // size, the repeatable sort term, and the total mode. bookmark ls takes it
 // alone.
@@ -622,7 +607,7 @@ func (f *listingFlags) bind(cmd *cli.Command) {
 	fs.StringVar(&f.afterDirs, "after-dirs", "", "continue the directory half after this cursor, from an earlier next-dirs: line")
 	fs.StringVar(&f.afterFiles, "after-files", "", "continue the file half after this cursor, from an earlier next-files: line")
 	fs.BoolVar(&f.cursors, "cursors", false, "print the next-dirs: and next-files: lines with the cursors that continue each half")
-	fs.StringVar(&f.unit, "unit", "", "list as the unit with this id, a UUID; it must own the path's top-level directory, and at / the listing is its own")
+	fs.StringVar(&f.unit, "unit", "", "list as the unit with this id, a UUID; it must own the directory's top-level ancestor, and at / the listing is its own")
 }
 
 // listing builds the Listing the flags state, validating the unit and the

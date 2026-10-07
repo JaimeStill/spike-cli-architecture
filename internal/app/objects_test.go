@@ -37,6 +37,7 @@ var objectVerbs = [][]string{
 	{"rm", "/a.txt"},
 	{"rm", "id:" + planID},
 	{"rm", "--recursive", "/reports"},
+	{"rm", "--recursive", "id:" + reportsID},
 }
 
 func TestObjects_CommandsBuildTheDatabaseAndTheStore(t *testing.T) {
@@ -122,6 +123,39 @@ func TestObjects_PutDashReadsTheInvocationsStdin(t *testing.T) {
 	}
 }
 
+func TestObjects_RmRecursiveByIDReportsTheBranchsPath(t *testing.T) {
+	// /reports/2026 by its id, an empty directory: the row and its path,
+	// the mark and the bookmark count, and the sweep's one pass.
+	const yearID = "00000000-0000-7000-8000-000000000005"
+	var out, errOut bytes.Buffer
+	deleting := []driver.Value{yearID, reportsID, "2026", "deleting", int64(2), stamp, stamp}
+	rec, run, _ := objectApp(t, storagetest.NewFake(), strings.NewReader(""), &out, &errOut,
+		directoryRows(directoryRow(yearID, reportsID, "2026")),
+		ancestors([]driver.Value{yearID, reportsID, "2026"}, []driver.Value{reportsID, blobfs.RootID, "reports"}),
+		sqltest.Response{}, // the tree lock
+		sqltest.Response{Affected: 1},
+		sqltest.Response{},
+		sqltest.Response{Columns: []string{"n"}, Rows: [][]driver.Value{{int64(0)}}},
+		directoryRows(deleting),
+		sqltest.Response{Columns: fileColumns},
+		directoryRows(),
+		sqltest.Response{},
+		sqltest.Response{Affected: 1},
+	)
+
+	code := run("rm", "--recursive", "id:"+yearID)
+
+	if code != process.ExitOK {
+		t.Fatalf("code = %d, want %d; stderr = %q", code, process.ExitOK, errOut.String())
+	}
+	if want := "rm --recursive: /reports/2026 (0 files, 1 directories)\n"; out.String() != want {
+		t.Errorf("stdout = %q, want %q", out.String(), want)
+	}
+	if n := rec.Pending(); n != 0 {
+		t.Errorf("%d scripted responses unconsumed", n)
+	}
+}
+
 func TestObjects_AnUnreachableStoreFailsOnceNamingTheStore(t *testing.T) {
 	for _, args := range objectVerbs {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -165,7 +199,6 @@ func TestObjects_UsageErrorsBuildNothing(t *testing.T) {
 		want string
 	}{
 		{"put - into a directory id", []string{"put", "-", "id:" + reportsID}, "stdin has no name to store under"},
-		{"rm --recursive by id", []string{"rm", "--recursive", "id:" + reportsID}, "a branch is removed by path, not by id"},
 		{"rm -r", []string{"rm", "-r", "/reports"}, "flag provided but not defined: -r"},
 		{"cp a path and an id", []string{"cp", "/a.txt", "id:" + reportsID}, "two paths, or two ids"},
 		{"cat with no argument", []string{"cat"}, "accepts 1 argument, got 0"},

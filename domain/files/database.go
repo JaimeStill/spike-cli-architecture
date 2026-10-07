@@ -284,6 +284,30 @@ func (s *store) file(ctx context.Context, sess sqlate.Session, ref Ref) (blobfs.
 	return s.blobfs.Files.FindByName(ctx, sess, dir.ID, name)
 }
 
+// directoryPath returns the path of the directory ref names, whose row is
+// dir, through sess: ref's own path, or for a Ref by id the path blobfs
+// computes from the row.
+func (s *store) directoryPath(ctx context.Context, sess sqlate.Session, ref Ref, dir blobfs.Directory) (string, error) {
+	if ref.ID == "" {
+		return ref.Path, nil
+	}
+	return s.blobfs.Directories.Path(ctx, sess, dir.ID)
+}
+
+// filePath returns the path of the file ref names, whose row is f, through
+// sess: ref's own path, or for a Ref by id its directory's path, which
+// blobfs computes, and its name.
+func (s *store) filePath(ctx context.Context, sess sqlate.Session, ref Ref, f blobfs.File) (string, error) {
+	if ref.ID == "" {
+		return ref.Path, nil
+	}
+	dir, err := s.blobfs.Directories.Path(ctx, sess, f.DirectoryID)
+	if err != nil {
+		return "", err
+	}
+	return join(dir, f.Name), nil
+}
+
 // destination reads the destination path of a move or a copy through
 // sess: the directory the source goes into, that directory's path, and
 // the name the source takes there. dst names an existing directory, in

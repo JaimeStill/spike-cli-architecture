@@ -7,12 +7,12 @@ import (
 	"github.com/JaimeStill/spike-cli-architecture/scenario"
 )
 
-// mountScenario builds the scenarios' commands at the root over the files
-// and storage nodes: the scenario parent, in which each scenario's leaf
+// mountScenario mounts the scenarios' commands at root over the files and
+// storage nodes: the scenario parent, in which each scenario's leaf
 // declares the nodes its tour reads, so the dispatcher builds only those
 // when it runs.
-func mountScenario(n *Nodes) []*cli.Command {
-	return []*cli.Command{scenario.Commands(n.Files, n.Storage)}
+func mountScenario(root *cli.Command, n *Nodes) {
+	root.Add(scenario.Commands(n.Files, n.Storage)...)
 }
 
 // scenarioFooter returns the root's help footer: the scenario listing the

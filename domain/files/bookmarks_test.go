@@ -39,7 +39,7 @@ func TestAddBookmark_ResolvesHoldsAndInsertsInOneTransaction(t *testing.T) {
 
 	f, err := s.AddBookmark(context.Background(), files.Ref{Path: "/reports/a.txt"}, unitID, true)
 
-	if err != nil || f.ID != fileID {
+	if err != nil || f.Row.ID != fileID || f.Path != "/reports/a.txt" {
 		t.Fatalf("AddBookmark() = %+v, %v", f, err)
 	}
 	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpExec, sqltest.OpCommit}
@@ -49,6 +49,32 @@ func TestAddBookmark_ResolvesHoldsAndInsertsInOneTransaction(t *testing.T) {
 	insert := rec.Calls()[len(rec.Calls())-2]
 	if !strings.HasPrefix(insert.SQL, "INSERT INTO bookmark") || !slices.Equal(insert.Args, []any{unitID, fileID, true}) {
 		t.Errorf("the insert ran %q with %v, want the unit, the file, and active", insert.SQL, insert.Args)
+	}
+}
+
+func TestAddBookmark_ByIDReadsTheFileAndItsPathBeforeTheHold(t *testing.T) {
+	s, rec := open(t,
+		fileRows(fileRow(fileID, dirID, "a.txt", 3)),
+		ancestors([]driver.Value{dirID, blobfs.RootID, "reports"}),
+		held(fileID),
+		sqltest.Response{Affected: 1},
+	)
+
+	f, err := s.AddBookmark(context.Background(), files.Ref{ID: fileID}, unitID, false)
+
+	if err != nil || f.Row.ID != fileID || f.Path != "/reports/a.txt" {
+		t.Fatalf("AddBookmark() = %+v, %v, want the file at /reports/a.txt", f, err)
+	}
+	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpExec, sqltest.OpCommit}
+	if got := nonPrepares(rec); !slices.Equal(got, want) {
+		t.Errorf("ops = %v, want %v: the file, its path, the hold, and the insert in one transaction", got, want)
+	}
+	if find := rec.Calls()[1]; !strings.Contains(find.SQL, "blobfs_file") || !slices.Contains(find.Args, any(fileID)) {
+		t.Errorf("the file's read bound %v, want its id", find.Args)
+	}
+	insert := rec.Calls()[len(rec.Calls())-2]
+	if !strings.HasPrefix(insert.SQL, "INSERT INTO bookmark") || !slices.Equal(insert.Args, []any{unitID, fileID, false}) {
+		t.Errorf("the insert ran %q with %v, want the unit, the file, and inactive", insert.SQL, insert.Args)
 	}
 }
 
@@ -87,15 +113,17 @@ func TestAddBookmark_MapsTheBookmarkTablesConstraints(t *testing.T) {
 }
 
 func TestAddBookmark_TheRootIsRefusedBeforeAnyIO(t *testing.T) {
-	s, rec := open(t)
+	for _, ref := range []files.Ref{{Path: "/"}, {ID: blobfs.RootID}} {
+		s, rec := open(t)
 
-	_, err := s.AddBookmark(context.Background(), files.Ref{Path: "/"}, unitID, false)
+		_, err := s.AddBookmark(context.Background(), ref, unitID, false)
 
-	if !errors.Is(err, blobfs.ErrRootDirectory) {
-		t.Errorf("AddBookmark(/) = %v, want ErrRootDirectory", err)
-	}
-	if len(rec.Calls()) != 0 {
-		t.Errorf("calls = %v, want none", rec.Ops())
+		if !errors.Is(err, blobfs.ErrRootDirectory) {
+			t.Errorf("AddBookmark(%+v) = %v, want ErrRootDirectory", ref, err)
+		}
+		if len(rec.Calls()) != 0 {
+			t.Errorf("AddBookmark(%+v) calls = %v, want none", ref, rec.Ops())
+		}
 	}
 }
 
@@ -104,12 +132,33 @@ func TestRemoveBookmark_DeletesByTheUnitAndTheFile(t *testing.T) {
 
 	f, err := s.RemoveBookmark(context.Background(), files.Ref{Path: "/reports/a.txt"}, unitID)
 
-	if err != nil || f.ID != fileID {
+	if err != nil || f.Row.ID != fileID || f.Path != "/reports/a.txt" {
 		t.Fatalf("RemoveBookmark() = %+v, %v", f, err)
 	}
 	del := rec.Calls()[len(rec.Calls())-1]
 	if !strings.HasPrefix(del.SQL, "DELETE FROM bookmark") || !slices.Equal(del.Args, []any{unitID, fileID}) {
 		t.Errorf("the delete ran %q with %v, want the unit and the file", del.SQL, del.Args)
+	}
+}
+
+func TestRemoveBookmark_ByIDReadsTheFileAndItsPath(t *testing.T) {
+	s, rec := open(t,
+		fileRows(fileRow(fileID, dirID, "a.txt", 3)),
+		ancestors([]driver.Value{dirID, blobfs.RootID, "reports"}),
+		sqltest.Response{Affected: 1},
+	)
+
+	f, err := s.RemoveBookmark(context.Background(), files.Ref{ID: fileID}, unitID)
+
+	if err != nil || f.Row.ID != fileID || f.Path != "/reports/a.txt" {
+		t.Fatalf("RemoveBookmark() = %+v, %v, want the file at /reports/a.txt", f, err)
+	}
+	del := rec.Calls()[len(rec.Calls())-1]
+	if !strings.HasPrefix(del.SQL, "DELETE FROM bookmark") || !slices.Equal(del.Args, []any{unitID, fileID}) {
+		t.Errorf("the delete ran %q with %v, want the unit and the file", del.SQL, del.Args)
+	}
+	if n := rec.Pending(); n != 0 {
+		t.Errorf("%d scripted responses unconsumed", n)
 	}
 }
 

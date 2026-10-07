@@ -81,6 +81,37 @@ func TestBookmarks_CommandsOverAScriptedDatabase(t *testing.T) {
 			want:      "bookmark add: /reports/plan.txt (file " + planID + ", unit " + unitID + ", active)\n",
 		},
 		{
+			name: "bookmark add by id",
+			args: []string{"bookmark", "add", "id:" + planID, "--unit", unitID},
+			responses: []sqltest.Response{
+				planRows(),
+				ancestors([]driver.Value{reportsID, blobfs.RootID, "reports"}),
+				held,
+				{Affected: 1},
+			},
+			want: "bookmark add: /reports/plan.txt (file " + planID + ", unit " + unitID + ", inactive)\n",
+		},
+		{
+			name: "ls by id --unit",
+			args: []string{"ls", "id:" + reportsID, "--unit", unitID},
+			responses: []sqltest.Response{
+				directoryRows(directoryRow(reportsID, blobfs.RootID, "reports")),
+				ancestors([]driver.Value{reportsID, blobfs.RootID, "reports"}),
+				{Columns: []string{"n"}, Rows: [][]driver.Value{{int64(1)}}},
+				sqltest.WithTotal(directoryRows(), 0),
+				directoryRows(directoryRow(reportsID, blobfs.RootID, "reports")),
+				sqltest.WithTotal(planRows(), 1),
+				directoryRows(directoryRow(reportsID, blobfs.RootID, "reports")),
+			},
+			want: "" +
+				"KIND  NAME      SIZE  STATUS     UPDATED              ID\n" +
+				"file  plan.txt  12    available  2026-10-06 12:00:00  " + planID + "\n" +
+				"directories: 0 on page 1 of size 20, total 0\n" +
+				"more: no\n" +
+				"files: 1 on page 1 of size 20, total 1\n" +
+				"more: no\n",
+		},
+		{
 			name: "bookmark ls",
 			args: []string{"bookmark", "ls", "--unit", unitID},
 			responses: []sqltest.Response{sqltest.WithTotal(sqltest.Response{
@@ -97,6 +128,12 @@ func TestBookmarks_CommandsOverAScriptedDatabase(t *testing.T) {
 			name:      "bookmark rm",
 			args:      []string{"bookmark", "rm", "/reports/plan.txt", "--unit", unitID},
 			responses: []sqltest.Response{resolved(reportsID, "reports"), planRows(), {Affected: 1}},
+			want:      "bookmark rm: /reports/plan.txt (file " + planID + ", unit " + unitID + ")\n",
+		},
+		{
+			name:      "bookmark rm by id",
+			args:      []string{"bookmark", "rm", "id:" + planID, "--unit", unitID},
+			responses: []sqltest.Response{planRows(), ancestors([]driver.Value{reportsID, blobfs.RootID, "reports"}), {Affected: 1}},
 			want:      "bookmark rm: /reports/plan.txt (file " + planID + ", unit " + unitID + ")\n",
 		},
 	}
@@ -154,7 +191,6 @@ func TestBookmarks_AMissingOrMalformedUnitIsAUsageErrorThatBuildsNothing(t *test
 		{"bookmark ls with a malformed sort", []string{"bookmark", "ls", "--unit", unitID, "--sort", "path:up"}, "the direction is asc or desc"},
 		{"mkdir with a malformed unit", []string{"mkdir", "/reports", "--unit", "nope"}, `--unit "nope" is not a UUID`},
 		{"ls with a malformed unit", []string{"ls", "/", "--unit", "nope"}, `--unit "nope" is not a UUID`},
-		{"ls by id with a unit", []string{"ls", "id:" + reportsID, "--unit", unitID}, "a listing by id has no path to derive the unit's scope from"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

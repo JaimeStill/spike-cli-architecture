@@ -243,5 +243,5 @@ func removeDirectories(ctx context.Context, s *files.Service, r *Reporter, path 
 	if err != nil {
 		return err
 	}
-	return r.showf("rmdir: %s (id %s)\n", path, dir.ID)
+	return r.showf("rmdir: %s (id %s)\n", path, dir.Row.ID)
 }

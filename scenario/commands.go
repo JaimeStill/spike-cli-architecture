@@ -20,12 +20,14 @@ func scenarios(svc *graph.Node[*files.Service], st *graph.Node[*files.Storage]) 
 	}
 }
 
-// Commands builds the scenario parent over the composition root's files
-// and storage nodes, with one leaf per scenario, each declaring its own
-// nodes with Use; the parent declares none, so a tour brings up only what
-// it declares. Run alone, the parent prints its help, which ends with the
-// listing [WriteListing] writes.
-func Commands(svc *graph.Node[*files.Service], st *graph.Node[*files.Storage]) *cli.Command {
+// Commands builds the package's command surface over the composition
+// root's files and storage nodes: the scenario parent, its one element,
+// returned as a slice as every package's Commands is, so the root mounts
+// each the same way. The parent has one leaf per scenario, each declaring
+// its own nodes with Use; the parent declares none, so a tour brings up
+// only what it declares. Run alone, the parent prints its help, which ends
+// with the listing [WriteListing] writes.
+func Commands(svc *graph.Node[*files.Service], st *graph.Node[*files.Storage]) []*cli.Command {
 	parent := &cli.Command{
 		Name:    "scenario",
 		Summary: "Run a narrated scenario over the commands",
@@ -34,7 +36,7 @@ func Commands(svc *graph.Node[*files.Service], st *graph.Node[*files.Storage]) *
 	for _, s := range scenarios(svc, st) {
 		parent.Add(command(s))
 	}
-	return parent
+	return []*cli.Command{parent}
 }
 
 // WriteListing writes the scenario listing over the files and storage

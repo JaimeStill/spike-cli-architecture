@@ -16,7 +16,8 @@
 //
 // The group's boundary with the composition root is one graph node: the
 // root defines the node that constructs the migrator over its database and
-// passes it to [Commands]. The group declares that node with Use, so the
+// passes it to [Commands], whose slice it mounts as it mounts every
+// package's. The group declares that node with Use, so the
 // dispatcher builds and starts the database before a verb's body runs and
 // shuts it down after, and each body reads the migrator with the
 // Invocation's Get. This package never reads configuration, names a
@@ -24,8 +25,9 @@
 //
 // The package exports:
 //
-//   - [Commands], which builds the schema command and its subcommands over
-//     the migrator's node
+//   - [Commands], which builds the package's command surface over the
+//     migrator's node, the schema command and its subcommands, as a slice
+//     the root mounts with root.Add(schema.Commands(...)...)
 //   - [NewMigrator], which builds the migrator over a database
 //   - [Down], which reverts every set, the app's first, and keeps the
 //     history tables

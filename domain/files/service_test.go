@@ -120,8 +120,8 @@ func TestStart_AnUnappliedSchemaIsErrVerify(t *testing.T) {
 	if !errors.Is(err, files.ErrVerify) {
 		t.Fatalf("Start() = %v, want ErrVerify", err)
 	}
-	if !strings.Contains(err.Error(), "run blobfs schema up") || !strings.Contains(err.Error(), "does not exist") {
-		t.Errorf("Start() = %q, want the fix and the cause", err)
+	if msg := err.Error(); !strings.Contains(msg, "the schema is not applied") || !strings.Contains(msg, "does not exist") || strings.Contains(msg, "blobfs schema") {
+		t.Errorf("Start() = %q, want the domain's wording, no command, and the cause", err)
 	}
 }
 
@@ -409,15 +409,17 @@ func TestMkdir_AMissingParentIsNotFound(t *testing.T) {
 }
 
 func TestRemoveDirectory_TheRootIsRefusedBeforeAnyIO(t *testing.T) {
-	s, rec := open(t)
+	for _, ref := range []files.Ref{{Path: "/"}, {ID: blobfs.RootID}} {
+		s, rec := open(t)
 
-	_, err := s.RemoveDirectory(context.Background(), files.Ref{Path: "/"})
+		_, err := s.RemoveDirectory(context.Background(), ref)
 
-	if !errors.Is(err, blobfs.ErrRootDirectory) {
-		t.Errorf("RemoveDirectory(/) = %v, want ErrRootDirectory", err)
-	}
-	if len(rec.Calls()) != 0 {
-		t.Errorf("calls = %v, want none", rec.Ops())
+		if !errors.Is(err, blobfs.ErrRootDirectory) {
+			t.Errorf("RemoveDirectory(%+v) = %v, want ErrRootDirectory", ref, err)
+		}
+		if len(rec.Calls()) != 0 {
+			t.Errorf("RemoveDirectory(%+v) calls = %v, want none", ref, rec.Ops())
+		}
 	}
 }
 
@@ -515,9 +517,9 @@ func ancestors(rows ...[]driver.Value) sqltest.Response {
 }
 
 func TestFormRules_RefuseBeforeAnyIO(t *testing.T) {
-	// Each operation that takes one form alone, or two Refs of one form,
-	// refuses any other with a FormError before it reaches the database
-	// or the object store.
+	// Each operation that takes one form alone, because an id cannot name
+	// its target, or two Refs of one form, refuses any other with a
+	// FormError before it reaches the database or the object store.
 	byID, byPath := files.Ref{ID: dirID}, files.Ref{Path: "/reports"}
 	tests := []struct {
 		name string
@@ -528,22 +530,6 @@ func TestFormRules_RefuseBeforeAnyIO(t *testing.T) {
 			_, err := s.Mkdir(context.Background(), byID, "")
 			return err
 		}, "a directory is created by path, not by id"},
-		{"rmdir by id", func(s *files.Service, _ *files.Storage) error {
-			_, err := s.RemoveDirectory(context.Background(), byID)
-			return err
-		}, "a directory is removed by path, not by id"},
-		{"a bookmark's add by id", func(s *files.Service, _ *files.Storage) error {
-			_, err := s.AddBookmark(context.Background(), files.Ref{ID: fileID}, unitID, false)
-			return err
-		}, "a bookmark names its file by path, not by id"},
-		{"a bookmark's removal by id", func(s *files.Service, _ *files.Storage) error {
-			_, err := s.RemoveBookmark(context.Background(), files.Ref{ID: fileID}, unitID)
-			return err
-		}, "a bookmark names its file by path, not by id"},
-		{"a unit's listing by id", func(s *files.Service, _ *files.Storage) error {
-			_, err := s.List(context.Background(), byID, files.Listing{Page: 1, Size: 20, Unit: unitID})
-			return err
-		}, "a listing by id has no path to derive the unit's scope from"},
 		{"a move from a path to an id", func(s *files.Service, _ *files.Storage) error {
 			_, err := s.Move(context.Background(), byPath, byID)
 			return err
@@ -556,10 +542,6 @@ func TestFormRules_RefuseBeforeAnyIO(t *testing.T) {
 			_, err := o.Copy(context.Background(), byID, byPath)
 			return err
 		}, "two paths, or two ids"},
-		{"a branch's delete by id", func(_ *files.Service, o *files.Storage) error {
-			_, err := o.RemoveTree(context.Background(), byID)
-			return err
-		}, "a branch is removed by path, not by id"},
 		{"a put into a directory by id with no name", func(_ *files.Service, o *files.Storage) error {
 			_, err := o.Put(context.Background(), byID, files.Content{Body: strings.NewReader("x")})
 			return err

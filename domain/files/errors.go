@@ -5,12 +5,14 @@ import "errors"
 // The sentinels the domain adds to blobfs's. A refusal matches one of
 // these or one of blobfs's own, so a caller classifies it with errors.Is.
 var (
-	// ErrVerify reports a database blobfs's statements do not prepare
-	// against. The usual cause is a schema that is not applied, so the
-	// message says which command applies it. It carries no "files:" prefix
-	// because it is reported as the files node's start error, which the
-	// lifecycle labels with the node's name.
-	ErrVerify = errors.New("the database does not satisfy the statements; if the schema is not applied, run blobfs schema up")
+	// ErrVerify reports a database blobfs's statements, or the domain's,
+	// do not prepare against: the schema is not applied, or no longer
+	// matches the statements. It is worded in the domain's terms and names
+	// no command; the root help's schema group is where a reader finds the
+	// fix. The failure wraps it with the causes. It carries no "files:"
+	// prefix because it is reported as the files node's start error, which
+	// the lifecycle labels with the node's name.
+	ErrVerify = errors.New("the database does not satisfy the statements: the schema is not applied or does not match them")
 
 	// ErrMoveAcrossScopes reports a move whose source and destination lie
 	// under different top-level directories, or one of them at the top
@@ -70,9 +72,10 @@ var (
 )
 
 // FormError reports Refs in a form an operation does not take: an id where
-// it takes a path alone, as a branch's delete, a directory's create, and a
-// unit's listing do, or a path and an id where it takes two Refs of one
-// form, as a move and a copy do. The operation refuses it before any I/O,
+// no id can name the target, as for a directory's create, whose directory
+// has no id yet, or a put into a directory by id with no name for the
+// file, or a path and an id where it takes two Refs of one form, as a move
+// and a copy do. The operation refuses it before any I/O,
 // from the request alone, so a caller may run the same check before it
 // builds anything; a command reports it as a usage error.
 type FormError struct {

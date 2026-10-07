@@ -15,10 +15,10 @@ func defineAdmin(g *graph.Graph, n *Nodes) {
 	n.Migrator = g.Define("migrator", newMigrator(n))
 }
 
-// mountAdmin builds the administration commands at the root: the schema
-// group over the migrator node.
-func mountAdmin(n *Nodes) []*cli.Command {
-	return []*cli.Command{schema.Commands(n.Migrator)}
+// mountAdmin mounts the administration commands at root: the schema group
+// over the migrator node.
+func mountAdmin(root *cli.Command, n *Nodes) {
+	root.Add(schema.Commands(n.Migrator)...)
 }
 
 // newMigrator constructs the schema migrator over the sql node, the

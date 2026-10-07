@@ -42,9 +42,9 @@ func New(streams cli.Streams) *App {
 	defineAdmin(a.graph, &a.nodes)
 	defineDomain(a.graph, &a.nodes)
 	a.root.Add(versionCommand())
-	a.root.Add(mountAdmin(&a.nodes)...)
-	a.root.Add(mountDomain(&a.nodes)...)
-	a.root.Add(mountScenario(&a.nodes)...)
+	mountAdmin(a.root, &a.nodes)
+	mountDomain(a.root, &a.nodes)
+	mountScenario(a.root, &a.nodes)
 	a.root.Footer = scenarioFooter(&a.nodes)
 	return a
 }

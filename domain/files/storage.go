@@ -368,16 +368,17 @@ func (s *Storage) removable(ctx context.Context, tx *sqlate.Tx, f blobfs.File) e
 	return nil
 }
 
-// RemoveTree deletes the directory at ref's path and everything beneath
-// it, by blobfs's branch delete: Directories.MarkDeleting marks the branch
+// RemoveTree deletes the directory ref names, by path or by id, and
+// everything beneath it, by blobfs's branch delete: Directories.MarkDeleting marks the branch
 // deleting in one transaction, after which the branch takes nothing new,
 // and blobfs's sweep then runs passes until no work remains, deleting each
 // file's object and purging its row, and removing each directory once it
-// is empty. A branch is removed by path alone (a [FormError] for an id,
-// before any I/O). Each directory's owner row is removed in the transaction that
-// removes the directory, through the sweep's OnRemoveDirectory hook, so an
-// owned top-level directory goes with its owner row. The result counts
-// what the passes removed.
+// is empty. The directory is read on the pool, and for a branch named by
+// id its path computed, before the mark. Each directory's owner row is
+// removed in the transaction that removes the directory, through the
+// sweep's OnRemoveDirectory hook, so an owned top-level directory goes
+// with its owner row. The result carries the branch's path and counts what
+// the passes removed.
 //
 // A branch that holds a file a unit has bookmarked is refused with
 // ErrBookmarked in the mark's transaction, after the mark and before it
@@ -393,19 +394,20 @@ func (s *Storage) removable(ctx context.Context, tx *sqlate.Tx, f blobfs.File) e
 // finishes it. A pass's refusals, such as an object the store would not
 // delete, leave their rows for a later run; the error of the last pass is
 // returned with the counts. The root is blobfs.ErrRootDirectory before any
-// I/O.
+// I/O, by path or by the root's id.
 func (s *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) {
-	if err := checkRemoveTree(ref); err != nil {
-		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", label(ref, "directory"), err)
-	}
-	path := ref.Path
-	if _, _, err := splitParent(path); err != nil {
-		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", path, err)
+	at := label(ref, "directory")
+	if err := refuseRoot(ref); err != nil {
+		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", at, err)
 	}
 	fs, db := s.store.blobfs, s.store.db
-	dir, err := s.store.resolve(ctx, db, path)
+	dir, err := s.store.directory(ctx, db, ref)
 	if err != nil {
-		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", path, err)
+		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", at, err)
+	}
+	var removed TreeRemoval
+	if removed.Path, err = s.store.directoryPath(ctx, db, ref, dir); err != nil {
+		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", at, err)
 	}
 	_, err = db.Transact(ctx, func(tx *sqlate.Tx) (bfdata.Marked, error) {
 		marked, err := fs.Directories.MarkDeleting(ctx, tx, dir.ID)
@@ -422,12 +424,11 @@ func (s *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) 
 		return marked, nil
 	})
 	if err != nil {
-		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", path, err)
+		return TreeRemoval{}, fmt.Errorf("files: rm branch %s: %w", at, err)
 	}
 	removeOwner := bfdata.OnRemoveDirectory(func(ctx context.Context, tx *sqlate.Tx, dir blobfs.Directory) error {
 		return s.store.deleteOwner(ctx, tx, dir.ID)
 	})
-	var removed TreeRemoval
 	var last error
 	err = bfdata.SweepUntilDone(ctx, nil,
 		func(ctx context.Context) (bfdata.SweepResult, error) {
@@ -442,7 +443,7 @@ func (s *Storage) RemoveTree(ctx context.Context, ref Ref) (TreeRemoval, error) 
 		err = last
 	}
 	if err != nil {
-		return removed, fmt.Errorf("files: rm branch %s: removed %d files and %d directories, then: %w", path, removed.Files, removed.Directories, err)
+		return removed, fmt.Errorf("files: rm branch %s: removed %d files and %d directories, then: %w", at, removed.Files, removed.Directories, err)
 	}
 	return removed, nil
 }

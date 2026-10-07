@@ -50,49 +50,19 @@ func (s *Service) Start(ctx context.Context) error {
 	return nil
 }
 
-// The form rules: which forms of Ref each operation takes. Each operation
-// runs its rule before any I/O, and a command runs the same rule in its
-// Validate, so a refusal is a usage error before anything is built.
-
-// checkList refuses a listing under a unit of a directory named by id:
-// the unit's scope is derived from the path's top-level directory, and an
-// id carries no path.
-func checkList(ref Ref, l Listing) error {
-	if ref.ID != "" && l.Unit != "" {
-		return &FormError{Reason: "a listing by id has no path to derive the unit's scope from"}
-	}
-	return nil
-}
-
-// pathOnly refuses ref named by id, for an operation that takes a path
-// alone; reason says which form it takes, and why, in the domain's terms.
-func pathOnly(ref Ref, reason string) error {
-	if ref.ID != "" {
-		return &FormError{Reason: reason}
-	}
-	return nil
-}
+// The form rules: the forms of Ref an operation refuses because an id
+// cannot name its target, or because it takes two Refs of one form. Every
+// other operation takes either form. Each operation runs its rule before
+// any I/O, and a command runs the same rule in its Validate, so a refusal
+// is a usage error before anything is built.
 
 // checkMkdir refuses a directory's create named by id: the directory does
 // not exist yet, so it has no id.
 func checkMkdir(ref Ref) error {
-	return pathOnly(ref, "a directory is created by path, not by id")
-}
-
-// checkRemoveDirectory refuses an empty directory's removal named by id.
-func checkRemoveDirectory(ref Ref) error {
-	return pathOnly(ref, "a directory is removed by path, not by id")
-}
-
-// checkRemoveTree refuses a branch's delete named by id.
-func checkRemoveTree(ref Ref) error {
-	return pathOnly(ref, "a branch is removed by path, not by id")
-}
-
-// checkBookmark refuses a bookmark's add or removal whose file is named by
-// id.
-func checkBookmark(ref Ref) error {
-	return pathOnly(ref, "a bookmark names its file by path, not by id")
+	if ref.ID != "" {
+		return &FormError{Reason: "a directory is created by path, not by id"}
+	}
+	return nil
 }
 
 // checkPair refuses a move or a copy whose source and destination are not
@@ -124,26 +94,27 @@ func label(ref Ref, kind string) string {
 // blobfs.ErrNotFound, and a path that does not start with a slash
 // blobfs.ErrInvalidPath. A directory named by id is read first, since
 // blobfs lists a directory that does not exist as empty, and its contents'
-// Path is empty: no path is computed for a listing by id.
+// Path is empty: a listing by id reports no path.
 //
-// A unit in l scopes the listing to what the unit owns, and takes a path
-// alone (a [FormError] otherwise, before any I/O). Below the root, the
-// path's top-level directory is resolved first and its owner row read,
-// and a unit that does not own it is refused with ErrNotOwned before the
-// rest of the path is resolved. At the root, the listing is the unit's own
-// top-level directories, read through the owner read model under the
-// terms that name a directory field, and no files: a file in the root has
-// no top-level directory and belongs to no unit. That read model pages by
-// number only, so a cursor there is ErrNoCursorAtRoot, before any I/O.
+// A unit in l scopes the listing to what the unit owns. Below the root, a
+// unit that does not own the listed directory's top-level ancestor is
+// refused with ErrNotOwned. By path, the path's top-level directory is
+// resolved first and its owner row read, and the rest of the path is
+// resolved only once the unit is known to own it. By id, the directory is
+// read first, then its path, and the top-level directory at that path's
+// first segment is resolved and its owner row read. At the root, the
+// listing is the unit's own top-level directories, read through the owner
+// read model under the terms that name a directory field, and no files: a
+// file in the root has no top-level directory and belongs to no unit. That
+// read model pages by number only, so a cursor there is ErrNoCursorAtRoot,
+// before any I/O.
 func (s *Service) List(ctx context.Context, ref Ref, l Listing) (Contents, error) {
 	at := label(ref, "directory")
 	if l.Unit != "" {
 		at += " as unit " + l.Unit
 	}
-	if err := checkList(ref, l); err != nil {
-		return Contents{}, fmt.Errorf("files: ls %s: %w", at, err)
-	}
-	if ref.Path == "/" && l.Unit != "" && l.After != (After{}) {
+	atRoot := ref.Path == "/" || ref.ID == blobfs.RootID
+	if atRoot && l.Unit != "" && l.After != (After{}) {
 		return Contents{}, fmt.Errorf("files: ls %s: %w", at, ErrNoCursorAtRoot)
 	}
 	c, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (Contents, error) {
@@ -154,8 +125,14 @@ func (s *Service) List(ctx context.Context, ref Ref, l Listing) (Contents, error
 				return Contents{}, err
 			}
 			return s.store.contents(ctx, tx, ref.Path, dir.ID, l)
-		case ref.Path == "/":
+		case atRoot:
 			return s.topLevel(ctx, tx, l)
+		case ref.ID != "":
+			dir, err := s.ownedByID(ctx, tx, ref.ID, l.Unit)
+			if err != nil {
+				return Contents{}, err
+			}
+			return s.store.contents(ctx, tx, "", dir.ID, l)
 		}
 		dir, err := s.resolveOwned(ctx, tx, ref.Path, l.Unit)
 		if err != nil {
@@ -191,6 +168,38 @@ func (s *Service) resolveOwned(ctx context.Context, sess sqlate.Session, path, u
 		return dir, nil
 	}
 	return s.store.resolve(ctx, sess, path)
+}
+
+// ownedByID reads the directory with id, below the root, through sess for
+// the unit: the row, then its path, and then the top-level directory at
+// the path's first segment and its owner row, so the unit's scope is the
+// one the path form checks. The root is listed as the unit's own
+// directories and never reaches here. A directory that does not exist is
+// blobfs.ErrNotFound, and a unit that does not own its top-level ancestor
+// ErrNotOwned.
+func (s *Service) ownedByID(ctx context.Context, sess sqlate.Session, id, unit string) (blobfs.Directory, error) {
+	dir, err := s.store.blobfs.Directories.Find(ctx, sess, id)
+	if err != nil {
+		return blobfs.Directory{}, err
+	}
+	path, err := s.store.blobfs.Directories.Path(ctx, sess, dir.ID)
+	if err != nil {
+		return blobfs.Directory{}, err
+	}
+	top := dir
+	if topPath := topLevelOf(path); topPath != path {
+		if top, err = s.store.resolve(ctx, sess, topPath); err != nil {
+			return blobfs.Directory{}, err
+		}
+	}
+	owned, err := s.store.owns(ctx, sess, unit, top.ID)
+	if err != nil {
+		return blobfs.Directory{}, err
+	}
+	if !owned {
+		return blobfs.Directory{}, fmt.Errorf("%s: %w", topLevelOf(path), ErrNotOwned)
+	}
+	return dir, nil
 }
 
 // topLevel is the listing of the root as the unit l names: the unit's
@@ -293,35 +302,53 @@ func (s *Service) Mkdir(ctx context.Context, ref Ref, unit string) (blobfs.Direc
 	return made, nil
 }
 
-// RemoveDirectory removes the empty directory at ref's path, with its
-// owner row when it has one, in one transaction: the path is resolved, the
-// owner row removed, and the directory removed through blobfs, whose
-// refusal rolls the owner row back with it. A directory is removed by path
-// alone (a [FormError] for an id, before any I/O). A directory that still
-// has directories or files under it is blobfs.ErrNotEmpty, and the root is
-// blobfs.ErrRootDirectory before any I/O.
-func (s *Service) RemoveDirectory(ctx context.Context, ref Ref) (blobfs.Directory, error) {
+// RemoveDirectory removes the empty directory ref names, by path or by
+// id, with its owner row when it has one, in one transaction: the
+// directory is read, the owner row removed, and the directory removed
+// through blobfs, whose refusal rolls the owner row back with it. It
+// returns the row with its path, which for a directory named by id is
+// computed in the same transaction. A directory that still has
+// directories or files under it is blobfs.ErrNotEmpty. The root is
+// blobfs.ErrRootDirectory, before any I/O when it is named by path or by
+// the root's id.
+func (s *Service) RemoveDirectory(ctx context.Context, ref Ref) (Located[blobfs.Directory], error) {
 	at := label(ref, "directory")
-	if err := checkRemoveDirectory(ref); err != nil {
-		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", at, err)
+	if err := refuseRoot(ref); err != nil {
+		return Located[blobfs.Directory]{}, fmt.Errorf("files: rmdir %s: %w", at, err)
 	}
-	if _, _, err := splitParent(ref.Path); err != nil {
-		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", at, err)
-	}
-	dir, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (blobfs.Directory, error) {
-		dir, err := s.store.resolve(ctx, tx, ref.Path)
+	removed, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (Located[blobfs.Directory], error) {
+		dir, err := s.store.directory(ctx, tx, ref)
 		if err != nil {
-			return blobfs.Directory{}, err
+			return Located[blobfs.Directory]{}, err
+		}
+		path, err := s.store.directoryPath(ctx, tx, ref, dir)
+		if err != nil {
+			return Located[blobfs.Directory]{}, err
 		}
 		if err := s.store.deleteOwner(ctx, tx, dir.ID); err != nil {
-			return blobfs.Directory{}, err
+			return Located[blobfs.Directory]{}, err
 		}
-		return dir, s.store.blobfs.Directories.Delete(ctx, tx, dir.ID)
+		return Located[blobfs.Directory]{Path: path, Row: dir}, s.store.blobfs.Directories.Delete(ctx, tx, dir.ID)
 	})
 	if err != nil {
-		return blobfs.Directory{}, fmt.Errorf("files: rmdir %s: %w", at, err)
+		return Located[blobfs.Directory]{}, fmt.Errorf("files: rmdir %s: %w", at, err)
 	}
-	return dir, nil
+	return removed, nil
+}
+
+// refuseRoot refuses ref when it names the root, by path or by the root's
+// id, as blobfs.ErrRootDirectory, and a path that is not absolute or ends
+// with a slash as blobfs.ErrInvalidPath, before any I/O: the checks an
+// operation that removes or bookmarks an entry runs on its Ref.
+func refuseRoot(ref Ref) error {
+	if ref.ID == blobfs.RootID {
+		return blobfs.ErrRootDirectory
+	}
+	if ref.ID != "" {
+		return nil
+	}
+	_, _, err := splitParent(ref.Path)
+	return err
 }
 
 // Move moves the directory or file src names, in one transaction. src and
@@ -470,9 +497,10 @@ func (s *Service) moveID(ctx context.Context, tx *sqlate.Tx, src, dst Ref) (Move
 	return res, nil
 }
 
-// AddBookmark records that the unit bookmarks the file at ref's path and
-// returns the file's row. A bookmark names its file by path alone (a
-// [FormError] for an id, before any I/O). With active, the bookmark
+// AddBookmark records that the unit bookmarks the file ref names, by path
+// or by id, and returns the file's row with its path, which for a file
+// named by id is computed in the add's transaction. With active, the
+// bookmark
 // becomes the unit's one active bookmark, and the add is refused with
 // ErrActiveBookmark while another bookmark of the unit is active; the
 // other one is left as it is. The parent's resolution, the file's lookup,
@@ -487,55 +515,57 @@ func (s *Service) moveID(ctx context.Context, tx *sqlate.Tx, src, dst Ref) (Move
 // with ErrNotAvailable over blobfs's DeletingError, because its delete is
 // under way. A file the unit has bookmarked already is
 // ErrAlreadyBookmarked, active or not. The root is blobfs.ErrRootDirectory
-// before any I/O.
-func (s *Service) AddBookmark(ctx context.Context, ref Ref, unit string, active bool) (blobfs.File, error) {
+// before any I/O, by path or by the root's id.
+func (s *Service) AddBookmark(ctx context.Context, ref Ref, unit string, active bool) (Located[blobfs.File], error) {
 	at := label(ref, "file")
-	if err := checkBookmark(ref); err != nil {
-		return blobfs.File{}, fmt.Errorf("files: bookmark add %s: %w", at, err)
+	if err := refuseRoot(ref); err != nil {
+		return Located[blobfs.File]{}, fmt.Errorf("files: bookmark add %s: %w", at, err)
 	}
-	if _, _, err := splitParent(ref.Path); err != nil {
-		return blobfs.File{}, fmt.Errorf("files: bookmark add %s: %w", at, err)
-	}
-	f, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (blobfs.File, error) {
+	f, err := s.store.db.Transact(ctx, func(tx *sqlate.Tx) (Located[blobfs.File], error) {
 		f, err := s.store.file(ctx, tx, ref)
 		if err != nil {
-			return blobfs.File{}, err
+			return Located[blobfs.File]{}, err
+		}
+		path, err := s.store.filePath(ctx, tx, ref, f)
+		if err != nil {
+			return Located[blobfs.File]{}, err
 		}
 		if err := s.store.blobfs.Files.Hold(ctx, tx, f.ID); err != nil {
 			if errors.Is(err, blobfs.ErrDeleting) {
-				return blobfs.File{}, fmt.Errorf("%w: %w", ErrNotAvailable, err)
+				return Located[blobfs.File]{}, fmt.Errorf("%w: %w", ErrNotAvailable, err)
 			}
-			return blobfs.File{}, err
+			return Located[blobfs.File]{}, err
 		}
-		return f, s.store.insertBookmark(ctx, tx, unit, f.ID, active)
+		return Located[blobfs.File]{Path: path, Row: f}, s.store.insertBookmark(ctx, tx, unit, f.ID, active)
 	})
 	if err != nil {
-		return blobfs.File{}, fmt.Errorf("files: bookmark add %s as unit %s: %w", at, unit, err)
+		return Located[blobfs.File]{}, fmt.Errorf("files: bookmark add %s as unit %s: %w", at, unit, err)
 	}
 	return f, nil
 }
 
-// RemoveBookmark removes the unit's bookmark of the file at ref's path,
-// active or not, and returns the file's row. A bookmark names its file by
-// path alone (a [FormError] for an id, before any I/O). The path is
-// resolved and the row deleted on the pool: the delete is keyed by the
-// unit and the file's id, so the two need not share a snapshot. A file
-// that does not exist is blobfs.ErrNotFound; a file the unit has not
-// bookmarked is ErrNoBookmark. Removing the active bookmark leaves the
-// unit with none, which a later add with active may fill.
-func (s *Service) RemoveBookmark(ctx context.Context, ref Ref, unit string) (blobfs.File, error) {
+// RemoveBookmark removes the unit's bookmark of the file ref names, by
+// path or by id, active or not, and returns the file's row with its path,
+// which for a file named by id is computed from the row. The file is read,
+// its path computed, and the bookmark deleted on the pool: the delete is
+// keyed by the unit and the file's id, so the reads need not share its
+// snapshot. A file that does not exist is blobfs.ErrNotFound; a file the
+// unit has not bookmarked is ErrNoBookmark. Removing the active bookmark
+// leaves the unit with none, which a later add with active may fill.
+func (s *Service) RemoveBookmark(ctx context.Context, ref Ref, unit string) (Located[blobfs.File], error) {
 	at := label(ref, "file")
-	if err := checkBookmark(ref); err != nil {
-		return blobfs.File{}, fmt.Errorf("files: bookmark rm %s: %w", at, err)
-	}
 	f, err := s.store.file(ctx, s.store.db, ref)
+	var path string
+	if err == nil {
+		path, err = s.store.filePath(ctx, s.store.db, ref, f)
+	}
 	if err == nil {
 		err = s.store.deleteBookmark(ctx, s.store.db, unit, f.ID)
 	}
 	if err != nil {
-		return blobfs.File{}, fmt.Errorf("files: bookmark rm %s as unit %s: %w", at, unit, err)
+		return Located[blobfs.File]{}, fmt.Errorf("files: bookmark rm %s as unit %s: %w", at, unit, err)
 	}
-	return f, nil
+	return Located[blobfs.File]{Path: path, Row: f}, nil
 }
 
 // ListBookmarks returns one page, by number, of the unit's bookmarks under

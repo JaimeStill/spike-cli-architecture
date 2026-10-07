@@ -454,8 +454,8 @@ func TestRemoveTree_MarksTheBranchAndSweepsEveryMarkedBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveTree() = %v", err)
 	}
-	if res != (files.TreeRemoval{Files: 1, Directories: 3}) {
-		t.Errorf("RemoveTree() = %+v, want 1 file and 3 directories", res)
+	if res != (files.TreeRemoval{Path: "/d", Files: 1, Directories: 3}) {
+		t.Errorf("RemoveTree() = %+v, want /d with 1 file and 3 directories", res)
 	}
 	if _, err := fake.Stat(context.Background(), fileID+"/f.txt"); !errors.Is(err, storage.ErrNotFound) {
 		t.Errorf("the file's object after the sweep: %v, want it gone", err)
@@ -480,6 +480,44 @@ func TestRemoveTree_MarksTheBranchAndSweepsEveryMarkedBranch(t *testing.T) {
 	}
 	if n := len(execs[4:]); n != 6 {
 		t.Errorf("removal statements = %d, want an owner row's and a directory's for each of 3 directories", n)
+	}
+}
+
+func TestRemoveTree_ByIDReadsTheDirectoryAndItsPathBeforeTheMark(t *testing.T) {
+	// /d/s by its id, an empty directory: the row and its path on the
+	// pool, then the mark and the count, and one pass of the sweep that
+	// removes it with its owner row.
+	o, rec, _ := openStorage(t,
+		directories(directoryRow(otherID, dirID, "s")),
+		ancestors([]driver.Value{otherID, dirID, "s"}, []driver.Value{dirID, blobfs.RootID, "d"}),
+		sqltest.Response{}, // the tree lock
+		sqltest.Response{Affected: 1},
+		sqltest.Response{},
+		counted(0),
+		directories(deletingDirectoryRow(otherID, dirID, "s")),
+		fileRows(),
+		directories(),
+		noOwner(),
+		purged(),
+	)
+
+	res, err := o.RemoveTree(context.Background(), files.Ref{ID: otherID})
+
+	if err != nil {
+		t.Fatalf("RemoveTree() = %v", err)
+	}
+	if res != (files.TreeRemoval{Path: "/d/s", Directories: 1}) {
+		t.Errorf("RemoveTree() = %+v, want /d/s with 1 directory", res)
+	}
+	if find := rec.Calls()[0]; !strings.Contains(find.SQL, "blobfs_directory") || !slices.Contains(find.Args, any(otherID)) {
+		t.Errorf("the directory's read bound %v, want its id", find.Args)
+	}
+	want := []sqltest.Op{sqltest.OpQuery, sqltest.OpQuery, sqltest.OpBegin}
+	if got := nonPrepares(rec); !slices.Equal(got[:3], want) {
+		t.Errorf("ops = %v, want them to start %v: the row and its path before the mark", got, want)
+	}
+	if n := rec.Pending(); n != 0 {
+		t.Errorf("%d scripted responses unconsumed", n)
 	}
 }
 
@@ -541,15 +579,17 @@ func TestRemoveTree_ReportsWhatItRemovedBeforeARefusal(t *testing.T) {
 }
 
 func TestRemoveTree_TheRootIsRefusedBeforeAnyIO(t *testing.T) {
-	o, rec, _ := openStorage(t)
+	for _, ref := range []files.Ref{{Path: "/"}, {ID: blobfs.RootID}} {
+		o, rec, _ := openStorage(t)
 
-	_, err := o.RemoveTree(context.Background(), files.Ref{Path: "/"})
+		_, err := o.RemoveTree(context.Background(), ref)
 
-	if !errors.Is(err, blobfs.ErrRootDirectory) {
-		t.Errorf("RemoveTree(/) = %v, want ErrRootDirectory", err)
-	}
-	if got := nonPrepares(rec); len(got) != 0 {
-		t.Errorf("ops = %v, want none", got)
+		if !errors.Is(err, blobfs.ErrRootDirectory) {
+			t.Errorf("RemoveTree(%+v) = %v, want ErrRootDirectory", ref, err)
+		}
+		if got := nonPrepares(rec); len(got) != 0 {
+			t.Errorf("RemoveTree(%+v) ops = %v, want none", ref, got)
+		}
 	}
 }
 

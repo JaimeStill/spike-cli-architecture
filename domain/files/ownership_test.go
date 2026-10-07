@@ -2,6 +2,7 @@ package files_test
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"slices"
@@ -162,7 +163,7 @@ func TestRemoveDirectory_RemovesTheOwnerRowWithTheDirectory(t *testing.T) {
 
 	d, err := s.RemoveDirectory(context.Background(), files.Ref{Path: "/reports"})
 
-	if err != nil || d.ID != dirID {
+	if err != nil || d.Row.ID != dirID || d.Path != "/reports" {
 		t.Fatalf("RemoveDirectory() = %+v, %v", d, err)
 	}
 	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpExec, sqltest.OpExec, sqltest.OpCommit}
@@ -172,6 +173,100 @@ func TestRemoveDirectory_RemovesTheOwnerRowWithTheDirectory(t *testing.T) {
 	execs := rec.SQL(sqltest.OpExec)
 	if !strings.HasPrefix(execs[0], "DELETE FROM directory_owner") || !strings.HasPrefix(execs[1], "DELETE FROM blobfs_directory") {
 		t.Errorf("execs = %q, want the owner row and then the directory", execs)
+	}
+}
+
+func TestRemoveDirectory_ByIDReadsTheRowAndItsPathInTheRemovalsTransaction(t *testing.T) {
+	// /reports/2026 by its id: the row, then its path, then the owner row
+	// and the directory, all in one transaction, and the path reported.
+	s, rec := open(t,
+		directories(directoryRow(otherID, dirID, "2026")),
+		ancestors([]driver.Value{otherID, dirID, "2026"}, []driver.Value{dirID, blobfs.RootID, "reports"}),
+		sqltest.Response{},
+		purged(),
+	)
+
+	d, err := s.RemoveDirectory(context.Background(), files.Ref{ID: otherID})
+
+	if err != nil || d.Row.ID != otherID || d.Path != "/reports/2026" {
+		t.Fatalf("RemoveDirectory() = %+v, %v, want the row at /reports/2026", d, err)
+	}
+	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpExec, sqltest.OpExec, sqltest.OpCommit}
+	if got := nonPrepares(rec); !slices.Equal(got, want) {
+		t.Errorf("ops = %v, want %v", got, want)
+	}
+	if execs := rec.SQL(sqltest.OpExec); !strings.HasPrefix(execs[1], "DELETE FROM blobfs_directory") {
+		t.Errorf("execs = %q, want the directory's delete last", execs)
+	}
+}
+
+func TestList_AsAUnitByIDChecksTheTopLevelAncestorsOwner(t *testing.T) {
+	// /reports/2026 by its id as the unit: the row, its path, then
+	// /reports resolved and its owner row read, and both halves listed.
+	s, rec := open(t,
+		directories(directoryRow(otherID, dirID, "2026")),
+		ancestors([]driver.Value{otherID, dirID, "2026"}, []driver.Value{dirID, blobfs.RootID, "reports"}),
+		resolved(dirID, blobfs.RootID, "reports", 1),
+		counted(1),
+		sqltest.WithTotal(directories(), 0),
+		listed(otherID),
+		sqltest.WithTotal(fileRows(fileRow(fileID, otherID, "a.txt", 3)), 1),
+		listed(otherID),
+	)
+
+	c, err := s.List(context.Background(), files.Ref{ID: otherID}, files.Listing{Page: 1, Size: 20, Unit: unitID})
+
+	if err != nil {
+		t.Fatalf("List() = %v", err)
+	}
+	if len(c.Files.Rows) != 1 || c.Path != "" {
+		t.Errorf("List() = %+v, want the file and no path, as a listing by id reports", c)
+	}
+	calls := rec.Calls()
+	if args := calls[3].Args; len(args) != 2 || fmt.Sprint(args[1]) != "[reports]" {
+		t.Errorf("the resolution bound %v, want the top-level directory alone", args)
+	}
+	if owner := calls[4]; !strings.Contains(owner.SQL, "FROM directory_owner") || !slices.Equal(owner.Args, []any{dirID, unitID}) {
+		t.Errorf("the owner read ran %q with %v, want the top-level directory and the unit", owner.SQL, owner.Args)
+	}
+	if n := rec.Pending(); n != 0 {
+		t.Errorf("%d scripted responses unconsumed", n)
+	}
+}
+
+func TestList_AsAUnitByIDOfATopLevelDirectoryReadsItsOwnOwnerRow(t *testing.T) {
+	// A top-level directory is its own top-level ancestor: no resolution
+	// follows its path, and the unit that does not own it is refused.
+	s, rec := open(t,
+		directories(directoryRow(dirID, blobfs.RootID, "reports")),
+		ancestors([]driver.Value{dirID, blobfs.RootID, "reports"}),
+		counted(0),
+	)
+
+	_, err := s.List(context.Background(), files.Ref{ID: dirID}, files.Listing{Page: 1, Size: 20, Unit: unitID})
+
+	if !errors.Is(err, files.ErrNotOwned) || !strings.Contains(err.Error(), "/reports: ") {
+		t.Fatalf("List() = %v, want ErrNotOwned naming /reports", err)
+	}
+	want := []sqltest.Op{sqltest.OpBegin, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpQuery, sqltest.OpRollback}
+	if got := nonPrepares(rec); !slices.Equal(got, want) {
+		t.Errorf("ops = %v, want %v: the row, its path, and the owner row, then nothing listed", got, want)
+	}
+	if owner := rec.Calls()[len(rec.Calls())-2]; !slices.Equal(owner.Args, []any{dirID, unitID}) {
+		t.Errorf("the owner read bound %v, want the directory itself and the unit", owner.Args)
+	}
+}
+
+func TestList_TheRootsIDAsAUnitListsItsOwnTopLevelDirectories(t *testing.T) {
+	s, rec := open(t, sqltest.WithTotal(directories(directoryRow(dirID, blobfs.RootID, "reports")), 1))
+
+	c, err := s.List(context.Background(), files.Ref{ID: blobfs.RootID}, files.Listing{Page: 1, Size: 20, Unit: unitID})
+
+	if err != nil || len(c.Directories.Rows) != 1 {
+		t.Fatalf("List() = %+v, %v, want the unit's one directory", c, err)
+	}
+	if queries := rec.SQL(sqltest.OpQuery); len(queries) != 1 || !strings.Contains(queries[0], "JOIN directory_owner") {
+		t.Errorf("queries = %q, want the owner read model alone", queries)
 	}
 }
 

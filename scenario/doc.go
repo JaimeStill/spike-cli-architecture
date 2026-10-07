@@ -4,7 +4,8 @@
 // package cli in place of cobra, and without slab's needs: a scenario's
 // dependencies are the graph nodes it declares, and nothing else. There is
 // no registry: [Commands] builds the scenario parent over the composition
-// root's nodes, the same way a domain package's Commands is called.
+// root's nodes and returns it as a slice, the same way a domain package's
+// Commands is called and mounted.
 //
 // Each tour works over the files domain's API: each step calls the
 // Service or the Storage, as a direct command does, and shows the result
@@ -29,7 +30,9 @@
 //   - [Scenario], an ordered list of [Step]s over the graph nodes it
 //     declares
 //   - [Reporter], the channel a step narrates through
-//   - [Commands], the scenario parent with a leaf per tour
+//   - [Commands], the package's command surface: the scenario parent with a
+//     leaf per tour, as a slice the root mounts with
+//     root.Add(scenario.Commands(...)...)
 //   - [WriteListing], which writes the scenarios and the nodes each
 //     declares, as a help footer prints them
 package scenario

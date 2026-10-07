@@ -27,12 +27,15 @@ The architecture pages that apply, in the architecture repository:
 
 ## Commands
 
-- A domain mounts through one `Commands` call, and each command is a plain function of the nodes
-  it declares with `Use`, reading them with `inv.Get`.
+- A package mounts through one `Commands` call, which returns `[]*cli.Command` whether it builds
+  one command or many, so every mount is `root.Add(pkg.Commands(...)...)`; each command is a
+  plain function of the nodes it declares with `Use`, reading them with `inv.Get`.
 - `Args` only counts positionals; every argument and flag value, the domain's form rules
   included, is checked in `Validate`, so bad input builds nothing.
-- An operation that names an entry takes the domain's reference type (`files.Ref`); one that
-  takes a single form refuses the other with a typed form error before any I/O.
+- An operation that names an entry takes the domain's reference type (`files.Ref`) and accepts
+  a path or an id wherever an id can name the target; it takes a single form only where the
+  other is impossible by nature (mkdir: the new directory has no id), and refuses it with a typed
+  form error before any I/O.
 - A domain error is worded in the domain's terms; the command adds flag or command wording where
   it reports the error.
 - A command that changes state is never silent: it prints one success line with `fmt.Fprintf`.
