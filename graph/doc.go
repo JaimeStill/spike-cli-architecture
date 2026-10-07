@@ -12,6 +12,8 @@
 //     nothing
 //   - [Graph.Replace], which swaps a node's constructor before Build, for a
 //     test's substitute
+//   - [Graph.Observe], which adds a function a Build calls with each node's
+//     name as it begins to construct it, for tracing what a Build reaches
 //   - [Graph.Build], which constructs what the roots reach into a System
 //   - [Node], a typed handle on one node, and [Node.Name], its name
 //   - [Ref], any Node whatever its type, sealed to Node
@@ -56,10 +58,10 @@
 // panic with a "graph: " message, as each symbol's documentation states: a
 // dependency cycle, a node used on a Graph it was not defined on, a Scope
 // used after its constructor returned, a hook recorded twice, a Replace
-// after Build, a Get of a node not in the System, a nil constructor, and an
-// empty or duplicate name. Build checks its roots, for a nil node or one
-// defined on another Graph, before it constructs any of them, so a mistake
-// in any root panics before a constructor runs.
+// after Build, a Get of a node not in the System, a nil constructor or
+// observer, and an empty or duplicate name. Build checks its roots, for a
+// nil node or one defined on another Graph, before it constructs any of
+// them, so a mistake in any root panics before a constructor runs.
 //
 // # Promotion
 //

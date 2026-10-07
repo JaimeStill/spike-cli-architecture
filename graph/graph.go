@@ -10,6 +10,9 @@ type Graph struct {
 	nodes []*node
 	names map[string]bool
 	built bool
+	// observers are called, in the order added, as a Build begins each
+	// node.
+	observers []func(name string)
 }
 
 // New returns an empty Graph.
@@ -95,4 +98,18 @@ func (g *Graph) Replace[T any](n *Node[T], ctor func(*Scope) (T, error)) {
 		panic(fmt.Sprintf("graph: Replace of %q with a nil constructor", n.core.name))
 	}
 	n.core.ctor = erase(ctor)
+}
+
+// Observe adds fn, which every later Build calls with a node's name as it
+// begins to construct the node, before the constructor runs: each node a
+// Build reaches, once, in the order it reaches them depth-first, the one
+// whose constructor fails included. It is for tracing what a Build
+// constructs, such as a test asserting which nodes a run brought up; fn
+// sees only the name and cannot change the Build. Observe panics on a nil
+// fn.
+func (g *Graph) Observe(fn func(name string)) {
+	if fn == nil {
+		panic("graph: Observe with a nil function")
+	}
+	g.observers = append(g.observers, fn)
 }

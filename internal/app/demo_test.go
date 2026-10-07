@@ -13,8 +13,8 @@ import (
 	"github.com/standards-lab/go-storage/storagetest"
 	"github.com/standards-lab/sqlate/sqltest"
 
-	"github.com/JaimeStill/spike-cli-architecture/domain/files"
-	"github.com/JaimeStill/spike-cli-architecture/graph"
+	"github.com/JaimeStill/spike-cli-architecture/internal/app"
+	"github.com/JaimeStill/spike-cli-architecture/internal/apptest"
 )
 
 // The scenarios driven through App.Run over buffers: list, which builds
@@ -24,10 +24,10 @@ import (
 
 func TestList_PrintsEachScenarioAndTheNodesItDeclaresAndBuildsNothing(t *testing.T) {
 	clearEnv(t)
-	r := &recorder{}
 	var out, errOut bytes.Buffer
+	a, built := haltedApp(&out, &errOut)
 
-	code := recordingApp(r, &out, &errOut).Run(context.Background(), []string{"list"})
+	code := a.Run(context.Background(), []string{"list"})
 
 	if code != process.ExitOK {
 		t.Fatalf("code = %d, want %d; stderr = %q", code, process.ExitOK, errOut.String())
@@ -40,15 +40,15 @@ func TestList_PrintsEachScenarioAndTheNodesItDeclaresAndBuildsNothing(t *testing
 	if out.String() != want {
 		t.Errorf("stdout:\n%s\nwant:\n%s", out.String(), want)
 	}
-	if got := r.log(); len(got) != 0 {
-		t.Errorf("constructors run = %q, want none", got)
+	if got := built.Log(); len(got) != 0 {
+		t.Errorf("nodes built = %q, want none", got)
 	}
 }
 
 func TestRootHelp_EndsWithTheScenarioListingAndBuildsNothing(t *testing.T) {
 	clearEnv(t)
 	var listing, listErr bytes.Buffer
-	if code := recordingApp(&recorder{}, &listing, &listErr).Run(context.Background(), []string{"list"}); code != process.ExitOK {
+	if code := app.New(strings.NewReader(""), &listing, &listErr).Run(context.Background(), []string{"list"}); code != process.ExitOK {
 		t.Fatalf("list: code = %d, want %d; stderr = %q", code, process.ExitOK, listErr.String())
 	}
 	tail := "\nRun 'blobfs <command> --help' for help on a command.\n\nScenarios:\n" + listing.String()
@@ -63,10 +63,10 @@ func TestRootHelp_EndsWithTheScenarioListingAndBuildsNothing(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &recorder{}
 			var out, errOut bytes.Buffer
+			a, built := haltedApp(&out, &errOut)
 
-			code := recordingApp(r, &out, &errOut).Run(context.Background(), tt.args)
+			code := a.Run(context.Background(), tt.args)
 
 			if code != process.ExitUsage {
 				t.Errorf("code = %d, want %d", code, process.ExitUsage)
@@ -81,8 +81,8 @@ func TestRootHelp_EndsWithTheScenarioListingAndBuildsNothing(t *testing.T) {
 			if other != "" {
 				t.Errorf("other stream = %q, want empty", other)
 			}
-			if got := r.log(); len(got) != 0 {
-				t.Errorf("constructors run = %q, want none", got)
+			if got := built.Log(); len(got) != 0 {
+				t.Errorf("nodes built = %q, want none", got)
 			}
 		})
 	}
@@ -117,16 +117,16 @@ func TestDemo_HelpAndRefusalsBuildNothing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			clearEnv(t)
-			r := &recorder{}
 			var out, errOut bytes.Buffer
+			a, built := haltedApp(&out, &errOut)
 
-			code := recordingApp(r, &out, &errOut).Run(context.Background(), tt.args)
+			code := a.Run(context.Background(), tt.args)
 
 			if code != process.ExitUsage {
 				t.Errorf("code = %d, want %d; stderr = %q", code, process.ExitUsage, errOut.String())
 			}
-			if got := r.log(); len(got) != 0 {
-				t.Errorf("constructors run = %q, want none", got)
+			if got := built.Log(); len(got) != 0 {
+				t.Errorf("nodes built = %q, want none", got)
 			}
 		})
 	}
@@ -144,39 +144,19 @@ func TestDemo_HelpListsTheTours(t *testing.T) {
 	}
 }
 
-// buildsApp is recordingApp with the real constructors of the files node,
-// the database, and its configuration, each recorded, so a run's Build
-// goes as far as the lifecycle configuration, whose recorder fails it
-// before anything starts.
-func buildsApp(t *testing.T, r *recorder, stdout, stderr *bytes.Buffer) func(args ...string) int {
+// buildsApp is haltedApp with the store built over a Fake, by
+// apptest.FakeStore, and the database's name set, so a run's Build
+// constructs, with production constructors elsewhere, everything the tour
+// declares, and goes as far as the lifecycle configuration, which halts it
+// before anything starts. It returns a run of the App and the Recorder of
+// the nodes its runs build.
+func buildsApp(t *testing.T, stdout, stderr *bytes.Buffer) (func(args ...string) int, *apptest.Recorder) {
 	t.Helper()
 	clearEnv(t)
 	t.Setenv(godatabase.NewEnv("BLOBFS").Name, "app")
-	a := recordingApp(r, stdout, stderr)
-	g, n := a.Graph(), a.Nodes()
-	g.Replace(n.Files, func(s *graph.Scope) (*files.Store, error) {
-		r.record("files")
-		return a.NewFiles(s)
-	})
-	g.Replace(n.Database, func(s *graph.Scope) (*godatabase.DB, error) {
-		r.record("database")
-		return a.NewDatabase(s)
-	})
-	g.Replace(n.DatabaseConfig, func(*graph.Scope) (godatabase.Config, error) {
-		r.record("database config")
-		var cfg godatabase.Config
-		err := cfg.Finalize("BLOBFS")
-		return cfg, err
-	})
-	g.Replace(n.Objects, func(s *graph.Scope) (*files.Objects, error) {
-		r.record("objects")
-		return a.NewObjects(s)
-	})
-	g.Replace(n.Store, func(*graph.Scope) (*storage.Store, error) {
-		r.record("store")
-		return fakeStore(t, storagetest.NewFake()), nil
-	})
-	return func(args ...string) int { return a.Run(context.Background(), args) }
+	a, built := haltedApp(stdout, stderr)
+	apptest.FakeStore(t, a, storagetest.NewFake())
+	return func(args ...string) int { return a.Run(context.Background(), args) }, built
 }
 
 func TestDemo_EachTourBuildsTheNodesItDeclares(t *testing.T) {
@@ -185,30 +165,29 @@ func TestDemo_EachTourBuildsTheNodesItDeclares(t *testing.T) {
 		want []string
 	}{
 		// The files node alone: Postgres, and never the store or its
-		// configuration, which recordingApp would record.
+		// configuration, which a reach of either would record.
 		{"directories", []string{"files", "database", "database config", "lifecycle config"}},
 		// The files and objects nodes: Postgres and the store.
 		{"files", []string{"files", "database", "database config", "objects", "store", "lifecycle config"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tour, func(t *testing.T) {
-			r := &recorder{}
 			var out, errOut bytes.Buffer
-			run := buildsApp(t, r, &out, &errOut)
+			run, built := buildsApp(t, &out, &errOut)
 
 			code := run("demo", tt.tour)
 
 			if code != process.ExitFailure {
 				t.Errorf("code = %d, want %d", code, process.ExitFailure)
 			}
-			if want := "blobfs demo " + tt.tour + ": lifecycle config: recorded\n"; errOut.String() != want {
+			if want := "blobfs demo " + tt.tour + ": lifecycle config: halted\n"; errOut.String() != want {
 				t.Errorf("stderr = %q, want %q", errOut.String(), want)
 			}
 			if out.Len() != 0 {
 				t.Errorf("stdout = %q, want nothing narrated before the start", out.String())
 			}
-			if got := r.log(); !slices.Equal(got, tt.want) {
-				t.Errorf("constructors run = %q, want %q", got, tt.want)
+			if got := built.Log(); !slices.Equal(got, tt.want) {
+				t.Errorf("nodes built = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -244,12 +223,11 @@ func TestDemo_FilesWithTheStoreDownFailsOnceNamingTheStore(t *testing.T) {
 }
 
 func TestDemo_DirectoriesNarratesEachStepBeforeDoingIt(t *testing.T) {
-	r := &recorder{}
 	var out, errOut bytes.Buffer
 	// The first step's resolution of the working area finds nothing, so
 	// the step notes there is nothing to clear; the second step's first
 	// query is unscripted, so it fails after its heading.
-	a, rec := scriptedApp(t, r, &out, &errOut, sqltest.Response{Columns: append(slices.Clone(directoryColumns), "depth")})
+	a, built, rec := scriptedApp(t, &out, &errOut, sqltest.Response{Columns: append(slices.Clone(directoryColumns), "depth")})
 
 	code := a.Run(context.Background(), []string{"demo", "directories"})
 
@@ -274,7 +252,7 @@ func TestDemo_DirectoriesNarratesEachStepBeforeDoingIt(t *testing.T) {
 	if n := rec.Pending(); n != 0 {
 		t.Errorf("%d scripted responses unconsumed", n)
 	}
-	if got := r.log(); len(got) != 0 {
-		t.Errorf("constructors run = %q, want neither the store nor its configuration", got)
+	if got := built.Log(); !slices.Equal(got, scriptedBuilt) {
+		t.Errorf("nodes built = %q, want %q: neither the store nor its configuration", got, scriptedBuilt)
 	}
 }

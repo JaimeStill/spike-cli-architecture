@@ -102,9 +102,8 @@ func TestBookmarks_CommandsOverAScriptedDatabase(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &recorder{}
 			var out, errOut bytes.Buffer
-			a, rec := scriptedApp(t, r, &out, &errOut, tt.responses...)
+			a, built, rec := scriptedApp(t, &out, &errOut, tt.responses...)
 
 			code := a.Run(context.Background(), tt.args)
 
@@ -117,18 +116,17 @@ func TestBookmarks_CommandsOverAScriptedDatabase(t *testing.T) {
 			if n := rec.Pending(); n != 0 {
 				t.Errorf("%d scripted responses unconsumed", n)
 			}
-			if got := r.log(); len(got) != 0 {
-				t.Errorf("constructors run = %q, want neither the store nor its configuration", got)
+			if got := built.Log(); !slices.Equal(got, scriptedBuilt) {
+				t.Errorf("nodes built = %q, want %q: neither the store nor its configuration", got, scriptedBuilt)
 			}
 		})
 	}
 }
 
 func TestBookmarks_ARefusalIsReportedOnce(t *testing.T) {
-	r := &recorder{}
 	var out, errOut bytes.Buffer
 	held := sqltest.Response{Columns: []string{"id"}, Rows: [][]driver.Value{{planID}}}
-	a, _ := scriptedApp(t, r, &out, &errOut, resolved(reportsID, "reports"), planRows(), held, sqltest.Response{Err: activeViolation()})
+	a, _, _ := scriptedApp(t, &out, &errOut, resolved(reportsID, "reports"), planRows(), held, sqltest.Response{Err: activeViolation()})
 
 	code := a.Run(context.Background(), []string{"bookmark", "add", "/reports/plan.txt", "--unit", unitID, "--active"})
 
@@ -161,10 +159,10 @@ func TestBookmarks_AMissingOrMalformedUnitIsAUsageErrorThatBuildsNothing(t *test
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			clearEnv(t)
-			r := &recorder{}
 			var out, errOut bytes.Buffer
+			a, built := haltedApp(&out, &errOut)
 
-			code := recordingApp(r, &out, &errOut).Run(context.Background(), tt.args)
+			code := a.Run(context.Background(), tt.args)
 
 			if code != process.ExitUsage {
 				t.Errorf("code = %d, want %d; stderr = %q", code, process.ExitUsage, errOut.String())
@@ -176,8 +174,8 @@ func TestBookmarks_AMissingOrMalformedUnitIsAUsageErrorThatBuildsNothing(t *test
 			if out.Len() != 0 {
 				t.Errorf("stdout = %q, want empty", out.String())
 			}
-			if got := r.log(); len(got) != 0 {
-				t.Errorf("constructors run = %q, want none", got)
+			if got := built.Log(); len(got) != 0 {
+				t.Errorf("nodes built = %q, want none", got)
 			}
 		})
 	}

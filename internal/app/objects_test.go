@@ -16,8 +16,7 @@ import (
 	"github.com/standards-lab/go-storage/storagetest"
 	"github.com/standards-lab/sqlate/sqltest"
 
-	"github.com/JaimeStill/spike-cli-architecture/domain/files"
-	"github.com/JaimeStill/spike-cli-architecture/graph"
+	"github.com/JaimeStill/spike-cli-architecture/internal/apptest"
 )
 
 // The object commands driven through App.Run over buffers: the nodes they
@@ -45,74 +44,38 @@ func TestObjects_CommandsBuildTheDatabaseAndTheStore(t *testing.T) {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			clearEnv(t)
 			t.Setenv(godatabase.NewEnv("BLOBFS").Name, "app")
-			r := &recorder{}
 			var out, errOut bytes.Buffer
-			a := recordingApp(r, &out, &errOut)
-			// The real objects, files, database, and database
-			// configuration constructors run, each recorded, and the store's
-			// is recorded over a Fake; none does I/O. The lifecycle
-			// configuration, the Build's last root, keeps its failing
-			// recorder, so the Build runs every constructor the objects node
-			// reaches and stops before anything starts.
-			g, n := a.Graph(), a.Nodes()
-			g.Replace(n.Objects, func(s *graph.Scope) (*files.Objects, error) {
-				r.record("objects")
-				return a.NewObjects(s)
-			})
-			g.Replace(n.Files, func(s *graph.Scope) (*files.Store, error) {
-				r.record("files")
-				return a.NewFiles(s)
-			})
-			g.Replace(n.Database, func(s *graph.Scope) (*godatabase.DB, error) {
-				r.record("database")
-				return a.NewDatabase(s)
-			})
-			g.Replace(n.DatabaseConfig, func(*graph.Scope) (godatabase.Config, error) {
-				r.record("database config")
-				var cfg godatabase.Config
-				err := cfg.Finalize("BLOBFS")
-				return cfg, err
-			})
-			g.Replace(n.Store, func(*graph.Scope) (*storage.Store, error) {
-				r.record("store")
-				return fakeStore(t, storagetest.NewFake()), nil
-			})
+			// The production constructors run but the store's, which is
+			// built over a Fake, and none does I/O; the lifecycle
+			// configuration, the Build's last root, is halted, so the Build
+			// constructs the objects node and everything it reaches, and
+			// stops before anything starts.
+			a, built := haltedApp(&out, &errOut)
+			apptest.FakeStore(t, a, storagetest.NewFake())
 
 			code := a.Run(context.Background(), args)
 
 			if code != process.ExitFailure {
 				t.Errorf("code = %d, want %d", code, process.ExitFailure)
 			}
-			if want := "blobfs " + args[0] + ": lifecycle config: recorded\n"; errOut.String() != want {
+			if want := "blobfs " + args[0] + ": lifecycle config: halted\n"; errOut.String() != want {
 				t.Errorf("stderr = %q, want %q", errOut.String(), want)
 			}
-			wantRun := []string{"objects", "files", "database", "database config", "store", "lifecycle config"}
-			if got := r.log(); !slices.Equal(got, wantRun) {
-				t.Errorf("constructors run = %q, want %q", got, wantRun)
+			wantBuilt := []string{"objects", "files", "database", "database config", "store", "lifecycle config"}
+			if got := built.Log(); !slices.Equal(got, wantBuilt) {
+				t.Errorf("nodes built = %q, want %q", got, wantBuilt)
 			}
 		})
 	}
 }
 
-// fakeStore returns a go-storage Store over fake, not started: the
-// lifecycle starts it as it starts the store node's value.
-func fakeStore(t *testing.T, fake *storagetest.Fake) *storage.Store {
-	t.Helper()
-	cfg := storage.Config{Container: "objects"}
-	if err := cfg.Finalize("APP_TEST"); err != nil {
-		t.Fatal(err)
-	}
-	return storage.New(fake, cfg)
-}
-
-// objectApp is scriptedAppIn with the store node built over fake.
+// objectApp is scriptedAppIn with the store node built over fake, by
+// apptest.FakeStore. It returns the scripted driver's recorder, a run of
+// the App, and a ping of the scripted pool.
 func objectApp(t *testing.T, fake *storagetest.Fake, stdin io.Reader, stdout, stderr *bytes.Buffer, responses ...sqltest.Response) (*sqltest.Recorder, func(args ...string) int, func() error) {
 	t.Helper()
-	r := &recorder{}
-	a, rec, pool := scriptedAppIn(t, r, stdin, stdout, stderr, responses...)
-	a.Graph().Replace(a.Nodes().Store, func(*graph.Scope) (*storage.Store, error) {
-		return fakeStore(t, fake), nil
-	})
+	a, _, rec, pool := scriptedAppIn(t, stdin, stdout, stderr, responses...)
+	apptest.FakeStore(t, a, fake)
 	run := func(args ...string) int { return a.Run(context.Background(), args) }
 	return rec, run, func() error { return pool.Ping() }
 }
@@ -211,10 +174,10 @@ func TestObjects_UsageErrorsBuildNothing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			clearEnv(t)
-			r := &recorder{}
 			var out, errOut bytes.Buffer
+			a, built := haltedApp(&out, &errOut)
 
-			code := recordingApp(r, &out, &errOut).Run(context.Background(), tt.args)
+			code := a.Run(context.Background(), tt.args)
 
 			if code != process.ExitUsage {
 				t.Errorf("code = %d, want %d; stderr = %q", code, process.ExitUsage, errOut.String())
@@ -222,8 +185,8 @@ func TestObjects_UsageErrorsBuildNothing(t *testing.T) {
 			if !strings.Contains(errOut.String(), tt.want) {
 				t.Errorf("stderr = %q, want %q", errOut.String(), tt.want)
 			}
-			if got := r.log(); len(got) != 0 {
-				t.Errorf("constructors run = %q, want none", got)
+			if got := built.Log(); len(got) != 0 {
+				t.Errorf("nodes built = %q, want none", got)
 			}
 		})
 	}

@@ -15,12 +15,11 @@ import (
 	"github.com/standards-lab/blobfs"
 	"github.com/standards-lab/go-core/process"
 	godatabase "github.com/standards-lab/go-database"
-	"github.com/standards-lab/go-storage"
 	"github.com/standards-lab/sqlate/sqltest"
 
 	"github.com/JaimeStill/spike-cli-architecture/domain/files"
-	"github.com/JaimeStill/spike-cli-architecture/graph"
 	"github.com/JaimeStill/spike-cli-architecture/internal/app"
+	"github.com/JaimeStill/spike-cli-architecture/internal/apptest"
 )
 
 // The directory commands driven through App.Run over buffers: the nodes
@@ -68,84 +67,64 @@ func TestFiles_CommandsBuildTheDatabaseAndNeverTheStore(t *testing.T) {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			clearEnv(t)
 			t.Setenv(godatabase.NewEnv("BLOBFS").Name, "app")
-			r := &recorder{}
 			var out, errOut bytes.Buffer
-			a := recordingApp(r, &out, &errOut)
-			// The real files, database, and database configuration
-			// constructors run, each recorded; none does I/O. The lifecycle
-			// configuration, the Build's last root, keeps its failing
-			// recorder, so the Build runs every constructor the files node
-			// reaches and stops before anything starts: a store or storage
+			// The production constructors run, and none does I/O; the
+			// lifecycle configuration, the Build's last root, is halted, so
+			// the Build constructs the files node and everything it reaches,
+			// and stops before anything starts: a store or storage
 			// configuration it reached would be recorded.
-			g, n := a.Graph(), a.Nodes()
-			g.Replace(n.Files, func(s *graph.Scope) (*files.Store, error) {
-				r.record("files")
-				return a.NewFiles(s)
-			})
-			g.Replace(n.Database, func(s *graph.Scope) (*godatabase.DB, error) {
-				r.record("database")
-				return a.NewDatabase(s)
-			})
-			g.Replace(n.DatabaseConfig, func(*graph.Scope) (godatabase.Config, error) {
-				r.record("database config")
-				var cfg godatabase.Config
-				err := cfg.Finalize("BLOBFS")
-				return cfg, err
-			})
+			a, built := haltedApp(&out, &errOut)
 
 			code := a.Run(context.Background(), args)
 
 			if code != process.ExitFailure {
 				t.Errorf("code = %d, want %d", code, process.ExitFailure)
 			}
-			if want := commandPath(args) + ": lifecycle config: recorded\n"; errOut.String() != want {
+			if want := commandPath(args) + ": lifecycle config: halted\n"; errOut.String() != want {
 				t.Errorf("stderr = %q, want %q", errOut.String(), want)
 			}
-			wantRun := []string{"files", "database", "database config", "lifecycle config"}
-			if got := r.log(); !slices.Equal(got, wantRun) {
-				t.Errorf("constructors run = %q, want %q", got, wantRun)
+			wantBuilt := []string{"files", "database", "database config", "lifecycle config"}
+			if got := built.Log(); !slices.Equal(got, wantBuilt) {
+				t.Errorf("nodes built = %q, want %q", got, wantBuilt)
 			}
 		})
 	}
 }
 
-// scriptedApp returns blobfs with its database node Replace-d by a pool
-// over the scripted driver, answering with responses, and its store and
-// storage configuration nodes by recorders on r, so a run that reached
-// either would fail with errRecorded and record it. The files node keeps
-// its production constructor, statement check included.
-func scriptedApp(t *testing.T, r *recorder, stdout, stderr *bytes.Buffer, responses ...sqltest.Response) (*app.App, *sqltest.Recorder) {
+// scriptedBuilt is what a run of a command that declares the files node
+// builds over a scripted database, which reads no configuration node: the
+// files node, the database, and the lifecycle configuration, and never the
+// store or its configuration.
+var scriptedBuilt = []string{"files", "database", "lifecycle config"}
+
+// scriptedApp returns blobfs with its database node built over sqlate's
+// scripted driver, answering with responses, by apptest.ScriptDatabase,
+// and a Recorder of the nodes its runs build. The files node keeps its
+// production constructor, statement check included, and the store and its
+// configuration theirs: the environment is cleared, so a run that reached
+// them would fail on the storage configuration, and be recorded.
+func scriptedApp(t *testing.T, stdout, stderr *bytes.Buffer, responses ...sqltest.Response) (*app.App, *apptest.Recorder, *sqltest.Recorder) {
 	t.Helper()
-	a, rec, _ := scriptedAppIn(t, r, strings.NewReader(""), stdout, stderr, responses...)
-	return a, rec
+	a, built, rec, _ := scriptedAppIn(t, strings.NewReader(""), stdout, stderr, responses...)
+	return a, built, rec
 }
 
 // scriptedAppIn is scriptedApp reading stdin, and it returns the scripted
 // pool too, so a test can see whether the database was shut down.
-func scriptedAppIn(t *testing.T, r *recorder, stdin io.Reader, stdout, stderr *bytes.Buffer, responses ...sqltest.Response) (*app.App, *sqltest.Recorder, *sql.DB) {
+func scriptedAppIn(t *testing.T, stdin io.Reader, stdout, stderr *bytes.Buffer, responses ...sqltest.Response) (*app.App, *apptest.Recorder, *sqltest.Recorder, *sql.DB) {
 	t.Helper()
 	clearEnv(t)
-	pool, rec := sqltest.Open(t, responses...)
 	a := app.New(stdin, stdout, stderr)
-	g, n := a.Graph(), a.Nodes()
-	g.Replace(n.Database, func(*graph.Scope) (*godatabase.DB, error) {
-		cfg := godatabase.Config{Name: "app"}
-		if err := cfg.Finalize("BLOBFS"); err != nil {
-			return nil, err
-		}
-		return godatabase.New(pool, cfg), nil
-	})
-	g.Replace(n.Store, recording[*storage.Store](r, "store"))
-	g.Replace(n.StorageConfig, recording[storage.Config](r, "storage config"))
-	return a, rec, pool
+	built := apptest.Builds(a)
+	rec, pool := apptest.ScriptDatabase(t, a, responses...)
+	return a, built, rec, pool
 }
 
 func TestFiles_AnUnappliedSchemaFailsAtStartNamingTheFilesNode(t *testing.T) {
 	for _, args := range directoryVerbs {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			r := &recorder{}
 			var out, errOut bytes.Buffer
-			a, rec := scriptedApp(t, r, &out, &errOut)
+			a, built, rec := scriptedApp(t, &out, &errOut)
 			rec.FailPrepare = func(string) error { return errors.New(`relation "blobfs_directory" does not exist`) }
 
 			code := a.Run(context.Background(), args)
@@ -165,8 +144,8 @@ func TestFiles_AnUnappliedSchemaFailsAtStartNamingTheFilesNode(t *testing.T) {
 			if ops := rec.Ops(); slices.ContainsFunc(ops, func(op sqltest.Op) bool { return op != sqltest.OpPrepare }) {
 				t.Errorf("ops = %v, want prepares only", ops)
 			}
-			if got := r.log(); len(got) != 0 {
-				t.Errorf("constructors run = %q, want neither the store nor its configuration", got)
+			if got := built.Log(); !slices.Equal(got, scriptedBuilt) {
+				t.Errorf("nodes built = %q, want %q: neither the store nor its configuration", got, scriptedBuilt)
 			}
 		})
 	}
@@ -244,9 +223,8 @@ func TestFiles_DirectoryCommandsOverAScriptedDatabase(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &recorder{}
 			var out, errOut bytes.Buffer
-			a, rec := scriptedApp(t, r, &out, &errOut, tt.responses...)
+			a, built, rec := scriptedApp(t, &out, &errOut, tt.responses...)
 
 			code := a.Run(context.Background(), tt.args)
 
@@ -267,8 +245,8 @@ func TestFiles_DirectoryCommandsOverAScriptedDatabase(t *testing.T) {
 			if ops := rec.Ops(); len(ops) == 0 || ops[0] != sqltest.OpPrepare {
 				t.Errorf("ops = %v, want the statement check's prepares first", ops)
 			}
-			if got := r.log(); len(got) != 0 {
-				t.Errorf("constructors run = %q, want neither the store nor its configuration", got)
+			if got := built.Log(); !slices.Equal(got, scriptedBuilt) {
+				t.Errorf("nodes built = %q, want %q: neither the store nor its configuration", got, scriptedBuilt)
 			}
 		})
 	}
@@ -327,10 +305,10 @@ func TestFiles_MalformedArgumentsAreUsageErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			clearEnv(t)
-			r := &recorder{}
 			var out, errOut bytes.Buffer
+			a, built := haltedApp(&out, &errOut)
 
-			code := recordingApp(r, &out, &errOut).Run(context.Background(), tt.args)
+			code := a.Run(context.Background(), tt.args)
 
 			if code != process.ExitUsage {
 				t.Errorf("code = %d, want %d; stderr = %q", code, process.ExitUsage, errOut.String())
@@ -338,8 +316,8 @@ func TestFiles_MalformedArgumentsAreUsageErrors(t *testing.T) {
 			if !strings.Contains(errOut.String(), tt.want) || !strings.Contains(errOut.String(), "Usage: blobfs "+tt.args[0]+" [flags]") {
 				t.Errorf("stderr = %q, want %q and the usage line", errOut.String(), tt.want)
 			}
-			if got := r.log(); len(got) != 0 {
-				t.Errorf("constructors run = %q, want none", got)
+			if got := built.Log(); len(got) != 0 {
+				t.Errorf("nodes built = %q, want none", got)
 			}
 		})
 	}

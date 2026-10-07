@@ -4,8 +4,14 @@ import (
 	"context"
 	"io"
 
+	"github.com/standards-lab/go-database"
+	"github.com/standards-lab/go-storage"
+
+	"github.com/JaimeStill/spike-cli-architecture/admin/schema"
 	"github.com/JaimeStill/spike-cli-architecture/cli"
+	"github.com/JaimeStill/spike-cli-architecture/domain/files"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
+	"github.com/JaimeStill/spike-cli-architecture/lifecycle"
 )
 
 // App is the blobfs program: its dependency graph, its command tree, and
@@ -60,3 +66,46 @@ func New(stdin io.Reader, stdout, stderr io.Writer) *App {
 func (a *App) Run(ctx context.Context, args []string) int {
 	return cli.Run(ctx, a.root, args, a.stdin, a.stdout, a.stderr, cli.WithGraph(a.graph, a.infra.lifecycleConfig))
 }
+
+// Nodes is the App's graph nodes, one handle each, as [App.Nodes] returns
+// them: the configurations, the infrastructure built from them, the
+// migrator, and the files domain's two nodes. Each field's node is named
+// as the dispatcher labels its errors.
+type Nodes struct {
+	DatabaseConfig  *graph.Node[database.Config]  // "database config"
+	StorageConfig   *graph.Node[storage.Config]   // "storage config"
+	LifecycleConfig *graph.Node[lifecycle.Config] // "lifecycle config"
+	Database        *graph.Node[*database.DB]     // "database"
+	Store           *graph.Node[*storage.Store]   // "store"
+	Migrator        *graph.Node[*schema.Client]   // "migrator"
+	Files           *graph.Node[*files.Store]     // "files"
+	Objects         *graph.Node[*files.Objects]   // "objects"
+}
+
+// Graph, Nodes, and Root are the App's composition as [New] described it:
+// the graph, its nodes, and the command tree over them. Nothing in the
+// program reads them but [App.Run]; they are published so a caller can
+// observe what a run builds, with graph.Graph.Observe, Replace a node's
+// constructor with a substitute, or Add a command over the nodes, all
+// before the App runs. A Replace or an Add changes the App itself, and the
+// graph panics on a Replace once a run has built from it.
+
+// Graph returns the graph a's commands are built from.
+func (a *App) Graph() *graph.Graph { return a.graph }
+
+// Nodes returns a's graph nodes.
+func (a *App) Nodes() Nodes {
+	return Nodes{
+		DatabaseConfig:  a.infra.databaseConfig,
+		StorageConfig:   a.infra.storageConfig,
+		LifecycleConfig: a.infra.lifecycleConfig,
+		Database:        a.infra.database,
+		Store:           a.infra.store,
+		Migrator:        a.admin.migrator,
+		Files:           a.domain.files,
+		Objects:         a.domain.objects,
+	}
+}
+
+// Root returns a's root command.
+func (a *App) Root() *cli.Command { return a.root }

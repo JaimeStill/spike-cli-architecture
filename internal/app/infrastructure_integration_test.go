@@ -14,11 +14,14 @@ import (
 
 	"github.com/standards-lab/go-core/process"
 	godatabase "github.com/standards-lab/go-database"
+	"github.com/standards-lab/go-database/postgres"
 	"github.com/standards-lab/go-storage"
+	"github.com/standards-lab/go-storage/azureblob"
 
 	"github.com/JaimeStill/spike-cli-architecture/cli"
 	"github.com/JaimeStill/spike-cli-architecture/graph"
 	"github.com/JaimeStill/spike-cli-architecture/internal/app"
+	"github.com/JaimeStill/spike-cli-architecture/internal/apptest"
 )
 
 // The real database and store against the compose stack: `mise run
@@ -27,17 +30,19 @@ import (
 // BLOBFS_SHUTDOWN_TIMEOUT at its default, and tears the project down when
 // the suite ends.
 
-// probeApp returns blobfs with a test-only command, "probe", that declares
-// the database and the store with Use, which no production command
-// combines yet. The database and store nodes are Replace-d by their real
-// constructors, wrapped to record each value's Start and Shutdown into r,
+// probeApp returns blobfs with a test-only command, "probe", added at its
+// root, that declares the database and the store with Use, which no
+// production command combines yet. The database and store nodes are
+// Replace-d by constructors that build each value as the production ones
+// do, from the production configuration nodes, so from the variables
+// `mise run integration` sets, and record its Start and Shutdown into r;
 // and the store is ordered after the database, so the two, one layer in
 // production, start and shut down in an order the test can assert.
-func probeApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
+func probeApp(r *apptest.Recorder, stdout, stderr *bytes.Buffer) *app.App {
 	a := app.New(strings.NewReader(""), stdout, stderr)
 	g, n := a.Graph(), a.Nodes()
 	g.Replace(n.Database, func(s *graph.Scope) (*godatabase.DB, error) {
-		db, err := a.NewDatabase(s)
+		db, err := postgres.New(s.Use(n.DatabaseConfig))
 		if err != nil {
 			return nil, err
 		}
@@ -46,10 +51,12 @@ func probeApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
 	})
 	g.Replace(n.Store, func(s *graph.Scope) (*storage.Store, error) {
 		s.After(n.Database)
-		st, err := a.NewStore(s)
+		cfg := s.Use(n.StorageConfig)
+		client, err := azureblob.New(cfg)
 		if err != nil {
 			return nil, err
 		}
+		st := storage.New(client, cfg)
 		recordLifecycle(s, r, "store", st.Start, st.Shutdown)
 		return st, nil
 	})
@@ -65,15 +72,15 @@ func probeApp(r *recorder, stdout, stderr *bytes.Buffer) *app.App {
 // recordLifecycle records hooks that run the value's own start and
 // shutdown and record each on r, with " failed" on an error. A hook
 // overrides the value's method, so the lifecycle runs these in its place.
-func recordLifecycle(s *graph.Scope, r *recorder, name string, start, shutdown func(context.Context) error) {
+func recordLifecycle(s *graph.Scope, r *apptest.Recorder, name string, start, shutdown func(context.Context) error) {
 	s.OnStart(func(ctx context.Context) error {
 		err := start(ctx)
-		r.record(event("start "+name, err))
+		r.Record(event("start "+name, err))
 		return err
 	})
 	s.OnShutdown(func(ctx context.Context) error {
 		err := shutdown(ctx)
-		r.record(event("shutdown "+name, err))
+		r.Record(event("shutdown "+name, err))
 		return err
 	})
 }
@@ -104,7 +111,7 @@ func oneReport(t *testing.T, stderr, prefix string) {
 }
 
 func TestInfrastructureIntegration_StartsBothAndShutsDownInReverse(t *testing.T) {
-	r := &recorder{}
+	r := &apptest.Recorder{}
 	var out, errOut bytes.Buffer
 
 	code := probeApp(r, &out, &errOut).Run(context.Background(), []string{"probe"})
@@ -116,7 +123,7 @@ func TestInfrastructureIntegration_StartsBothAndShutsDownInReverse(t *testing.T)
 		t.Errorf("stderr = %q, want empty", errOut.String())
 	}
 	want := []string{"start database", "start store", "shutdown store", "shutdown database"}
-	if got := r.log(); !slices.Equal(got, want) {
+	if got := r.Log(); !slices.Equal(got, want) {
 		t.Errorf("events = %q, want %q", got, want)
 	}
 }
@@ -128,7 +135,7 @@ func TestInfrastructureIntegration_StoreUnreachableClosesTheDatabase(t *testing.
 	// One try: the SDK's default retries back off for seconds against a
 	// port that refuses at once.
 	t.Setenv(env.Options+"_MAX_RETRIES", "0")
-	r := &recorder{}
+	r := &apptest.Recorder{}
 	var out, errOut bytes.Buffer
 
 	code := probeApp(r, &out, &errOut).Run(context.Background(), []string{"probe"})
@@ -140,7 +147,7 @@ func TestInfrastructureIntegration_StoreUnreachableClosesTheDatabase(t *testing.
 	// The store, constructed though it failed to start, is shut down, and
 	// then the database it started after.
 	want := []string{"start database", "start store failed", "shutdown store", "shutdown database"}
-	if got := r.log(); !slices.Equal(got, want) {
+	if got := r.Log(); !slices.Equal(got, want) {
 		t.Errorf("events = %q, want %q", got, want)
 	}
 }
@@ -150,7 +157,7 @@ func TestInfrastructureIntegration_DatabaseUnreachable(t *testing.T) {
 	t.Setenv(env.Host, "127.0.0.1")
 	t.Setenv(env.Port, strconv.Itoa(closedPort(t)))
 	t.Setenv(env.ConnTimeout, "2s")
-	r := &recorder{}
+	r := &apptest.Recorder{}
 	var out, errOut bytes.Buffer
 
 	code := probeApp(r, &out, &errOut).Run(context.Background(), []string{"probe"})
@@ -164,7 +171,7 @@ func TestInfrastructureIntegration_DatabaseUnreachable(t *testing.T) {
 	// The store's layer never began to start, so only the database is
 	// shut down.
 	want := []string{"start database failed", "shutdown database"}
-	if got := r.log(); !slices.Equal(got, want) {
+	if got := r.Log(); !slices.Equal(got, want) {
 		t.Errorf("events = %q, want %q", got, want)
 	}
 }

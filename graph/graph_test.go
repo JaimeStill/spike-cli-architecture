@@ -385,6 +385,37 @@ func TestReplaceSubstitutesTheConstructor(t *testing.T) {
 	}
 }
 
+func TestObserveSeesEachNodeABuildBegins(t *testing.T) {
+	g := graph.New()
+	var seen, again []string
+	g.Observe(func(name string) { seen = append(seen, name) })
+	g.Observe(func(name string) { again = append(again, name) })
+	var order []string
+	leaf := g.Define("leaf", func(*graph.Scope) (int, error) {
+		order = append(order, "construct leaf")
+		return 0, errors.New("down")
+	})
+	g.Define("unreached", func(*graph.Scope) (int, error) { return 0, nil })
+	mid := g.Define("mid", func(s *graph.Scope) (int, error) { return s.Use(leaf), nil })
+	top := g.Define("top", func(s *graph.Scope) (int, error) { return s.Use(mid) + s.Use(leaf), nil })
+	g.Observe(func(name string) { order = append(order, "observe "+name) })
+
+	if _, err := g.Build(top); err == nil {
+		t.Fatal("Build succeeded, want the leaf's error")
+	}
+
+	// Depth-first from the root, each node once, the failing leaf included,
+	// and never a node the root does not reach.
+	want := []string{"top", "mid", "leaf"}
+	if !slices.Equal(seen, want) || !slices.Equal(again, want) {
+		t.Fatalf("observed %v and %v, want %v from each observer", seen, again, want)
+	}
+	// An observer sees a node before its constructor runs.
+	if wantOrder := []string{"observe top", "observe mid", "observe leaf", "construct leaf"}; !slices.Equal(order, wantOrder) {
+		t.Fatalf("order = %v, want %v", order, wantOrder)
+	}
+}
+
 func TestNilInterfaceValue(t *testing.T) {
 	g := graph.New()
 	none := g.Define("none", func(*graph.Scope) (error, error) { return nil, nil })
@@ -552,5 +583,9 @@ func TestWiringPanics(t *testing.T) {
 		mustPanic(t, `Define "db" with a nil constructor`, func() {
 			g.Define[int]("db", nil)
 		})
+	})
+	t.Run("nil observer", func(t *testing.T) {
+		g := graph.New()
+		mustPanic(t, "Observe with a nil function", func() { g.Observe(nil) })
 	})
 }

@@ -102,6 +102,9 @@ func (b *build) construct(n *node) error {
 	e := &entry{node: n, building: true}
 	b.entries[n] = e
 	b.stack = append(b.stack, n)
+	for _, observe := range b.graph.observers {
+		observe(n.name)
+	}
 	s := &Scope{build: b, entry: e}
 	defer func() {
 		s.done = true
