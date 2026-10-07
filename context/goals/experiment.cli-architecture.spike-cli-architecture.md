@@ -107,7 +107,7 @@ Door          two-way: the spike repository only, no release
 
 ## Progress
 
-slices 4/4 committed · redirect 4/4 · review rulings 0/5 applied · ergonomics — · standards — · spec — · editor —
+slices 4/4 committed · redirect 4/4 · review rulings 5/5 applied · ergonomics — · standards — · spec — · editor —
 
 ## Decisions
 
